@@ -1,0 +1,11 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - work/**
+
+linter:
+  rules:
+    avoid_print: true
+    prefer_final_locals: true
+    curly_braces_in_flow_control_structures: false

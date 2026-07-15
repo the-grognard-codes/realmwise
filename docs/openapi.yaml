@@ -1,0 +1,163 @@
+openapi: 3.0.3
+info:
+  title: RPG Catalog Local Service Contract
+  version: 1.0.0
+  description: |
+    The Flutter client calls these operations through its local DatabaseService,
+    CatalogService, ImageStorageService, and ExternalCatalogService classes.
+    This contract is deliberately transport-neutral so it can be imported into
+    Swagger UI for interactive documentation without exposing the collector's
+    local SQLite database over the network.
+servers:
+  - url: local://rpg-catalog
+    description: In-process local-first service boundary
+paths:
+  /records:
+    get:
+      summary: List locally cataloged works and owned copies
+      responses:
+        '200':
+          description: Catalog records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CatalogRecord'
+    post:
+      summary: Create or update a local catalog record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CatalogRecord'
+      responses:
+        '200':
+          description: Saved record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogRecord'
+  /records/{workId}:
+    get:
+      summary: Get one local record
+      parameters:
+        - $ref: '#/components/parameters/workId'
+      responses:
+        '200':
+          description: Record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogRecord'
+    delete:
+      summary: Delete a work, all copies, and database image references
+      parameters:
+        - $ref: '#/components/parameters/workId'
+      responses:
+        '204':
+          description: Deleted
+  /lookup/openlibrary:
+    get:
+      summary: Search OpenLibrary by ISBN, title, or author when online
+      parameters:
+        - name: isbn
+          in: query
+          schema: { type: string }
+        - name: title
+          in: query
+          schema: { type: string }
+        - name: author
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Up to five normalized work candidates
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/WorkCandidate' }
+        '503':
+          description: Offline or unavailable; manual entry remains available
+  /lookup/rpggeek:
+    post:
+      summary: Optionally enrich a selected candidate; nonblank RPGGeek values take precedence
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [candidate]
+              properties:
+                apiKey: { type: string, writeOnly: true }
+                candidate: { $ref: '#/components/schemas/WorkCandidate' }
+      responses:
+        '200':
+          description: Enriched candidate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkCandidate' }
+  /backups:
+    post:
+      summary: Checkpoint and create a local SQLite snapshot
+      responses:
+        '201': { description: Backup file created }
+  /images:
+    post:
+      summary: Copy an image into the configured local image folder
+      responses:
+        '201': { description: Local image reference created }
+components:
+  parameters:
+    workId:
+      name: workId
+      in: path
+      required: true
+      schema: { type: integer }
+  schemas:
+    Work:
+      type: object
+      required: [title]
+      properties:
+        id: { type: integer, readOnly: true }
+        isbn13: { type: string, example: '9780786915743' }
+        title: { type: string }
+        authors: { type: array, items: { type: string } }
+        publisher: { type: string }
+        publicationDate: { type: string }
+        summary: { type: string }
+        pageCount: { type: integer }
+        gameSystem: { type: string }
+        gameSetting: { type: string }
+        bookType: { type: string }
+        remoteCoverUrl: { type: string, format: uri }
+    UserCopy:
+      type: object
+      properties:
+        condition: { type: string, enum: [mint, nearMint, excellent, good, poor, damaged] }
+        pricePaid: { type: number }
+        acquisitionDate: { type: string, format: date }
+        acquiredSource: { type: string }
+        notes: { type: string }
+        favorite: { type: boolean }
+        tags: { type: array, items: { type: string } }
+    BookImage:
+      type: object
+      properties:
+        localPath: { type: string }
+        remoteUrl: { type: string, format: uri }
+        caption: { type: string }
+        isCover: { type: boolean }
+    CatalogRecord:
+      type: object
+      required: [work, copies]
+      properties:
+        work: { $ref: '#/components/schemas/Work' }
+        copies: { type: array, items: { $ref: '#/components/schemas/UserCopy' } }
+        images: { type: array, items: { $ref: '#/components/schemas/BookImage' } }
+    WorkCandidate:
+      allOf:
+        - $ref: '#/components/schemas/Work'
