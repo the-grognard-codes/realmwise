@@ -74,7 +74,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
 
   Future<void> _chooseImageFolder() async {
-    final chosen = await FilePicker.platform.getDirectoryPath(
+    final chosen = await FilePicker.getDirectoryPath(
       dialogTitle: 'Choose local image folder',
     );
     if (chosen != null)
@@ -85,7 +85,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _openDatabase() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['db', 'sqlite', 'sqlite3'],
       dialogTitle: 'Open catalog database',
@@ -130,7 +130,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _restore() async {
-    final picked = await FilePicker.platform.pickFiles(
+    final picked = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['db', 'sqlite', 'sqlite3'],
       dialogTitle: 'Choose a backup database to restore',

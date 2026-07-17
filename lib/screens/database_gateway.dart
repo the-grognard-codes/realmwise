@@ -60,7 +60,7 @@ class _DatabaseGatewayState extends State<DatabaseGateway> {
   }
 
   Future<void> _open() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['db', 'sqlite', 'sqlite3'],
       dialogTitle: 'Open RPG Catalog database',

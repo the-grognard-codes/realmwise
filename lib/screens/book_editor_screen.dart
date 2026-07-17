@@ -272,7 +272,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
   Future<void> _importImages() async {
     final label = await _imageLabelDialog();
     if (label == null) return;
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.image,
       allowMultiple: true,
       dialogTitle: 'Add local book images',
