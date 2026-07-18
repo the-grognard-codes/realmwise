@@ -12,12 +12,24 @@ coverage/
 
 # Local platform generated files
 android/local.properties
+android/.gradle/
+android/.cxx/
+android/captures/
+android/app/.cxx/
+android/app/debug/
+android/app/profile/
+android/app/release/
+android/key.properties
+*.jks
+*.keystore
 linux/flutter/ephemeral/
 linux/flutter/generated_plugin_registrant.cc
 linux/flutter/generated_plugin_registrant.h
+linux/flutter/generated_plugins.cmake
 windows/flutter/ephemeral/
 windows/flutter/generated_plugin_registrant.cc
 windows/flutter/generated_plugin_registrant.h
+windows/flutter/generated_plugins.cmake
 
 # Test and debug artifacts
 .test_coverage/
