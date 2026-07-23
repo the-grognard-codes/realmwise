@@ -79,6 +79,28 @@ public final class GeneratedPluginRegistrant {
             Log.e(TAG, "Error registering plugin file_picker via reflection", e);
         }
         try {
+            try {
+                Class<?> cls = Class.forName("com.baseflow.permissionhandler.PermissionHandlerPlugin");
+                Object plugin = cls.getDeclaredConstructor().newInstance();
+                flutterEngine.getPlugins().add((io.flutter.embedding.engine.plugins.FlutterPlugin) plugin);
+            } catch (ClassNotFoundException cnfe) {
+                Log.w(TAG, "Plugin class com.baseflow.permissionhandler.PermissionHandlerPlugin not found, skipping registration.");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error registering plugin permission_handler via reflection", e);
+        }
+        try {
+            try {
+                Class<?> cls = Class.forName("dev.steenbakker.mobile_scanner.MobileScannerPlugin");
+                Object plugin = cls.getDeclaredConstructor().newInstance();
+                flutterEngine.getPlugins().add((io.flutter.embedding.engine.plugins.FlutterPlugin) plugin);
+            } catch (ClassNotFoundException cnfe) {
+                Log.w(TAG, "Plugin class dev.steenbakker.mobile_scanner.MobileScannerPlugin not found, skipping registration.");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error registering plugin mobile_scanner via reflection", e);
+        }
+        try {
             flutterEngine.getPlugins().add(new io.flutter.plugins.flutter_plugin_android_lifecycle.FlutterAndroidLifecyclePlugin());
         } catch (Exception e) {
             Log.e(TAG, "Error registering plugin flutter_plugin_android_lifecycle, io.flutter.plugins.flutter_plugin_android_lifecycle.FlutterAndroidLifecyclePlugin", e);

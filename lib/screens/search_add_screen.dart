@@ -1,10 +1,23 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../models/catalog_models.dart';
 import '../services/app_controller.dart';
 import 'book_editor_screen.dart';
 
 enum LookupMode { isbn, title, author }
+
+/// Returns true only for an ISBN-13 represented by exactly 13 ASCII digits.
+bool isValidIsbn13(String value) {
+  if (!RegExp(r'^[0-9]{13}$').hasMatch(value)) return false;
+  var sum = 0;
+  for (var i = 0; i < value.length; i++) {
+    sum += int.parse(value[i]) * (i.isEven ? 1 : 3);
+  }
+  return sum % 10 == 0;
+}
 
 class SearchAddScreen extends StatefulWidget {
   const SearchAddScreen({
@@ -25,6 +38,28 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
   List<WorkCandidate> _results = const [];
   bool _searching = false;
   String? _message;
+  bool _cameraPermissionDenied = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_isAndroid) _loadCameraPermission();
+  }
+
+  bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
+
+  Future<void> _loadCameraPermission() async {
+    PermissionStatus status;
+    try {
+      status = await Permission.camera.status;
+    } catch (_) {
+      // Keep the control visible if the platform permission bridge is absent.
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _cameraPermissionDenied =
+        status.isPermanentlyDenied || status.isRestricted);
+  }
 
   @override
   void dispose() {
@@ -147,6 +182,45 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
     if (saved == true) widget.onSaved();
   }
 
+  Future<void> _scanWithCamera() async {
+    if (!_isAndroid || _cameraPermissionDenied || _searching) return;
+    final status = await Permission.camera.request();
+    if (!mounted) return;
+    if (!status.isGranted) {
+      setState(() => _cameraPermissionDenied = true);
+      return;
+    }
+    final controller = MobileScannerController();
+    var found = false;
+    final isbn = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => SizedBox(
+        height: MediaQuery.sizeOf(context).height * .72,
+        child: MobileScanner(
+          controller: controller,
+          onDetect: (capture) {
+            if (found) return;
+            for (final barcode in capture.barcodes) {
+              final value = barcode.rawValue;
+              if (value != null && isValidIsbn13(value)) {
+                found = true;
+                controller.stop();
+                Navigator.of(context).pop(value);
+                return;
+              }
+            }
+          },
+        ),
+      ),
+    );
+    controller.dispose();
+    if (!mounted || isbn == null) return;
+    _query.text = isbn;
+    if (_mode != LookupMode.isbn) setState(() => _mode = LookupMode.isbn);
+    await _search();
+  }
+
   @override
   Widget build(BuildContext context) => Center(
         child: ConstrainedBox(
@@ -222,6 +296,12 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
                     icon: const Icon(Icons.edit_note),
                     label: const Text('Add manually'),
                   ),
+                  if (_isAndroid && !_cameraPermissionDenied)
+                    OutlinedButton.icon(
+                      onPressed: _searching ? null : _scanWithCamera,
+                      icon: const Icon(Icons.camera_alt_outlined),
+                      label: const Text('Scan with Camera'),
+                    ),
                 ],
               ),
               if (_searching)
