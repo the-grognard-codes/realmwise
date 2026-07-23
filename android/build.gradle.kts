@@ -39,20 +39,37 @@ subprojects {
     }
 }
 
-// Ensure Kotlin and Java JVM targets match to avoid compile errors.
-// Use the modern compilerOptions DSL to set the Kotlin JVM target to 17.
+// Keep the app on JVM 17 while matching mobile_scanner's Java 1.8 target.
 subprojects {
-    plugins.withId("org.jetbrains.kotlin.jvm") {
-        tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class.java).configureEach {
-            compilerOptions {
-                jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    if (project.name == "app") {
+        plugins.withId("org.jetbrains.kotlin.jvm") {
+            tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class.java).configureEach {
+                compilerOptions {
+                    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+                }
+            }
+        }
+        plugins.withId("org.jetbrains.kotlin.android") {
+            tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class.java).configureEach {
+                compilerOptions {
+                    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+                }
             }
         }
     }
-    plugins.withId("org.jetbrains.kotlin.android") {
-        tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class.java).configureEach {
-            compilerOptions {
-                jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    if (project.name == "mobile_scanner") {
+        plugins.withId("org.jetbrains.kotlin.jvm") {
+            tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class.java).configureEach {
+                compilerOptions {
+                    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
+                }
+            }
+        }
+        plugins.withId("org.jetbrains.kotlin.android") {
+            tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class.java).configureEach {
+                compilerOptions {
+                    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
+                }
             }
         }
     }
