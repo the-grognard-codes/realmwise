@@ -248,7 +248,7 @@ class _CatalogSelector extends StatelessWidget {
       children: systems.entries
           .map(
             (system) => ExpansionTile(
-              initiallyExpanded: true,
+              initiallyExpanded: false,
               leading: _leading(context, 'gameSystem', system.key, Icons.account_tree_outlined),
               title: Text(system.key),
               children: _settingNodes(context, system.value),
@@ -271,7 +271,7 @@ class _CatalogSelector extends StatelessWidget {
     return settings.entries
         .map(
           (setting) => ExpansionTile(
-            initiallyExpanded: true,
+            initiallyExpanded: false,
             tilePadding: const EdgeInsets.only(left: 28, right: 8),
             leading: _leading(context, 'gameSetting', setting.key, Icons.landscape_outlined),
             title: Text(setting.key),
@@ -294,7 +294,7 @@ class _CatalogSelector extends StatelessWidget {
     return types.entries
         .map(
           (type) => ExpansionTile(
-            initiallyExpanded: true,
+            initiallyExpanded: false,
             tilePadding: const EdgeInsets.only(left: 48, right: 8),
             leading: _leading(context, 'bookType', type.key, Icons.book_outlined),
             title: Text(type.key),
