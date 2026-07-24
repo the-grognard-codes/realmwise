@@ -53,6 +53,16 @@ class ImageStorageService {
     );
   }
 
+  Future<String> importCatalogIcon({required String sourcePath, required String tier, required String sectionName}) async {
+    final source = File(sourcePath);
+    if (!await source.exists()) throw FileSystemException('The selected image no longer exists.', sourcePath);
+    final ext = _extensionFor(sourcePath, fallback: '.png');
+    final label = _cleanLabel('${tier}_${sectionName}');
+    final destination = await _uniquePath(rootPath, 'icon_$label', ext);
+    await source.copy(destination.path);
+    return destination.path;
+  }
+
   Future<BookImage> downloadRemoteCover({
     required BookWork work,
     required String remoteUrl,

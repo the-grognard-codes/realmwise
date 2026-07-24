@@ -31,10 +31,22 @@ class DatabaseService {
     _databasePath = filePath;
     _database = await openDatabase(
       filePath,
-      version: 1,
+      version: 3,
       onConfigure: (database) async =>
           database.execute('PRAGMA foreign_keys = ON'),
       onCreate: _createSchema,
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('''CREATE TABLE IF NOT EXISTS catalog_icons (
+            tier TEXT NOT NULL, section_name TEXT NOT NULL, local_path TEXT NOT NULL,
+            alignment_x REAL NOT NULL DEFAULT 0, alignment_y REAL NOT NULL DEFAULT 0,
+            PRIMARY KEY (tier, section_name)
+          )''');
+        }
+        if (oldVersion < 3) {
+          await db.execute('ALTER TABLE catalog_icons ADD COLUMN zoom REAL NOT NULL DEFAULT 1');
+        }
+      },
     );
   }
 
@@ -103,6 +115,33 @@ class DatabaseService {
         setting_value TEXT NOT NULL
       )
     ''');
+    await database.execute('''CREATE TABLE catalog_icons (
+      tier TEXT NOT NULL, section_name TEXT NOT NULL, local_path TEXT NOT NULL,
+      alignment_x REAL NOT NULL DEFAULT 0, alignment_y REAL NOT NULL DEFAULT 0, zoom REAL NOT NULL DEFAULT 1,
+      PRIMARY KEY (tier, section_name)
+    )''');
+  }
+
+  Future<List<CatalogIconMapping>> listCatalogIcons() async {
+    final rows = await _db.query('catalog_icons', orderBy: 'tier, section_name COLLATE NOCASE');
+    return rows.map(CatalogIconMapping.fromRow).toList();
+  }
+
+  Future<CatalogIconMapping?> getCatalogIcon(String tier, String sectionName) async {
+    final rows = await _db.query('catalog_icons', where: 'tier = ? AND section_name = ?', whereArgs: [tier, sectionName], limit: 1);
+    return rows.isEmpty ? null : CatalogIconMapping.fromRow(rows.single);
+  }
+
+  Future<void> upsertCatalogIcon(CatalogIconMapping mapping) => _db.insert('catalog_icons', mapping.toRow(), conflictAlgorithm: ConflictAlgorithm.replace);
+
+  Future<void> removeCatalogIcon(String tier, String sectionName) => _db.delete('catalog_icons', where: 'tier = ? AND section_name = ?', whereArgs: [tier, sectionName]);
+
+  Future<List<String>> listCatalogTierSections(String tier) async {
+    final column = {'gameSystem':'game_system','gameSetting':'game_setting','bookType':'book_type'}[tier];
+    if (column == null) return const [];
+    final rows = await _db.rawQuery("SELECT DISTINCT $column AS value FROM works ORDER BY value COLLATE NOCASE");
+    final fallback = {'gameSystem':'Unclassified system','gameSetting':'General setting','bookType':'Unclassified type'}[tier]!;
+    return rows.map((r) { final value = (r['value'] as String?)?.trim() ?? ''; return value.isEmpty ? fallback : value; }).toSet().toList()..sort((a,b)=>a.toLowerCase().compareTo(b.toLowerCase()));
   }
 
   Future<List<CatalogRecord>> listRecords() async {
@@ -279,4 +318,12 @@ class DatabaseService {
         'setting_value': value,
       },
       conflictAlgorithm: ConflictAlgorithm.replace);
+}
+
+class CatalogIconMapping {
+  const CatalogIconMapping({required this.tier, required this.sectionName, required this.localPath, this.alignmentX = 0, this.alignmentY = 0, this.zoom = 1});
+  final String tier, sectionName, localPath;
+  final double alignmentX, alignmentY, zoom;
+  factory CatalogIconMapping.fromRow(Map<String, Object?> row) => CatalogIconMapping(tier: row['tier'] as String, sectionName: row['section_name'] as String, localPath: row['local_path'] as String, alignmentX: (row['alignment_x'] as num?)?.toDouble() ?? 0, alignmentY: (row['alignment_y'] as num?)?.toDouble() ?? 0, zoom: (row['zoom'] as num?)?.toDouble() ?? 1);
+  Map<String,Object?> toRow() => {'tier':tier,'section_name':sectionName,'local_path':localPath,'alignment_x':alignmentX,'alignment_y':alignmentY,'zoom':zoom};
 }

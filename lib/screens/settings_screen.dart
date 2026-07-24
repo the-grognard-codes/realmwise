@@ -21,6 +21,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _loading = true;
   bool _busy = false;
   List<File> _backups = const [];
+  String _iconTier = 'gameSystem';
+  String? _iconSection;
+  String? _iconPreviewPath;
+  String? _iconSourcePath;
+  double _iconX = 0, _iconY = 0, _iconZoom = 1;
 
   @override
   void initState() {
@@ -83,6 +88,61 @@ class _SettingsScreenState extends State<SettingsScreen> {
         success: 'New images will be stored in the selected folder.',
       );
   }
+
+  Future<void> _saveCatalogIcon() async {
+    final section = _iconSection;
+    if (section == null) return;
+    final source = _iconSourcePath;
+    if (source == null) return;
+    await _run(() => widget.controller.saveCatalogIcon(tier: _iconTier, sectionName: section, sourcePath: source, alignmentX: _iconX, alignmentY: _iconY, zoom: _iconZoom), success: 'Catalog icon saved.');
+    if (mounted) setState(() => _iconSourcePath = null);
+    await _selectIconSection(section);
+  }
+
+  Future<void> _chooseCatalogIcon() async {
+    if (_iconSection == null) return;
+    final picked = await FilePicker.pickFiles(type: FileType.image, dialogTitle: 'Choose catalog icon');
+    final source = picked?.files.singleOrNull?.path;
+    if (source == null || !mounted) return;
+    setState(() {
+      _iconSourcePath = source;
+      _iconPreviewPath = source;
+    });
+  }
+
+  Future<void> _selectIconSection(String? value) async {
+    final tier = _iconTier;
+    setState(() {
+      _iconSection = value;
+      _iconPreviewPath = null;
+      _iconSourcePath = null;
+      _iconX = 0;
+      _iconY = 0;
+      _iconZoom = 1;
+    });
+    if (value == null) return;
+    final mapping = await widget.controller.database.getCatalogIcon(tier, value);
+    if (mounted && _iconTier == tier && _iconSection == value)
+      setState(() {
+        _iconPreviewPath = mapping?.localPath;
+        _iconX = mapping?.alignmentX ?? 0;
+        _iconY = mapping?.alignmentY ?? 0;
+        _iconZoom = mapping?.zoom ?? 1;
+      });
+  }
+
+  Future<void> _removeCatalogIcon() async {
+    final section = _iconSection;
+    if (section == null) return;
+    await _run(() => widget.controller.removeCatalogIcon(_iconTier, section), success: 'Catalog icon removed.');
+    if (mounted && _iconSection == section) setState(() { _iconPreviewPath = null; _iconSourcePath = null; });
+  }
+
+  Widget _slider(String label, double value, ValueChanged<double> onChanged, double min, double max) => Semantics(
+        label: label,
+        value: value.toStringAsFixed(2),
+        child: Row(children: [SizedBox(width: 125, child: Text(label)), Expanded(child: Slider(value: value, min: min, max: max, label: value.toStringAsFixed(2), onChanged: onChanged))]),
+      );
 
   Future<void> _openDatabase() async {
     final result = await FilePicker.pickFiles(
@@ -245,6 +305,78 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     label: const Text('Change image folder'),
                   ),
                 ],
+              ),
+            ),
+            _Section(
+              title: 'Custom catalog icons',
+              child: FutureBuilder<List<String>>(
+                future: widget.controller.database.listCatalogTierSections(_iconTier),
+                builder: (context, snap) => LayoutBuilder(
+                  builder: (context, c) {
+                    final controls = Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                  DropdownButton<String>(value: _iconTier, items: const [DropdownMenuItem(value: 'gameSystem', child: Text('Game system')), DropdownMenuItem(value: 'gameSetting', child: Text('Game setting')), DropdownMenuItem(value: 'bookType', child: Text('Book type'))], onChanged: (v) => setState(() { _iconTier = v!; _iconSection = null; _iconPreviewPath = null; _iconSourcePath = null; _iconX = 0; _iconY = 0; _iconZoom = 1; })),
+                  DropdownButton<String>(value: snap.data?.contains(_iconSection) == true ? _iconSection : null, hint: const Text('Choose section'), items: (snap.data ?? const []).map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(), onChanged: _selectIconSection),
+                  if (_iconSection != null) ...[
+                    _slider('Horizontal focus', _iconX, (v) => setState(() => _iconX = v), -1, 1),
+                    _slider('Vertical focus', _iconY, (v) => setState(() => _iconY = v), -1, 1),
+                    _slider('Zoom', _iconZoom, (v) => setState(() => _iconZoom = v), 1, 3),
+                  ],
+                  Wrap(spacing: 10, children: [
+                    OutlinedButton.icon(onPressed: _busy || _iconSection == null ? null : _chooseCatalogIcon, icon: const Icon(Icons.image), label: const Text('Choose icon')),
+                    FilledButton.icon(onPressed: _busy || _iconSourcePath == null ? null : _saveCatalogIcon, icon: const Icon(Icons.save), label: const Text('Save icon')),
+                  ]),
+                  if (_iconSection != null) TextButton(onPressed: _busy ? null : _removeCatalogIcon, child: const Text('Remove icon')),
+                      ],
+                    );
+                    final preview = Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_iconSection == null)
+                          const Text('Choose a section to preview its custom icon.')
+                        else if (_iconPreviewPath == null ||
+                            !File(_iconPreviewPath!).existsSync())
+                          const Text('No saved icon for this section.')
+                        else
+                          ClipOval(
+                            child: SizedBox(
+                              width: 96,
+                              height: 96,
+                              child: ClipOval(
+                                child: Transform.scale(
+                                  scale: _iconZoom,
+                                  child: Image.file(
+                                    File(_iconPreviewPath!),
+                                    width: 96,
+                                    height: 96,
+                                    fit: BoxFit.contain,
+                                    alignment: Alignment(_iconX, _iconY),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    );
+                    return c.maxWidth >= 560
+                        ? Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(child: controls),
+                              const SizedBox(width: 24),
+                              Expanded(child: Center(child: preview)),
+                            ],
+                          )
+                        : Column(
+                            children: [
+                              controls,
+                              const SizedBox(height: 16),
+                              Center(child: preview),
+                            ],
+                          );
+                  },
+                ),
               ),
             ),
             _Section(

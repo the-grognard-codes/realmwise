@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'dart:io';
 
+import '../data/database_service.dart';
 import '../models/catalog_models.dart';
 import '../services/app_controller.dart';
 import '../widgets/cover_image.dart';
@@ -21,6 +23,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
   CatalogRecord? _selected;
   bool _loading = true;
   String? _error;
+  List<CatalogIconMapping> _icons = const [];
 
   @override
   void initState() {
@@ -44,12 +47,14 @@ class _CatalogScreenState extends State<CatalogScreen> {
       final values = await Future.wait([
         widget.controller.catalog.listRecords(),
         widget.controller.catalog.allTags(),
+        widget.controller.database.listCatalogIcons(),
       ]);
       if (!mounted) return;
       final loaded = values[0] as List<CatalogRecord>;
       setState(() {
         _records = loaded;
         _tags = values[1] as List<String>;
+        _icons = values[2] as List<CatalogIconMapping>;
         _selected = loaded
                 .where((record) => record.work.id == _selected?.work.id)
                 .firstOrNull ??
@@ -88,6 +93,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
         final wide = constraints.maxWidth >= 900;
         final selector = _CatalogSelector(
           records: _shown,
+          icons: _icons,
           selected: _selected,
           onSelected: (record) => setState(() => _selected = record),
           onOpen: _edit,
@@ -193,11 +199,36 @@ class _CatalogSelector extends StatelessWidget {
     required this.selected,
     required this.onSelected,
     required this.onOpen,
+    required this.icons,
   });
   final List<CatalogRecord> records;
   final CatalogRecord? selected;
   final ValueChanged<CatalogRecord> onSelected;
   final ValueChanged<CatalogRecord> onOpen;
+  final List<CatalogIconMapping> icons;
+
+  Widget _leading(BuildContext context, String tier, String name, IconData fallback) {
+    final m = icons.where((x) => x.tier == tier && x.sectionName == name).firstOrNull;
+    if (m == null || !File(m.localPath).existsSync()) return Icon(fallback);
+    return ClipOval(
+      child: SizedBox(
+        width: 24,
+        height: 24,
+        child: ClipOval(
+          child: Transform.scale(
+            scale: m.zoom,
+            child: Image.file(
+              File(m.localPath),
+              width: 24,
+              height: 24,
+              fit: BoxFit.contain,
+              alignment: Alignment(m.alignmentX, m.alignmentY),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -218,16 +249,16 @@ class _CatalogSelector extends StatelessWidget {
           .map(
             (system) => ExpansionTile(
               initiallyExpanded: true,
-              leading: const Icon(Icons.account_tree_outlined),
+              leading: _leading(context, 'gameSystem', system.key, Icons.account_tree_outlined),
               title: Text(system.key),
-              children: _settingNodes(system.value),
+              children: _settingNodes(context, system.value),
             ),
           )
           .toList(),
     );
   }
 
-  List<Widget> _settingNodes(List<CatalogRecord> systemRecords) {
+  List<Widget> _settingNodes(BuildContext context, List<CatalogRecord> systemRecords) {
     final settings = <String, List<CatalogRecord>>{};
     for (final record in systemRecords) {
       settings
@@ -242,15 +273,15 @@ class _CatalogSelector extends StatelessWidget {
           (setting) => ExpansionTile(
             initiallyExpanded: true,
             tilePadding: const EdgeInsets.only(left: 28, right: 8),
-            leading: const Icon(Icons.landscape_outlined),
+            leading: _leading(context, 'gameSetting', setting.key, Icons.landscape_outlined),
             title: Text(setting.key),
-            children: _typeNodes(setting.value),
+            children: _typeNodes(context, setting.value),
           ),
         )
         .toList();
   }
 
-  List<Widget> _typeNodes(List<CatalogRecord> settingRecords) {
+  List<Widget> _typeNodes(BuildContext context, List<CatalogRecord> settingRecords) {
     final types = <String, List<CatalogRecord>>{};
     for (final record in settingRecords) {
       types
@@ -265,7 +296,7 @@ class _CatalogSelector extends StatelessWidget {
           (type) => ExpansionTile(
             initiallyExpanded: true,
             tilePadding: const EdgeInsets.only(left: 48, right: 8),
-            leading: const Icon(Icons.book_outlined),
+            leading: _leading(context, 'bookType', type.key, Icons.book_outlined),
             title: Text(type.key),
             children: type.value
                 .map(
@@ -303,7 +334,7 @@ class _CatalogSelector extends StatelessWidget {
   }
 
   String _name(String value, String fallback) =>
-      value.trim().isEmpty ? fallback : value;
+      value.trim().isEmpty ? fallback : value.trim();
 }
 
 class _BookPreview extends StatelessWidget {
@@ -466,4 +497,8 @@ class _ErrorPanel extends StatelessWidget {
 
 extension _FirstCatalogOrNull on Iterable<CatalogRecord> {
   CatalogRecord? get firstOrNull => isEmpty ? null : first;
+}
+
+extension _FirstIconOrNull on Iterable<CatalogIconMapping> {
+  CatalogIconMapping? get firstOrNull => isEmpty ? null : first;
 }

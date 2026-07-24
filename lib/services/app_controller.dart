@@ -116,6 +116,33 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> saveCatalogIcon({required String tier, required String sectionName, required String sourcePath, double alignmentX = 0, double alignmentY = 0, double zoom = 1}) async {
+    final old = await database.getCatalogIcon(tier, sectionName);
+    final local = await imageStorage.importCatalogIcon(sourcePath: sourcePath, tier: tier, sectionName: sectionName);
+    try {
+      await database.upsertCatalogIcon(CatalogIconMapping(tier: tier, sectionName: sectionName, localPath: local, alignmentX: alignmentX, alignmentY: alignmentY, zoom: zoom));
+    } catch (_) { await _deleteManagedIcon(local); rethrow; }
+    if (old != null && old.localPath != local) await _deleteManagedIcon(old.localPath);
+  }
+
+  Future<void> removeCatalogIcon(String tier, String sectionName) async {
+    final old = await database.getCatalogIcon(tier, sectionName);
+    await database.removeCatalogIcon(tier, sectionName);
+    if (old != null) await _deleteManagedIcon(old.localPath);
+  }
+
+  Future<void> _deleteManagedIcon(String filePath) async {
+    try {
+      final root = path.normalize(imageStorage.rootPath);
+      final target = path.normalize(filePath);
+      if (!path.isWithin(root, target)) return;
+      final mappings = await database.listCatalogIcons();
+      if (mappings.any((m) => path.normalize(m.localPath) == target)) return;
+      final file = File(target);
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
   Future<String> rpgGeekKey() async =>
       await database.getSetting('rpggeek_api_key') ?? '';
   Future<void> setRpgGeekKey(String key) =>
