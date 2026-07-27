@@ -1,5 +1,7 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'debug/api_debug_harness.dart';
 import 'screens/catalog_screen.dart';
 import 'screens/database_gateway.dart';
 import 'screens/search_add_screen.dart';
@@ -16,11 +18,30 @@ class RpgCatalogBootstrap extends StatefulWidget {
 
 class _RpgCatalogBootstrapState extends State<RpgCatalogBootstrap> {
   final AppController _controller = AppController();
+  ApiDebugHarness? _debugHarness;
+  Future<ApiDebugHarness>? _debugStart;
+  bool _disposed = false;
+  bool _cleanupStarted = false;
 
   @override
   void initState() {
     super.initState();
-    _controller.initialize();
+    final readiness = _controller.initialize();
+    if (apiDebugHarnessEnabled()) {
+      _debugStart = ApiDebugHarness.start(_controller, readiness: readiness);
+      unawaited(
+        _debugStart!.then<void>(
+          (harness) {
+            if (!_disposed) {
+              _debugHarness = harness;
+            }
+          },
+          onError: (Object error, StackTrace stack) {
+            debugPrint('API debug harness failed to start: $error');
+          },
+        ),
+      );
+    }
     _controller.addListener(_refresh);
   }
 
@@ -30,25 +51,50 @@ class _RpgCatalogBootstrapState extends State<RpgCatalogBootstrap> {
 
   @override
   void dispose() {
+    _disposed = true;
     _controller.removeListener(_refresh);
-    _controller.dispose();
+    if (_cleanupStarted) {
+      super.dispose();
+      return;
+    }
+    _cleanupStarted = true;
+    final harness = _debugHarness;
+    _debugHarness = null;
+    if (harness != null) {
+      harness.close().whenComplete(_controller.dispose);
+    } else if (_debugStart == null) {
+      _controller.dispose();
+    } else {
+      unawaited(
+        _debugStart!.then(
+          (started) async {
+            try {
+              await started.close();
+            } catch (_) {}
+            _controller.dispose();
+          },
+          onError: (_) {
+            _controller.dispose();
+          },
+        ),
+      );
+    }
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-        title: 'RPG Catalog',
-        debugShowCheckedModeBanner: false,
-        theme: buildRpgTheme(_controller.seedName, Brightness.light),
-        darkTheme: buildRpgTheme(_controller.seedName, Brightness.dark),
-        themeMode: ThemeMode.system,
-        home: _controller.loading
-            ? const _LoadingScreen()
-            : _controller.isOpen
-                ? CatalogShell(controller: _controller)
-                : DatabaseGateway(
-                    controller: _controller, error: _controller.error),
-      );
+    title: 'RPG Catalog',
+    debugShowCheckedModeBanner: false,
+    theme: buildRpgTheme(_controller.seedName, Brightness.light),
+    darkTheme: buildRpgTheme(_controller.seedName, Brightness.dark),
+    themeMode: ThemeMode.system,
+    home: _controller.loading
+        ? const _LoadingScreen()
+        : _controller.isOpen
+        ? CatalogShell(controller: _controller)
+        : DatabaseGateway(controller: _controller, error: _controller.error),
+  );
 }
 
 class _LoadingScreen extends StatelessWidget {

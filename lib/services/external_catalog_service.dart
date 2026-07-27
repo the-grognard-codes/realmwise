@@ -17,7 +17,7 @@ class ExternalCatalogService {
   ExternalCatalogService(this._client);
   final http.Client _client;
 
-  Future<List<WorkCandidate>> searchByIsbn(String input) async {
+  Future<List<WorkCandidate>> searchByIsbn(String input, {String? ownerName, String? ownerEmail}) async {
     final isbn = input.replaceAll(RegExp(r'[^0-9Xx]'), '');
     if (isbn.length != 13)
       throw const CatalogLookupException('Enter a 13-digit ISBN.');
@@ -26,7 +26,7 @@ class ExternalCatalogService {
       'format': 'json',
       'jscmd': 'data',
     });
-    final payload = await _json(url);
+    final payload = await _json(url, ownerName: ownerName, ownerEmail: ownerEmail);
     final book = payload['ISBN:$isbn'];
     if (book is! Map<String, dynamic>) return const [];
     return [_fromOpenLibraryBook(book, isbn)];
@@ -35,6 +35,8 @@ class ExternalCatalogService {
   Future<List<WorkCandidate>> searchByTitleOrAuthor({
     required String term,
     required bool author,
+    String? ownerName,
+    String? ownerEmail,
   }) async {
     if (term.trim().length < 2)
       throw const CatalogLookupException(
@@ -46,7 +48,7 @@ class ExternalCatalogService {
       'fields':
           'key,title,author_name,isbn,publisher,publish_date,first_publish_year,cover_i,number_of_pages_median',
     });
-    final payload = await _json(url);
+    final payload = await _json(url, ownerName: ownerName, ownerEmail: ownerEmail);
     final docs = payload['docs'];
     if (docs is! List) return const [];
     return docs
@@ -98,14 +100,16 @@ class ExternalCatalogService {
     }
   }
 
-  Future<Map<String, dynamic>> _json(Uri url) async {
+  Future<Map<String, dynamic>> _json(Uri url, {String? ownerName, String? ownerEmail}) async {
+    final headers = <String, String>{
+      'Accept': 'application/json',
+      'User-Agent': _userAgent(ownerName, ownerEmail),
+    };
+    if (ownerEmail?.trim().isNotEmpty == true) headers['From'] = ownerEmail!.trim();
     try {
       final response = await _client.get(
         url,
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'RpgCatalog/1.0',
-        },
+        headers: headers,
       ).timeout(const Duration(seconds: 12));
       if (response.statusCode < 200 || response.statusCode >= 300)
         throw CatalogLookupException(
@@ -124,6 +128,14 @@ class ExternalCatalogService {
         'Could not reach OpenLibrary. You can still add the book manually while offline.',
       );
     }
+  }
+
+  String _userAgent(String? ownerName, String? ownerEmail) {
+    final name = ownerName?.trim() ?? '';
+    final email = ownerEmail?.trim() ?? '';
+    if (name.isEmpty && email.isEmpty) return 'RpgCatalog/1.0';
+    final identity = [if (name.isNotEmpty) name, if (email.isNotEmpty) email].join(' ');
+    return 'RpgCatalog/1.0 ($identity)';
   }
 
   WorkCandidate _fromOpenLibraryBook(
