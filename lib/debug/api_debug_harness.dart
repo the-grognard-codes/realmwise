@@ -124,8 +124,23 @@ class ApiDebugHarness {
 
   Future<void> _html(HttpRequest request) async {
     request.response.headers.contentType = ContentType.html;
+    request.response.headers.set(
+      'Content-Security-Policy',
+      "default-src 'none'; style-src https://unpkg.com; script-src https://unpkg.com 'unsafe-inline'; img-src data: https://unpkg.com; connect-src 'self'; font-src https://unpkg.com;",
+    );
     request.response.write(
-      '<!doctype html><title>RPG Catalog API</title><script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script><div id="swagger"></div><script>SwaggerUIBundle({url:"/openapi.json",dom_id:"#swagger"})</script>',
+      '<!doctype html>\n'
+      '<html lang="en"><head>\n'
+      '<meta charset="utf-8">\n'
+      '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+      '<title>RPG Catalog API</title>\n'
+      '<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><text y=%2224%22 font-size=%2224%22>R</text></svg>">\n'
+      '<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.11.10/swagger-ui.css" integrity="sha256-WudGeIrWwvGbuMdjjWO1dE4+/rqss7yrzNySjb7GxN8=" crossorigin="anonymous">\n'
+      '</head><body><div id="swagger-ui"></div>\n'
+      '<script src="https://unpkg.com/swagger-ui-dist@5.11.10/swagger-ui-bundle.js" integrity="sha256-rrxl4znrA7X2/cHNouSsYygu+oqjdJpEgjJolOBlsVI=" crossorigin="anonymous"></script>\n'
+      '<script src="https://unpkg.com/swagger-ui-dist@5.11.10/swagger-ui-standalone-preset.js" integrity="sha256-L2Pxpxznpse9e5MAAJATjBH2qVRIrbDdlm9X4t1fBlU=" crossorigin="anonymous"></script>\n'
+      '<script>window.onload = function() { SwaggerUIBundle({ url: "/openapi.json", dom_id: "#swagger-ui", deepLinking: true, presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset], layout: "StandaloneLayout" }); };</script>\n'
+      '</body></html>',
     );
     await request.response.close();
   }
@@ -200,12 +215,25 @@ final Map<String, dynamic> _openApi = {
   'paths': {
     '/lookup/openlibrary': {
       'get': {
+        'summary': 'Search Open Library',
+        'description':
+            'Search by ISBN, title, or author. Optional owner fields are forwarded for catalog attribution.',
         'responses': {
           '200': {
             'description': 'Results envelope',
             'content': {
               'application/json': {
                 'schema': {r'$ref': '#/components/schemas/Results'},
+                'example': {
+                  'ok': true,
+                  'results': [
+                    {
+                      'title': 'Dungeons & Dragons',
+                      'isbn13': '9780132350884',
+                      'authors': ['Gary Gygax'],
+                    },
+                  ],
+                },
               },
             },
           },
@@ -237,16 +265,29 @@ final Map<String, dynamic> _openApi = {
             {
               'name': name,
               'in': 'query',
+              'description': switch (name) {
+                'isbn' => 'A 13-digit ISBN to look up.',
+                'title' => 'Title search term.',
+                'author' => 'Author search term.',
+                'ownerName' => 'Optional catalog owner name.',
+                _ => 'Optional catalog owner email.',
+              },
               'schema': {
                 'type': 'string',
                 if (name == 'ownerEmail') 'format': 'email',
               },
+              if (name == 'isbn') 'example': '9780132350884',
+              if (name == 'title') 'example': 'Dungeons & Dragons',
+              if (name == 'author') 'example': 'Gary Gygax',
             },
         ],
       },
     },
     '/lookup/rpggeek': {
       'post': {
+        'summary': 'Enrich a candidate with RPGGeek',
+        'description':
+            'Look up RPGGeek metadata for a candidate. Supply an API key only in the request body; it is writeOnly and is never returned or logged.',
         'requestBody': {
           'required': true,
           'content': {
@@ -255,8 +296,19 @@ final Map<String, dynamic> _openApi = {
                 'type': 'object',
                 'required': ['candidate'],
                 'properties': {
-                  'apiKey': {'type': 'string', 'writeOnly': true},
+                  'apiKey': {
+                    'type': 'string',
+                    'format': 'password',
+                    'writeOnly': true,
+                    'description': 'Optional RPGGeek API key; never returned or logged.',
+                  },
                   'candidate': {r'$ref': '#/components/schemas/Candidate'},
+                },
+              },
+              'example': {
+                'candidate': {
+                  'title': 'Dungeons & Dragons 5th Edition',
+                  'authors': ['Wizards of the Coast'],
                 },
               },
             },
@@ -268,6 +320,10 @@ final Map<String, dynamic> _openApi = {
             'content': {
               'application/json': {
                 'schema': {r'$ref': '#/components/schemas/Result'},
+                'example': {
+                  'ok': true,
+                  'result': {'title': 'Dungeons & Dragons'},
+                },
               },
             },
           },
@@ -292,8 +348,17 @@ final Map<String, dynamic> _openApi = {
     },
     '/openapi.json': {
       'get': {
+        'summary': 'Get the OpenAPI contract',
+        'description': 'Returns this machine-readable API contract.',
         'responses': {
-          '200': {'description': 'This OpenAPI document'},
+          '200': {
+            'description': 'This OpenAPI document',
+            'content': {
+              'application/json': {
+                'schema': {'type': 'object'},
+              },
+            },
+          },
         },
       },
     },
@@ -302,6 +367,7 @@ final Map<String, dynamic> _openApi = {
     'schemas': {
       'Error': {
         'type': 'object',
+        'description': 'Safe error envelope. Secret values are never included.',
         'required': ['ok', 'error'],
         'properties': {
           'ok': {
@@ -313,6 +379,7 @@ final Map<String, dynamic> _openApi = {
       },
       'Candidate': {
         'type': 'object',
+        'description': 'A catalog work candidate and optional remote metadata.',
         'properties': {
           'title': {'type': 'string'},
           'isbn13': {'type': 'string'},
@@ -334,6 +401,7 @@ final Map<String, dynamic> _openApi = {
       },
       'Results': {
         'type': 'object',
+        'description': 'Successful Open Library search response.',
         'required': ['ok', 'results'],
         'properties': {
           'ok': {
@@ -348,6 +416,7 @@ final Map<String, dynamic> _openApi = {
       },
       'Result': {
         'type': 'object',
+        'description': 'Successful RPGGeek enrichment response.',
         'required': ['ok', 'result'],
         'properties': {
           'ok': {

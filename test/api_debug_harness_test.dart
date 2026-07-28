@@ -81,6 +81,33 @@ void main() {
         document['paths']['/lookup/rpggeek']['post']['responses']['200']['description'],
         'Result envelope',
       );
+      final landing = await client.get(
+        Uri.http('127.0.0.1:${harness.port}', '/'),
+      );
+      expect(landing.statusCode, 200);
+      expect(landing.headers['content-type'], contains('text/html'));
+      expect(landing.body, contains('swagger-ui.css'));
+      expect(landing.body, contains('swagger-ui-bundle.js'));
+      expect(landing.body, contains('swagger-ui-standalone-preset.js'));
+      expect(landing.body, contains('presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset]'));
+      expect(landing.body, isNot(contains('SwaggerUIBundle.SwaggerUIStandalonePreset')));
+      expect(landing.body, contains('swagger-ui-dist@5.11.10'));
+      expect(landing.body, contains('integrity="sha256-'));
+      expect(landing.body, contains('crossorigin="anonymous"'));
+      expect(landing.body, contains('viewport'));
+      expect(landing.body, contains('url: "/openapi.json"'));
+      expect(landing.headers['content-security-policy'], contains("default-src 'none'"));
+      expect(landing.body, isNot(contains('super-secret-token')));
+      final operation =
+          document['paths']['/lookup/openlibrary']['get'] as Map<String, dynamic>;
+      expect(operation['summary'], 'Search Open Library');
+      expect(operation['description'], contains('ISBN'));
+      final requestSchema = document['paths']['/lookup/rpggeek']['post']
+          ['requestBody']['content']['application/json']['schema'] as Map<String, dynamic>;
+      final apiKeySchema = requestSchema['properties']['apiKey'] as Map<String, dynamic>;
+      expect(apiKeySchema['writeOnly'], isTrue);
+      expect(apiKeySchema['format'], 'password');
+      expect(apiKeySchema.containsKey('example'), isFalse);
       final malformed = await client.post(
         Uri.http('127.0.0.1:${harness.port}', '/lookup/rpggeek'),
         body: jsonEncode({
