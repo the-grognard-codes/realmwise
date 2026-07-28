@@ -23,6 +23,14 @@ paths:
         '503': {description: Upstream unavailable, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
   /lookup/rpggeek:
     post:
+      summary: Enrich a candidate with RPGGeek
+      description: >-
+        Searches RPGGeek with the full candidate title and, when applicable,
+        a subtitle-stripped fallback. Results are de-duplicated and scored
+        against the title; the best match is fetched from detail XML (including
+        stats) and merged. An empty key or upstream failure returns the
+        original candidate unchanged (fail-open). The API key is writeOnly and
+        is never returned or logged.
       requestBody:
         required: true
         content:
@@ -31,10 +39,23 @@ paths:
               type: object
               required: [candidate]
               properties:
-                apiKey: {type: string, writeOnly: true}
+                apiKey: {type: string, format: password, writeOnly: true}
                 candidate: {$ref: '#/components/schemas/Candidate'}
       responses:
-        '200': {description: Result envelope, content: {application/json: {schema: {$ref: '#/components/schemas/Result'}}}}
+        '200':
+          description: Result envelope containing the enriched (or unchanged) candidate
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Result'}
+              example:
+                ok: true
+                result:
+                  title: Dungeons & Dragons
+                  rpgGeekId: '12345'
+                  publisher: Wizards of the Coast
+                  publicationDate: '2014'
+                  summary: Core rulebook
+                  remoteCoverUrl: https://example.invalid/cover.jpg
         '400': {description: Invalid request, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '503': {description: Upstream unavailable, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
   /openapi.json:
@@ -51,6 +72,11 @@ components:
         error: {type: string}
     Candidate:
       type: object
+      description: >-
+        A catalog work candidate and optional remote metadata. Nonempty RPGGeek
+        title, publisher, publicationDate, summary, and remoteCoverUrl values
+        override Open Library values; OpenLibrary-only fields such as ISBN and
+        authors, plus any RPGGeek-absent fields, remain.
       properties:
         title: {type: string}
         isbn13: {type: string}

@@ -70,19 +70,35 @@ class ExternalCatalogService {
         'X-API-Key': apiKey.trim(),
         'Authorization': 'Bearer ${apiKey.trim()}',
       };
-      final search = Uri.https('api.rpggeek.com', '/xmlapi2/search', {
-        'query': original.title,
-        'type': 'rpgitem',
-      });
-      final searchResponse = await _client
-          .get(search, headers: headers)
-          .timeout(const Duration(seconds: 12));
-      if (searchResponse.statusCode < 200 || searchResponse.statusCode >= 300)
-        return original;
-      final searchXml = XmlDocument.parse(searchResponse.body);
-      final item = searchXml.findAllElements('item').firstOrNull;
-      final id = item?.getAttribute('id');
-      if (id == null || id.isEmpty) return original;
+      final candidates = <_RpgGeekSearchCandidate>[];
+      for (final query in _rpgGeekQueries(original)) {
+        final search = Uri.https('api.rpggeek.com', '/xmlapi2/search', {
+          'query': query,
+          'type': 'rpgitem',
+        });
+        try {
+          final searchResponse = await _client
+              .get(search, headers: headers)
+              .timeout(const Duration(seconds: 12));
+          if (searchResponse.statusCode < 200 ||
+              searchResponse.statusCode >= 300) continue;
+          final searchXml = XmlDocument.parse(searchResponse.body);
+          for (final item in searchXml.findAllElements('item')) {
+            final id = item.getAttribute('id');
+            if (id == null || id.isEmpty) continue;
+            final name = item
+                .findAllElements('name')
+                .map((element) => element.getAttribute('value') ?? '')
+                .firstWhere((value) => value.isNotEmpty, orElse: () => '');
+            candidates.add(_RpgGeekSearchCandidate(id, name));
+          }
+        } on Exception {
+          // A failed query should not prevent a useful fallback query.
+        }
+      }
+      final selected = _selectRpgGeekCandidate(original.title, candidates);
+      if (selected == null) return original;
+      final id = selected.id;
       final details = Uri.https('api.rpggeek.com', '/xmlapi2/thing', {
         'id': id,
         'stats': '1',
@@ -99,6 +115,60 @@ class ExternalCatalogService {
       return original;
     }
   }
+
+  List<String> _rpgGeekQueries(WorkCandidate original) {
+    final title = original.title.trim();
+    if (title.isEmpty) return const [];
+    final queries = <String>[title];
+    // RPGGeek's search often treats subtitles as distinct records. Retry the
+    // base title when the first query contains a common subtitle separator.
+    final base = title.split(RegExp(r'\s*(?::|–|—|-)\s*')).first.trim();
+    if (base.length >= 2 && base.toLowerCase() != title.toLowerCase()) {
+      queries.add(base);
+    }
+    return queries;
+  }
+
+  _RpgGeekSearchCandidate? _selectRpgGeekCandidate(
+    String title,
+    List<_RpgGeekSearchCandidate> candidates,
+  ) {
+    if (candidates.isEmpty) return null;
+    final normalizedTitle = _normalizeRpgGeekTitle(title);
+    final titleTokens = normalizedTitle.split(' ').where((token) => token.isNotEmpty).toSet();
+    _RpgGeekSearchCandidate? best;
+    var bestScore = -1;
+    final seen = <String>{};
+    for (final candidate in candidates) {
+      if (!seen.add(candidate.id)) continue;
+      final normalizedName = _normalizeRpgGeekTitle(candidate.name);
+      final nameTokens = normalizedName.split(' ').where((token) => token.isNotEmpty).toSet();
+      if (normalizedName.isEmpty) continue;
+      var score = 0;
+      if (normalizedName == normalizedTitle && normalizedName.isNotEmpty) {
+        score = 1000;
+      } else if (normalizedName.startsWith(normalizedTitle) ||
+          normalizedTitle.startsWith(normalizedName)) {
+        score = 700;
+      }
+      score += titleTokens.intersection(nameTokens).length * 10;
+      score -= (nameTokens.length - titleTokens.length).abs();
+      // Ignore unrelated/weak hits rather than replacing a good OpenLibrary
+      // record with an arbitrary RPGGeek result.
+      if (score < 10) continue;
+      if (score > bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  String _normalizeRpgGeekTitle(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+      .trim()
+      .replaceAll(RegExp(r'\s+'), ' ');
 
   Future<Map<String, dynamic>> _json(Uri url, {String? ownerName, String? ownerEmail}) async {
     final headers = <String, String>{
@@ -231,6 +301,12 @@ class ExternalCatalogService {
     if (raw is Map) return raw['value']?.toString() ?? '';
     return raw?.toString() ?? '';
   }
+}
+
+class _RpgGeekSearchCandidate {
+  const _RpgGeekSearchCandidate(this.id, this.name);
+  final String id;
+  final String name;
 }
 
 extension FirstOrNullExtension<T> on Iterable<T> {
