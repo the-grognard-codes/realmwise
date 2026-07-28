@@ -287,7 +287,7 @@ final Map<String, dynamic> _openApi = {
       'post': {
         'summary': 'Enrich a candidate with RPGGeek',
         'description':
-            'Look up RPGGeek metadata for a candidate. Supply an API key only in the request body; it is writeOnly and is never returned or logged.',
+            'Enrich a candidate by searching RPGGeek with its full title and, when applicable, a subtitle-stripped fallback. Results are de-duplicated and scored against the title; the best match is then fetched from detail XML (including stats) and merged. If the key is empty or upstream calls fail, the original candidate is returned unchanged (fail-open). Supply an API key only in the request body; it is writeOnly and is never returned or logged.',
         'requestBody': {
           'required': true,
           'content': {
@@ -316,13 +316,21 @@ final Map<String, dynamic> _openApi = {
         },
         'responses': {
           '200': {
-            'description': 'Result envelope',
+            'description':
+                'Result envelope containing the enriched (or unchanged) candidate',
             'content': {
               'application/json': {
                 'schema': {r'$ref': '#/components/schemas/Result'},
                 'example': {
                   'ok': true,
-                  'result': {'title': 'Dungeons & Dragons'},
+                  'result': {
+                    'title': 'Dungeons & Dragons',
+                    'rpgGeekId': '12345',
+                    'publisher': 'Wizards of the Coast',
+                    'publicationDate': '2014',
+                    'summary': 'Core rulebook',
+                    'remoteCoverUrl': 'https://example.invalid/cover.jpg',
+                  },
                 },
               },
             },
@@ -379,7 +387,7 @@ final Map<String, dynamic> _openApi = {
       },
       'Candidate': {
         'type': 'object',
-        'description': 'A catalog work candidate and optional remote metadata.',
+        'description': 'A catalog work candidate and optional remote metadata. Nonempty RPGGeek title, publisher, publicationDate, summary, and remoteCoverUrl values override Open Library values; OpenLibrary-only fields such as ISBN and authors, plus any RPGGeek-absent fields, remain.',
         'properties': {
           'title': {'type': 'string'},
           'isbn13': {'type': 'string'},

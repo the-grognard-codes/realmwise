@@ -79,7 +79,23 @@ void main() {
       );
       expect(
         document['paths']['/lookup/rpggeek']['post']['responses']['200']['description'],
-        'Result envelope',
+        contains('enriched'),
+      );
+      final rpgOperation =
+          document['paths']['/lookup/rpggeek']['post'] as Map<String, dynamic>;
+      expect(rpgOperation['description'], contains('full title'));
+      expect(rpgOperation['description'], contains('subtitle-stripped fallback'));
+      expect(rpgOperation['description'], contains('de-duplicated and scored'));
+      expect(rpgOperation['description'], contains('detail XML'));
+      expect(rpgOperation['description'], contains('fail-open'));
+      final candidateSchema =
+          document['components']['schemas']['Candidate'] as Map<String, dynamic>;
+      expect(candidateSchema['description'], contains('publicationDate'));
+      expect(
+        (document['paths']['/lookup/rpggeek']['post']['responses']['200']['content']
+                ['application/json']['example']['result'] as Map<String, dynamic>)
+            .keys,
+        containsAll(['rpgGeekId', 'publisher', 'publicationDate', 'summary', 'remoteCoverUrl']),
       );
       final landing = await client.get(
         Uri.http('127.0.0.1:${harness.port}', '/'),
