@@ -108,6 +108,65 @@ void main() {
     expect(result.seriesCode, 'SX');
     expect(result.dimensions, '8x5');
   });
+
+  test('RPG title hits are ranked and retain OL bootstrap metadata', () async {
+    final client = _RecordingClient((request) {
+      if (request.url.host == 'openlibrary.org') {
+        return http.Response('{"docs":[{"title":"Ignored"}]}', 200);
+      }
+      return _response('<items><item id="1"><name value="Quest"/></item>'
+          '<item id="2"><name value="Dragon Quest"/></item></items>');
+    });
+    final results = await ExternalCatalogService(client).searchByTitleOrAuthor(
+      term: 'Dragon Quest', author: false, apiKey: 'key');
+    expect(results.map((r) => r.rpgGeekId), ['2', '1']);
+  });
+
+  test('ISBN exact RPGGeek detail is returned, otherwise ranked choices only', () async {
+    final client = _RecordingClient((request) {
+      if (request.url.host == 'openlibrary.org') {
+        return http.Response('{"ISBN:9780000000000":{"title":"Dragon Quest","publishers":[{"name":"OL"}]}}', 200);
+      }
+      if (request.url.path.endsWith('/search')) {
+        return _response('<items><item id="1"><name value="Dragon Quest"/></item></items>');
+      }
+      return _response('<items><item id="1"><name value="Dragon Quest"/><isbn>9780000000000</isbn></item></items>');
+    });
+    final exact = await ExternalCatalogService(client).searchByIsbn('9780000000000', apiKey: 'key');
+    expect(exact, hasLength(1));
+    expect(exact.single.rpgGeekId, '1');
+    expect(exact.single.publisher, 'OL');
+  });
+
+  test('confirmed RPG detail fills missing cover from ISBN OpenLibrary record', () async {
+    final client = _RecordingClient((request) {
+      if (request.url.host == 'openlibrary.org') {
+        return http.Response('{"ISBN:9780000000000":{"title":"Dragon Quest","cover":{"large":"https://cover"}}}', 200);
+      }
+      return _response('<items><item id="1"><name value="Dragon Quest"/><isbn>9780000000000</isbn></item></items>');
+    });
+    final result = await ExternalCatalogService(client).fetchRpgGeekDetails(
+      const WorkCandidate(title: 'Dragon Quest', isbn13: '9780000000000', rpgGeekId: '1'), 'key');
+    expect(result.remoteCoverUrl, 'https://cover');
+  });
+
+  test('RPGGeek search failure falls back to OpenLibrary candidates', () async {
+    final client = _RecordingClient((request) {
+      if (request.url.host == 'openlibrary.org') {
+        return http.Response(
+          '{"docs":[{"title":"Fallback Book","isbn":["9781111111111"]}]}',
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return _response('', status: 503);
+    });
+    final results = await ExternalCatalogService(client).searchByTitleOrAuthor(
+      term: 'Fallback Book', author: false, apiKey: 'key');
+    expect(results, hasLength(1));
+    expect(results.single.title, 'Fallback Book');
+    expect(results.single.isbn13, '9781111111111');
+  });
 }
 
 String _detailXml(String title, String id) =>

@@ -17,7 +17,9 @@ class ApiDebugHarness {
     int? port,
     Future<void>? readiness,
     Future<List<WorkCandidate>> Function(Uri uri)? openLibrary,
-    Future<WorkCandidate> Function(WorkCandidate candidate, String key)? enrich,
+    Future<List<WorkCandidate>> Function(String query, String key)? rpgGeekSearch,
+    Future<WorkCandidate> Function(String id, String key)? rpgGeekThing,
+    @Deprecated('Use rpgGeekSearch/rpgGeekThing') Future<WorkCandidate> Function(WorkCandidate candidate, String key)? enrich,
   }) async {
     final server = await HttpServer.bind(
       InternetAddress.loopbackIPv4,
@@ -26,7 +28,7 @@ class ApiDebugHarness {
     final harness = ApiDebugHarness._(server, server.port);
     server.listen(
       (request) =>
-          harness._handle(request, controller, readiness, openLibrary, enrich),
+          harness._handle(request, controller, readiness, openLibrary, rpgGeekSearch, rpgGeekThing, enrich),
     );
     return harness;
   }
@@ -38,6 +40,8 @@ class ApiDebugHarness {
     AppController? controller,
     Future<void>? readiness,
     Future<List<WorkCandidate>> Function(Uri uri)? openLibrary,
+    Future<List<WorkCandidate>> Function(String query, String key)? rpgGeekSearch,
+    Future<WorkCandidate> Function(String id, String key)? rpgGeekThing,
     Future<WorkCandidate> Function(WorkCandidate candidate, String key)? enrich,
   ) async {
     try {
@@ -82,25 +86,26 @@ class ApiDebugHarness {
           'results': result.map(_candidateJson).toList(),
         }, 200);
       }
-      if (request.method == 'POST' && request.uri.path == '/lookup/rpggeek') {
+      if (request.method == 'GET' && request.uri.path == '/lookup/rpggeek/search') {
         if (readiness != null) await readiness;
-        final body = await utf8.decoder.bind(request).join();
-        final input = jsonDecode(body) as Map<String, dynamic>;
-        final candidate = _candidate(
-          input['candidate'] as Map<String, dynamic>,
-        );
-        final supplied = (input['apiKey'] as String?)?.trim();
-        final key = supplied?.isNotEmpty == true
-            ? supplied!
-            : await _requireController(controller).rpgGeekKey();
-        final enriched = enrich != null
-            ? await enrich(candidate, key)
-            : await _requireController(
-                controller,
-              ).lookup.enrichWithRpgGeek(candidate, key);
+        final query = request.uri.queryParameters['query']?.trim() ?? '';
+        final key = _bearer(request);
+        if (query.length < 2 || key.isEmpty) throw const CatalogLookupException('Provide query and Authorization Bearer token.');
+        final results = rpgGeekSearch != null ? await rpgGeekSearch(query, key) : await _requireController(controller).lookup.searchRpgGeek(query, key);
         return _json(request, {
           'ok': true,
-          'result': _candidateJson(enriched),
+          'results': results.map(_candidateJson).toList(),
+        }, 200);
+      }
+      if (request.method == 'GET' && request.uri.path.startsWith('/lookup/rpggeek/thing/')) {
+        if (readiness != null) await readiness;
+        final id = request.uri.path.substring('/lookup/rpggeek/thing/'.length).trim();
+        final key = _bearer(request);
+        if (id.isEmpty || key.isEmpty) throw const CatalogLookupException('Provide item id and Authorization Bearer token.');
+        final result = rpgGeekThing != null ? await rpgGeekThing(id, key) : await _requireController(controller).lookup.fetchRpgGeekItem(id, key);
+        return _json(request, {
+          'ok': true,
+          'result': _candidateJson(result),
         }, 200);
       }
       return _json(request, {'ok': false, 'error': 'Not found'}, 404);
@@ -108,10 +113,12 @@ class ApiDebugHarness {
       final invalid =
           error.message == 'Enter a 13-digit ISBN.' ||
           error.message == 'Type at least two characters to search.' ||
-          error.message == 'Provide isbn, title, or author.';
+          error.message == 'Provide isbn, title, or author.' ||
+          error.message.startsWith('Provide query') ||
+          error.message.startsWith('Provide item id');
       return _json(request, safeDebugError(error), invalid ? 400 : 503);
     } catch (error) {
-      return _json(request, safeDebugError(error), 400);
+      return _json(request, safeDebugError(error), 503);
     }
   }
 
@@ -144,6 +151,12 @@ class ApiDebugHarness {
     );
     await request.response.close();
   }
+}
+
+String _bearer(HttpRequest request) {
+  final value = request.headers.value('authorization')?.trim() ?? '';
+  if (!value.toLowerCase().startsWith('bearer ')) return '';
+  return value.substring(7).trim();
 }
 
 int _configuredPort() =>
@@ -310,75 +323,61 @@ final Map<String, dynamic> _openApi = {
         ],
       },
     },
-    '/lookup/rpggeek': {
-      'post': {
-        'summary': 'Enrich a candidate with RPGGeek',
+    '/lookup/rpggeek/search': {
+      'get': {
+        'summary': 'Search RPGGeek RPG items',
         'description':
-            'Enrich a candidate by searching RPGGeek with its full title and, when applicable, a subtitle-stripped fallback. Results are de-duplicated and scored against the title; the best match is then fetched from detail XML (including stats) and merged. If the key is empty or upstream calls fail, the original candidate is returned unchanged (fail-open). Supply an API key only in the request body; it is writeOnly and is never returned or logged.',
-        'requestBody': {
-          'required': true,
-          'content': {
-            'application/json': {
-              'schema': {
-                'type': 'object',
-                'required': ['candidate'],
-                'properties': {
-                  'apiKey': {
-                    'type': 'string',
-                    'format': 'password',
-                    'writeOnly': true,
-                    'description': 'Optional RPGGeek API key; never returned or logged.',
-                  },
-                  'candidate': {r'$ref': '#/components/schemas/Candidate'},
-                },
-              },
-              'example': {
-                'candidate': {
-                  'title': 'Dungeons & Dragons 5th Edition',
-                  'authors': ['Wizards of the Coast'],
-                },
+            'Returns ranked RPGGeek rpgitem candidates. Supply the credential in the Authorization Bearer header.',
+        'security': [
+          {'bearerAuth': <String, dynamic>{}},
+        ],
+        'parameters': [
+          {
+            'name': 'query',
+            'in': 'query',
+            'required': true,
+            'schema': {'type': 'string'},
+          },
+        ],
+        'responses': {
+          '200': {
+            'description': 'Ranked RPGGeek candidates envelope',
+            'content': {
+              'application/json': {
+                'schema': {r'$ref': '#/components/schemas/Results'},
               },
             },
           },
+          '400': {'description': 'Invalid request'},
+          '503': {'description': 'Upstream unavailable'},
         },
+      },
+    },
+    '/lookup/rpggeek/thing/{id}': {
+      'get': {
+        'summary': 'Fetch raw RPGGeek item detail',
+        'security': [
+          {'bearerAuth': <String, dynamic>{}},
+        ],
+        'parameters': [
+          {
+            'name': 'id',
+            'in': 'path',
+            'required': true,
+            'schema': {'type': 'string'},
+          },
+        ],
         'responses': {
           '200': {
-            'description':
-                'Result envelope containing the enriched (or unchanged) candidate',
+            'description': 'RPGGeek item envelope',
             'content': {
               'application/json': {
                 'schema': {r'$ref': '#/components/schemas/Result'},
-                'example': {
-                  'ok': true,
-                  'result': {
-                    'title': 'Dungeons & Dragons',
-                    'rpgGeekId': '12345',
-                    'rpgGeekUrl': 'https://rpggeek.com/rpgitem/12345',
-                    'publisher': 'Wizards of the Coast',
-                    'publicationDate': '2014',
-                    'summary': 'Core rulebook',
-                    'remoteCoverUrl': 'https://example.invalid/cover.jpg',
-                  },
-                },
               },
             },
           },
-          '400': {
-            'description': 'Invalid request',
-            'content': {
-              'application/json': {
-                'schema': {r'$ref': '#/components/schemas/Error'},
-              },
-            },
-          },
-          '503': {
-            'description': 'Upstream unavailable',
-            'content': {
-              'application/json': {
-                'schema': {r'$ref': '#/components/schemas/Error'},
-              },
-            },
-          },
+          '400': {'description': 'Invalid request'},
+          '503': {'description': 'Upstream unavailable'},
         },
       },
     },
@@ -400,6 +399,13 @@ final Map<String, dynamic> _openApi = {
     },
   },
   'components': {
+    'securitySchemes': {
+      'bearerAuth': {
+        'type': 'http',
+        'scheme': 'bearer',
+        'bearerFormat': 'API key',
+      },
+    },
     'schemas': {
       'Error': {
         'type': 'object',
