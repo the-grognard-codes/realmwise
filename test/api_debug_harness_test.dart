@@ -92,10 +92,22 @@ void main() {
           document['components']['schemas']['Candidate'] as Map<String, dynamic>;
       expect(candidateSchema['description'], contains('publicationDate'));
       expect(
+        (candidateSchema['properties'] as Map<String, dynamic>)['rpgGeekUrl']
+            ['readOnly'],
+        isTrue,
+      );
+      expect(
         (document['paths']['/lookup/rpggeek']['post']['responses']['200']['content']
                 ['application/json']['example']['result'] as Map<String, dynamic>)
             .keys,
-        containsAll(['rpgGeekId', 'publisher', 'publicationDate', 'summary', 'remoteCoverUrl']),
+        containsAll([
+          'rpgGeekId',
+          'rpgGeekUrl',
+          'publisher',
+          'publicationDate',
+          'summary',
+          'remoteCoverUrl',
+        ]),
       );
       final landing = await client.get(
         Uri.http('127.0.0.1:${harness.port}', '/'),

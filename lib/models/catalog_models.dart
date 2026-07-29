@@ -34,6 +34,17 @@ class BookWork {
   final String openLibraryId;
   final String rpgGeekId;
 
+  /// The public RPGGeek item page for this work, when an ID is available.
+  String? get rpgGeekUrl {
+    final id = rpgGeekId.trim();
+    if (!RegExp(r'^[0-9]+$').hasMatch(id)) return null;
+    return Uri(
+      scheme: 'https',
+      host: 'rpggeek.com',
+      pathSegments: ['rpgitem', id],
+    ).toString();
+  }
+
   BookWork copyWith({
     int? id,
     String? isbn13,
@@ -345,6 +356,17 @@ class WorkCandidate {
   final String gameSystem;
   final String gameSetting;
   final String bookType;
+
+  /// The public RPGGeek item page for this candidate, when an ID is available.
+  String? get rpgGeekUrl {
+    final id = rpgGeekId.trim();
+    if (!RegExp(r'^[0-9]+$').hasMatch(id)) return null;
+    return Uri(
+      scheme: 'https',
+      host: 'rpggeek.com',
+      pathSegments: ['rpgitem', id],
+    ).toString();
+  }
 
   WorkCandidate mergeRpgGeek(WorkCandidate rpgGeek) => WorkCandidate(
         title: rpgGeek.title.trim().isNotEmpty ? rpgGeek.title : title,

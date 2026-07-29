@@ -52,6 +52,7 @@ paths:
                 result:
                   title: Dungeons & Dragons
                   rpgGeekId: '12345'
+                  rpgGeekUrl: https://rpggeek.com/rpgitem/12345
                   publisher: Wizards of the Coast
                   publicationDate: '2014'
                   summary: Core rulebook
@@ -88,6 +89,7 @@ components:
         remoteCoverUrl: {type: string}
         openLibraryId: {type: string}
         rpgGeekId: {type: string}
+        rpgGeekUrl: {type: string, format: uri, nullable: true, readOnly: true, description: Public RPGGeek item page derived from rpgGeekId.}
         gameSystem: {type: string}
         gameSetting: {type: string}
         bookType: {type: string}

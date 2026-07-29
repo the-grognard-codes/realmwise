@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'dart:io';
 
 import '../data/database_service.dart';
@@ -311,12 +312,22 @@ class _CatalogSelector extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    subtitle: Text(
-                      record.work.authors.isEmpty
-                          ? 'No author recorded'
-                          : record.work.authors.join(', '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          record.work.authors.isEmpty
+                              ? 'No author recorded'
+                              : record.work.authors.join(', '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        _RpgGeekField(
+                          id: record.work.rpgGeekId,
+                          url: record.work.rpgGeekUrl,
+                        ),
+                      ],
                     ),
                     trailing: Text(
                       record.copies.length == 1
@@ -378,6 +389,7 @@ class _BookPreview extends StatelessWidget {
                       ),
                       const SizedBox(height: 16),
                       _Fact(label: 'ISBN-13', value: work.isbn13),
+                      _RpgGeekField(id: work.rpgGeekId, url: work.rpgGeekUrl),
                       _Fact(label: 'Publisher', value: work.publisher),
                       _Fact(label: 'Published', value: work.publicationDate),
                       _Fact(
@@ -448,6 +460,61 @@ class _Fact extends StatelessWidget {
           padding: const EdgeInsets.only(bottom: 4),
           child: Text('$label: $value'),
         );
+}
+
+class _RpgGeekField extends StatelessWidget {
+  const _RpgGeekField({required this.id, required this.url});
+  final String id;
+  final String? url;
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmedId = id.trim();
+    if (url == null || trimmedId.isEmpty) {
+      return const Text('RPGGeek Thing ID: No Info');
+    }
+    return Text.rich(
+      TextSpan(
+        text: 'RPGGeek Thing ID: ',
+        children: [
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: InkWell(
+              onTap: () => _openRpgGeek(context, url),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  trimmedId,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.primary,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> _openRpgGeek(BuildContext context, String? url) async {
+  if (url == null) return;
+  try {
+    final launched = await launchUrl(Uri.parse(url));
+    if (!launched && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open RPGGeek link.')),
+      );
+    }
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open RPGGeek link.')),
+      );
+    }
+  }
 }
 
 class _EmptyCatalog extends StatelessWidget {
