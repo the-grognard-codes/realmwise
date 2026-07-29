@@ -179,6 +179,22 @@ Map<String, dynamic> _candidateJson(WorkCandidate c) => {
   'gameSystem': c.gameSystem,
   'gameSetting': c.gameSetting,
   'bookType': c.bookType,
+  'moreInfo': c.moreInfo,
+  'designers': c.designers,
+  'artists': c.artists,
+  'productionStaff': c.productionStaff,
+  'version': c.version,
+  'isbn': c.isbn,
+  'productCode': c.productCode,
+  'seriesCode': c.seriesCode,
+  'dimensions': c.dimensions,
+  'series': c.series,
+  'setting': c.setting,
+  'family': c.family,
+  'system': c.system,
+  'category': c.category,
+  'mechanics': c.mechanics,
+  'genre': c.genre,
 };
 WorkCandidate _candidate(Map<String, dynamic> m) => WorkCandidate(
   title: m['title']?.toString() ?? '',
@@ -196,7 +212,17 @@ WorkCandidate _candidate(Map<String, dynamic> m) => WorkCandidate(
   gameSystem: m['gameSystem']?.toString() ?? '',
   gameSetting: m['gameSetting']?.toString() ?? '',
   bookType: m['bookType']?.toString() ?? '',
+  moreInfo: m['moreInfo']?.toString() ?? '',
+  designers: _list(m['designers']), artists: _list(m['artists']),
+  productionStaff: _list(m['productionStaff']), version: m['version']?.toString() ?? '',
+  isbn: m['isbn']?.toString() ?? '', productCode: m['productCode']?.toString() ?? '',
+  seriesCode: m['seriesCode']?.toString() ?? '', dimensions: m['dimensions']?.toString() ?? '',
+  series: _list(m['series']), setting: _list(m['setting']), family: _list(m['family']),
+  system: _list(m['system']), category: _list(m['category']), mechanics: _list(m['mechanics']),
+  genre: _list(m['genre']),
 );
+
+List<String> _list(Object? value) => (value as List? ?? const []).map((e) => e.toString()).toList();
 
 AppController _requireController(AppController? controller) =>
     controller ??
@@ -414,6 +440,11 @@ final Map<String, dynamic> _openApi = {
           'gameSystem': {'type': 'string'},
           'gameSetting': {'type': 'string'},
           'bookType': {'type': 'string'},
+          'moreInfo': {'type': 'string'},
+          for (final name in ['designers','artists','productionStaff','series','setting','family','system','category','mechanics','genre'])
+            name: {'type': 'array', 'items': {'type': 'string'}},
+          for (final name in ['version','isbn','productCode','seriesCode','dimensions'])
+            name: {'type': 'string'},
         },
       },
       'Results': {

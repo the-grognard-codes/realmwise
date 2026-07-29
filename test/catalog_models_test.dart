@@ -64,4 +64,42 @@ void main() {
     expect(record.matches('dragon', 'classic'), isTrue);
     expect(record.matches('rifts', null), isFalse);
   });
+
+  test('extended RPGGeek metadata round trips through work rows', () {
+    const original = BookWork(
+      title: 'Metadata Manual',
+      moreInfo: 'Expanded details',
+      designers: ['A Designer'],
+      artists: ['An Artist'],
+      productionStaff: ['Editor'],
+      version: '2nd edition',
+      productCode: 'PR-42',
+      seriesCode: 'SER-7',
+      dimensions: '8 x 11 in',
+      series: ['Core line'],
+      setting: ['The Realm'],
+      family: ['Fantasy'],
+      system: ['d20'],
+      category: ['Sourcebook'],
+      mechanics: ['Dice rolling'],
+      genre: ['High fantasy'],
+    );
+    final row = original.toRow();
+    final restored = BookWork.fromRow(row);
+    expect(restored.moreInfo, original.moreInfo);
+    expect(restored.designers, original.designers);
+    expect(restored.artists, original.artists);
+    expect(restored.productionStaff, original.productionStaff);
+    expect(restored.version, original.version);
+    expect(restored.productCode, original.productCode);
+    expect(restored.seriesCode, original.seriesCode);
+    expect(restored.dimensions, original.dimensions);
+    expect(restored.series, original.series);
+    expect(restored.setting, original.setting);
+    expect(restored.family, original.family);
+    expect(restored.system, original.system);
+    expect(restored.category, original.category);
+    expect(restored.mechanics, original.mechanics);
+    expect(restored.genre, original.genre);
+  });
 }

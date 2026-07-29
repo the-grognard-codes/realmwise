@@ -68,11 +68,10 @@ class ExternalCatalogService {
         'Accept': 'application/xml',
         'User-Agent': 'RpgCatalog/1.0',
         'X-API-Key': apiKey.trim(),
-        'Authorization': 'Bearer ${apiKey.trim()}',
       };
       final candidates = <_RpgGeekSearchCandidate>[];
       for (final query in _rpgGeekQueries(original)) {
-        final search = Uri.https('api.rpggeek.com', '/xmlapi2/search', {
+        final search = Uri.https('boardgamegeek.com', '/xmlapi2/search', {
           'query': query,
           'type': 'rpgitem',
         });
@@ -99,9 +98,10 @@ class ExternalCatalogService {
       final selected = _selectRpgGeekCandidate(original.title, candidates);
       if (selected == null) return original;
       final id = selected.id;
-      final details = Uri.https('api.rpggeek.com', '/xmlapi2/thing', {
+      final details = Uri.https('boardgamegeek.com', '/xmlapi2/thing', {
         'id': id,
         'stats': '1',
+        'versions': '1',
       });
       final detailsResponse = await _client
           .get(details, headers: headers)
@@ -279,19 +279,57 @@ class ExternalCatalogService {
         .findAllElements('name')
         .map((element) => element.getAttribute('value') ?? '')
         .firstWhere((value) => value.isNotEmpty, orElse: () => '');
-    final publisher = item
-        .findAllElements('link')
-        .where(
-          (element) =>
-              element.getAttribute('type')?.contains('publisher') ?? false,
-        )
-        .map((element) => element.getAttribute('value') ?? '')
-        .firstWhere((value) => value.isNotEmpty, orElse: () => '');
+    final links = <String, List<String>>{};
+    for (final link in item.findAllElements('link')) {
+      final type = (link.getAttribute('type') ?? '').toLowerCase();
+      final value = (link.getAttribute('value') ?? link.innerText).trim();
+      if (type.isNotEmpty && value.isNotEmpty) {
+        (links[type] ??= <String>[]).add(value);
+      }
+    }
+    List<String> linkValues(String key) => links.entries
+        .where((entry) => entry.key == key || entry.key.endsWith(key) || entry.key.contains(key))
+        .expand((entry) => entry.value)
+        .toSet()
+        .toList();
+    String firstValue(String tag, String linkKey) =>
+        textFor(tag).trim().isNotEmpty ? textFor(tag) : (linkValues(linkKey).firstOrNull ?? '');
+    final publisherLinks = linkValues('publisher');
+    final designers = linkValues('designer');
+    final artists = linkValues('artist');
+    final production = linkValues('production');
+    final versionLinks = linkValues('version');
+    final versionNames = item
+        .findAllElements('versions')
+        .expand((element) => element.findAllElements('name'))
+        .map((element) => element.getAttribute('value') ?? element.innerText.trim())
+        .where((value) => value.trim().isNotEmpty)
+        .toList();
+    final isbn = firstValue('isbn', 'isbn');
     return WorkCandidate(
       title: named,
-      publisher: publisher,
+      isbn13: isbn,
+      publisher: publisherLinks.firstOrNull ?? '',
       publicationDate: attrFor('yearpublished', 'value'),
       summary: textFor('description'),
+      moreInfo: textFor('moreinfo'),
+      designers: designers,
+      artists: artists,
+      productionStaff: production,
+      version: versionLinks.firstOrNull ?? versionNames.firstOrNull ?? textFor('version'),
+      isbn: isbn,
+      productCode: firstValue('productcode', 'productcode'),
+      seriesCode: firstValue('seriescode', 'seriescode'),
+      dimensions: firstValue('dimensions', 'dimensions'),
+      series: linkValues('series'),
+      setting: linkValues('setting'),
+      family: linkValues('family'),
+      system: linkValues('system'),
+      category: linkValues('category'),
+      mechanics: linkValues('mechanic'),
+      genre: linkValues('genre'),
+      gameSystem: (linkValues('system').firstOrNull ?? ''),
+      gameSetting: (linkValues('setting').firstOrNull ?? ''),
       remoteCoverUrl: textFor('image'),
       rpgGeekId: id,
     );

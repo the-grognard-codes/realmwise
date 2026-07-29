@@ -80,6 +80,34 @@ void main() {
     expect(result, same(original));
     expect(client.requests.where((request) => request.url.path.endsWith('/thing')), isEmpty);
   });
+
+  test('captures RPGGeek extended metadata and link values', () async {
+    final client = _RecordingClient((request) => request.url.path.endsWith('/search')
+        ? _response('<items><item id="7"><name value="Dragon Quest"/></item></items>')
+        : _response('<items><item id="7"><name value="Dragon Quest"/>'
+            '<description>RPG description</description><moreinfo>https://info</moreinfo>'
+            '<isbn>9780000000000</isbn><productcode>PX</productcode><seriescode>SX</seriescode>'
+            '<dimensions>8x5</dimensions><link type="rpgproductcode" value="LPX"/>'
+            '<link type="rpgseriescode" value="LSX"/><link type="rpgdimensions" value="L8x5"/>'
+            '<link type="rpgdesigner" value="Designer"/>'
+            '<link type="rpgartist" value="Artist"/><link type="rpgpublisher" value="Pub"/>'
+            '<link type="rpgseries" value="Series"/><link type="rpgsetting" value="Setting"/>'
+            '<link type="rpgsystem" value="System"/><link type="rpgmechanic" value="Dice"/>'
+            '<link type="rpggenre" value="Fantasy"/></item></items>'));
+    final result = await ExternalCatalogService(client).enrichWithRpgGeek(
+      const WorkCandidate(title: 'Dragon Quest'), 'key');
+    expect(result.moreInfo, 'https://info');
+    expect(result.designers, ['Designer']);
+    expect(result.artists, ['Artist']);
+    expect(result.publisher, 'Pub');
+    expect(result.series, ['Series']);
+    expect(result.system, ['System']);
+    expect(result.mechanics, ['Dice']);
+    expect(result.genre, ['Fantasy']);
+    expect(result.productCode, 'PX');
+    expect(result.seriesCode, 'SX');
+    expect(result.dimensions, '8x5');
+  });
 }
 
 String _detailXml(String title, String id) =>

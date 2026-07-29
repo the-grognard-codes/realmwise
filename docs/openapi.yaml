@@ -93,6 +93,22 @@ components:
         gameSystem: {type: string}
         gameSetting: {type: string}
         bookType: {type: string}
+        moreInfo: {type: string}
+        designers: {type: array, items: {type: string}}
+        artists: {type: array, items: {type: string}}
+        productionStaff: {type: array, items: {type: string}}
+        version: {type: string}
+        isbn: {type: string}
+        productCode: {type: string}
+        seriesCode: {type: string}
+        dimensions: {type: string}
+        series: {type: array, items: {type: string}}
+        setting: {type: array, items: {type: string}}
+        family: {type: array, items: {type: string}}
+        system: {type: array, items: {type: string}}
+        category: {type: array, items: {type: string}}
+        mechanics: {type: array, items: {type: string}}
+        genre: {type: array, items: {type: string}}
     Results:
       type: object
       required: [ok, results]
