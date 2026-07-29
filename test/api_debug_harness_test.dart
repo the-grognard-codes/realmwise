@@ -9,6 +9,35 @@ import 'package:rpg_catalog/models/catalog_models.dart';
 import 'package:rpg_catalog/services/external_catalog_service.dart';
 
 void main() {
+  test('RPGGeek GET search and thing routes propagate bearer auth', () async {
+    String? searchKey;
+    String? thingKey;
+    final harness = await ApiDebugHarness.start(null, port: 0,
+      rpgGeekSearch: (query, key) async {
+        expect(query, 'Dragon Quest'); searchKey = key;
+        return [const WorkCandidate(title: 'Dragon Quest', rpgGeekId: '42')];
+      },
+      rpgGeekThing: (id, key) async {
+        expect(id, '42'); thingKey = key;
+        return const WorkCandidate(title: 'Dragon Quest', rpgGeekId: '42');
+      });
+    addTearDown(harness.close);
+    final client = http.Client(); addTearDown(client.close);
+    final base = '127.0.0.1:${harness.port}';
+    final headers = {'Authorization': 'Bearer secret-token'};
+    final search = await client.get(Uri.http(base, '/lookup/rpggeek/search', {'query': 'Dragon Quest'}), headers: headers);
+    expect(search.statusCode, 200);
+    expect(jsonDecode(search.body)['results'][0]['rpgGeekId'], '42');
+    final detail = await client.get(Uri.http(base, '/lookup/rpggeek/thing/42'), headers: headers);
+    expect(detail.statusCode, 200);
+    expect(jsonDecode(detail.body)['result']['title'], 'Dragon Quest');
+    expect(searchKey, 'secret-token'); expect(thingKey, 'secret-token');
+    final invalid = await client.get(Uri.http(base, '/lookup/rpggeek/search', {'query': 'x'}));
+    expect(invalid.statusCode, 400);
+    final old = await client.post(Uri.http(base, '/lookup/rpggeek'));
+    expect(old.statusCode, 404);
+  });
+
   test(
     'HTTP harness binds loopback and serves contract/error envelopes',
     () async {
@@ -77,17 +106,9 @@ void main() {
         ),
         isTrue,
       );
-      expect(
-        document['paths']['/lookup/rpggeek']['post']['responses']['200']['description'],
-        contains('enriched'),
-      );
-      final rpgOperation =
-          document['paths']['/lookup/rpggeek']['post'] as Map<String, dynamic>;
-      expect(rpgOperation['description'], contains('full title'));
-      expect(rpgOperation['description'], contains('subtitle-stripped fallback'));
-      expect(rpgOperation['description'], contains('de-duplicated and scored'));
-      expect(rpgOperation['description'], contains('detail XML'));
-      expect(rpgOperation['description'], contains('fail-open'));
+      expect(document['paths']['/lookup/rpggeek'], isNull);
+      expect(document['paths']['/lookup/rpggeek/search']['get']['security'], isNotNull);
+      expect(document['paths']['/lookup/rpggeek/thing/{id}']['get']['parameters'], isNotEmpty);
       final candidateSchema =
           document['components']['schemas']['Candidate'] as Map<String, dynamic>;
       expect(candidateSchema['description'], contains('publicationDate'));
@@ -95,19 +116,6 @@ void main() {
         (candidateSchema['properties'] as Map<String, dynamic>)['rpgGeekUrl']
             ['readOnly'],
         isTrue,
-      );
-      expect(
-        (document['paths']['/lookup/rpggeek']['post']['responses']['200']['content']
-                ['application/json']['example']['result'] as Map<String, dynamic>)
-            .keys,
-        containsAll([
-          'rpgGeekId',
-          'rpgGeekUrl',
-          'publisher',
-          'publicationDate',
-          'summary',
-          'remoteCoverUrl',
-        ]),
       );
       final landing = await client.get(
         Uri.http('127.0.0.1:${harness.port}', '/'),
@@ -130,22 +138,7 @@ void main() {
           document['paths']['/lookup/openlibrary']['get'] as Map<String, dynamic>;
       expect(operation['summary'], 'Search Open Library');
       expect(operation['description'], contains('ISBN'));
-      final requestSchema = document['paths']['/lookup/rpggeek']['post']
-          ['requestBody']['content']['application/json']['schema'] as Map<String, dynamic>;
-      final apiKeySchema = requestSchema['properties']['apiKey'] as Map<String, dynamic>;
-      expect(apiKeySchema['writeOnly'], isTrue);
-      expect(apiKeySchema['format'], 'password');
-      expect(apiKeySchema.containsKey('example'), isFalse);
-      final malformed = await client.post(
-        Uri.http('127.0.0.1:${harness.port}', '/lookup/rpggeek'),
-        body: jsonEncode({
-          'apiKey': 'super-secret-token',
-          'candidate': {'title': 'Test'},
-        }),
-      );
-      expect(malformed.statusCode, 400);
-      expect(malformed.body, isNot(contains('super-secret-token')));
-      expect(jsonDecode(malformed.body)['ok'], isFalse);
+      expect(document['components']['securitySchemes']['bearerAuth']['scheme'], 'bearer');
     },
   );
 

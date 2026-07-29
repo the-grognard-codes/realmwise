@@ -75,19 +75,20 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
       _results = const [];
     });
     try {
+      final key = await widget.controller.rpgGeekKey();
       final results = switch (_mode) {
-        LookupMode.isbn => await widget.controller.lookup.searchByIsbn(
-            _query.text,
-          ),
+        LookupMode.isbn => await widget.controller.lookup.searchByIsbn(_query.text, apiKey: key),
         LookupMode.title =>
           await widget.controller.lookup.searchByTitleOrAuthor(
             term: _query.text,
             author: false,
+            apiKey: key,
           ),
         LookupMode.author =>
           await widget.controller.lookup.searchByTitleOrAuthor(
             term: _query.text,
             author: true,
+            apiKey: key,
           ),
       };
       if (mounted)
@@ -108,10 +109,9 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
     setState(() => _searching = true);
     try {
       final key = await widget.controller.rpgGeekKey();
-      final enriched = await widget.controller.lookup.enrichWithRpgGeek(
-        initial,
-        key,
-      );
+      final enriched = initial.rpgGeekId.trim().isNotEmpty
+          ? await widget.controller.lookup.fetchRpgGeekDetails(initial, key)
+          : initial;
       final existing = enriched.isbn13.isEmpty
           ? null
           : await widget.controller.catalog.findByIsbn(enriched.isbn13);
@@ -347,6 +347,7 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
 
   String _subtitle(WorkCandidate candidate) {
     final pieces = <String>[
+      if (candidate.rpgGeekId.isNotEmpty) 'RPGGeek candidate — confirm to load details',
       if (candidate.authors.isNotEmpty) candidate.authors.join(', '),
       if (candidate.isbn13.isNotEmpty) 'ISBN ${candidate.isbn13}',
       if (candidate.publicationDate.isNotEmpty) candidate.publicationDate,

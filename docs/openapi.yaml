@@ -21,42 +21,37 @@ paths:
         '200': {description: Results envelope, content: {application/json: {schema: {$ref: '#/components/schemas/Results'}}}}
         '400': {description: Invalid request, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '503': {description: Upstream unavailable, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
-  /lookup/rpggeek:
-    post:
-      summary: Enrich a candidate with RPGGeek
+  /lookup/rpggeek/search:
+    get:
+      summary: Search RPGGeek RPG items
+      security: [{bearerAuth: []}]
       description: >-
-        Searches RPGGeek with the full candidate title and, when applicable,
-        a subtitle-stripped fallback. Results are de-duplicated and scored
-        against the title; the best match is fetched from detail XML (including
-        stats) and merged. An empty key or upstream failure returns the
-        original candidate unchanged (fail-open). The API key is writeOnly and
-        is never returned or logged.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [candidate]
-              properties:
-                apiKey: {type: string, format: password, writeOnly: true}
-                candidate: {$ref: '#/components/schemas/Candidate'}
+        Searches RPGGeek RPG items by query and returns ranked minimal
+        candidates. Supply the credential only in the Authorization Bearer
+        header; it is never returned or logged.
+      parameters:
+        - {name: query, in: query, required: true, schema: {type: string}}
       responses:
         '200':
-          description: Result envelope containing the enriched (or unchanged) candidate
+          description: Ranked minimal candidates envelope
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Result'}
+              schema: {$ref: '#/components/schemas/Results'}
               example:
                 ok: true
-                result:
-                  title: Dungeons & Dragons
-                  rpgGeekId: '12345'
-                  rpgGeekUrl: https://rpggeek.com/rpgitem/12345
-                  publisher: Wizards of the Coast
-                  publicationDate: '2014'
-                  summary: Core rulebook
-                  remoteCoverUrl: https://example.invalid/cover.jpg
+                results:
+                  - title: Dungeons & Dragons
+                    rpgGeekId: '12345'
+        '400': {description: Invalid request, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '503': {description: Upstream unavailable, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /lookup/rpggeek/thing/{id}:
+    get:
+      summary: Fetch raw RPGGeek item detail
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: Result envelope, content: {application/json: {schema: {$ref: '#/components/schemas/Result'}}}}
         '400': {description: Invalid request, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '503': {description: Upstream unavailable, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
   /openapi.json:
@@ -64,6 +59,10 @@ paths:
       responses:
         '200': {description: This OpenAPI document}
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
   schemas:
     Error:
       type: object
