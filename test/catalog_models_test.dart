@@ -2,6 +2,30 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:rpg_catalog/models/catalog_models.dart';
 
 void main() {
+  test('RPGGeek URL is derived only for a nonempty ID', () {
+    const withId = BookWork(title: 'Book', rpgGeekId: ' 42 ');
+    const withoutId = BookWork(title: 'Book');
+
+    expect(withId.rpgGeekUrl, 'https://rpggeek.com/rpgitem/42');
+    expect(withoutId.rpgGeekUrl, isNull);
+    expect(
+      const BookWork(title: 'Book', rpgGeekId: '42/evil').rpgGeekUrl,
+      isNull,
+    );
+    expect(
+      const BookWork(title: 'Book', rpgGeekId: 'abc').rpgGeekUrl,
+      isNull,
+    );
+    expect(
+      const BookWork(title: 'Book', rpgGeekId: '４２').rpgGeekUrl,
+      isNull,
+    );
+    expect(
+      const WorkCandidate(title: 'Book', rpgGeekId: '99').rpgGeekUrl,
+      'https://rpggeek.com/rpgitem/99',
+    );
+  });
+
   test('RPGGeek enrichment prefers nonempty RPGGeek metadata', () {
     const openLibrary = WorkCandidate(
       title: 'Open title',
@@ -39,5 +63,43 @@ void main() {
     expect(record.matches('', 'signed'), isTrue);
     expect(record.matches('dragon', 'classic'), isTrue);
     expect(record.matches('rifts', null), isFalse);
+  });
+
+  test('extended RPGGeek metadata round trips through work rows', () {
+    const original = BookWork(
+      title: 'Metadata Manual',
+      moreInfo: 'Expanded details',
+      designers: ['A Designer'],
+      artists: ['An Artist'],
+      productionStaff: ['Editor'],
+      version: '2nd edition',
+      productCode: 'PR-42',
+      seriesCode: 'SER-7',
+      dimensions: '8 x 11 in',
+      series: ['Core line'],
+      setting: ['The Realm'],
+      family: ['Fantasy'],
+      system: ['d20'],
+      category: ['Sourcebook'],
+      mechanics: ['Dice rolling'],
+      genre: ['High fantasy'],
+    );
+    final row = original.toRow();
+    final restored = BookWork.fromRow(row);
+    expect(restored.moreInfo, original.moreInfo);
+    expect(restored.designers, original.designers);
+    expect(restored.artists, original.artists);
+    expect(restored.productionStaff, original.productionStaff);
+    expect(restored.version, original.version);
+    expect(restored.productCode, original.productCode);
+    expect(restored.seriesCode, original.seriesCode);
+    expect(restored.dimensions, original.dimensions);
+    expect(restored.series, original.series);
+    expect(restored.setting, original.setting);
+    expect(restored.family, original.family);
+    expect(restored.system, original.system);
+    expect(restored.category, original.category);
+    expect(restored.mechanics, original.mechanics);
+    expect(restored.genre, original.genre);
   });
 }

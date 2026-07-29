@@ -31,7 +31,7 @@ class DatabaseService {
     _databasePath = filePath;
     _database = await openDatabase(
       filePath,
-      version: 3,
+      version: 4,
       onConfigure: (database) async =>
           database.execute('PRAGMA foreign_keys = ON'),
       onCreate: _createSchema,
@@ -45,6 +45,11 @@ class DatabaseService {
         }
         if (oldVersion < 3) {
           await db.execute('ALTER TABLE catalog_icons ADD COLUMN zoom REAL NOT NULL DEFAULT 1');
+        }
+        if (oldVersion < 4) {
+          for (final definition in _extendedWorkColumns.entries) {
+            await _addColumnIfMissing(db, 'works', definition.key, definition.value);
+          }
         }
       },
     );
@@ -74,6 +79,21 @@ class DatabaseService {
         remote_cover_url TEXT NOT NULL DEFAULT '',
         open_library_id TEXT NOT NULL DEFAULT '',
         rpggeek_id TEXT NOT NULL DEFAULT '',
+        more_info TEXT NOT NULL DEFAULT '',
+        designers TEXT NOT NULL DEFAULT '[]',
+        artists TEXT NOT NULL DEFAULT '[]',
+        production_staff TEXT NOT NULL DEFAULT '[]',
+        version TEXT NOT NULL DEFAULT '',
+        product_code TEXT NOT NULL DEFAULT '',
+        series_code TEXT NOT NULL DEFAULT '',
+        dimensions TEXT NOT NULL DEFAULT '',
+        series TEXT NOT NULL DEFAULT '[]',
+        setting TEXT NOT NULL DEFAULT '[]',
+        family TEXT NOT NULL DEFAULT '[]',
+        system TEXT NOT NULL DEFAULT '[]',
+        category TEXT NOT NULL DEFAULT '[]',
+        mechanics TEXT NOT NULL DEFAULT '[]',
+        genre TEXT NOT NULL DEFAULT '[]',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
@@ -120,6 +140,36 @@ class DatabaseService {
       alignment_x REAL NOT NULL DEFAULT 0, alignment_y REAL NOT NULL DEFAULT 0, zoom REAL NOT NULL DEFAULT 1,
       PRIMARY KEY (tier, section_name)
     )''');
+  }
+
+  static const _extendedWorkColumns = <String, String>{
+    'more_info': "TEXT NOT NULL DEFAULT ''",
+    'designers': "TEXT NOT NULL DEFAULT '[]'",
+    'artists': "TEXT NOT NULL DEFAULT '[]'",
+    'production_staff': "TEXT NOT NULL DEFAULT '[]'",
+    'version': "TEXT NOT NULL DEFAULT ''",
+    'product_code': "TEXT NOT NULL DEFAULT ''",
+    'series_code': "TEXT NOT NULL DEFAULT ''",
+    'dimensions': "TEXT NOT NULL DEFAULT ''",
+    'series': "TEXT NOT NULL DEFAULT '[]'",
+    'setting': "TEXT NOT NULL DEFAULT '[]'",
+    'family': "TEXT NOT NULL DEFAULT '[]'",
+    'system': "TEXT NOT NULL DEFAULT '[]'",
+    'category': "TEXT NOT NULL DEFAULT '[]'",
+    'mechanics': "TEXT NOT NULL DEFAULT '[]'",
+    'genre': "TEXT NOT NULL DEFAULT '[]'",
+  };
+
+  static Future<void> _addColumnIfMissing(Database db, String table,
+      String column, String definition) async {
+    final tableRows = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+      [table],
+    );
+    if (tableRows.isEmpty) return;
+    final rows = await db.rawQuery('PRAGMA table_info($table)');
+    if (rows.any((row) => row['name'] == column)) return;
+    await db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
   }
 
   Future<List<CatalogIconMapping>> listCatalogIcons() async {

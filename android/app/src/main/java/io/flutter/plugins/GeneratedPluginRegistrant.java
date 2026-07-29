@@ -1,4 +1,3 @@
-
 package io.flutter.plugins;
 
 import androidx.annotation.Keep;
@@ -14,65 +13,52 @@ import io.flutter.embedding.engine.FlutterEngine;
  */
 @Keep
 public final class GeneratedPluginRegistrant {
-    private static final String TAG = "GeneratedPluginRegistrant";
-    public static void registerWith(@NonNull FlutterEngine flutterEngine) {
-        try {
-            try {
-                Class<?> cls = Class.forName("com.mr.flutter.plugin.filepicker.FilePickerPlugin");
-                Object plugin = cls.getDeclaredConstructor().newInstance();
-                flutterEngine.getPlugins().add((io.flutter.embedding.engine.plugins.FlutterPlugin) plugin);
-            } catch (ClassNotFoundException cnfe) {
-                Log.w(TAG, "Plugin class com.mr.flutter.plugin.filepicker.FilePickerPlugin not found, skipping registration.");
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error registering plugin file_picker via reflection", e);
-        }
-        try {
-            try {
-                Class<?> cls = Class.forName("com.baseflow.permissionhandler.PermissionHandlerPlugin");
-                Object plugin = cls.getDeclaredConstructor().newInstance();
-                flutterEngine.getPlugins().add((io.flutter.embedding.engine.plugins.FlutterPlugin) plugin);
-            } catch (ClassNotFoundException cnfe) {
-                Log.w(TAG, "Plugin class com.baseflow.permissionhandler.PermissionHandlerPlugin not found, skipping registration.");
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error registering plugin permission_handler via reflection", e);
-        }
-        try {
-            try {
-                Class<?> cls = Class.forName("dev.steenbakker.mobile_scanner.MobileScannerPlugin");
-                Object plugin = cls.getDeclaredConstructor().newInstance();
-                flutterEngine.getPlugins().add((io.flutter.embedding.engine.plugins.FlutterPlugin) plugin);
-            } catch (ClassNotFoundException cnfe) {
-                Log.w(TAG, "Plugin class dev.steenbakker.mobile_scanner.MobileScannerPlugin not found, skipping registration.");
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error registering plugin mobile_scanner via reflection", e);
-        }
-        try {
-            flutterEngine.getPlugins().add(new io.flutter.plugins.flutter_plugin_android_lifecycle.FlutterAndroidLifecyclePlugin());
-        } catch (Exception e) {
-            Log.e(TAG, "Error registering plugin flutter_plugin_android_lifecycle, io.flutter.plugins.flutter_plugin_android_lifecycle.FlutterAndroidLifecyclePlugin", e);
-        }
-        try {
-            flutterEngine.getPlugins().add(new com.github.dart_lang.jni.JniPlugin());
-        } catch (Exception e) {
-            Log.e(TAG, "Error registering plugin jni, com.github.dart_lang.jni.JniPlugin", e);
-        }
-        try {
-            flutterEngine.getPlugins().add(new com.github.dart_lang.jni_flutter.JniFlutterPlugin());
-        } catch (Exception e) {
-            Log.e(TAG, "Error registering plugin jni_flutter, com.github.dart_lang.jni_flutter.JniFlutterPlugin", e);
-        }
-        try {
-            flutterEngine.getPlugins().add(new io.flutter.plugins.sharedpreferences.SharedPreferencesPlugin());
-        } catch (Exception e) {
-            Log.e(TAG, "Error registering plugin shared_preferences_android, io.flutter.plugins.sharedpreferences.SharedPreferencesPlugin", e);
-        }
-        try {
-            flutterEngine.getPlugins().add(new com.tekartik.sqflite.SqflitePlugin());
-        } catch (Exception e) {
-            Log.e(TAG, "Error registering plugin sqflite_android, com.tekartik.sqflite.SqflitePlugin", e);
-        }
+  private static final String TAG = "GeneratedPluginRegistrant";
+  public static void registerWith(@NonNull FlutterEngine flutterEngine) {
+    try {
+      flutterEngine.getPlugins().add(new com.mr.flutter.plugin.filepicker.FilePickerPlugin());
+    } catch (Exception e) {
+      Log.e(TAG, "Error registering plugin file_picker, com.mr.flutter.plugin.filepicker.FilePickerPlugin", e);
     }
+    try {
+      flutterEngine.getPlugins().add(new io.flutter.plugins.flutter_plugin_android_lifecycle.FlutterAndroidLifecyclePlugin());
+    } catch (Exception e) {
+      Log.e(TAG, "Error registering plugin flutter_plugin_android_lifecycle, io.flutter.plugins.flutter_plugin_android_lifecycle.FlutterAndroidLifecyclePlugin", e);
+    }
+    try {
+      flutterEngine.getPlugins().add(new com.github.dart_lang.jni.JniPlugin());
+    } catch (Exception e) {
+      Log.e(TAG, "Error registering plugin jni, com.github.dart_lang.jni.JniPlugin", e);
+    }
+    try {
+      flutterEngine.getPlugins().add(new com.github.dart_lang.jni_flutter.JniFlutterPlugin());
+    } catch (Exception e) {
+      Log.e(TAG, "Error registering plugin jni_flutter, com.github.dart_lang.jni_flutter.JniFlutterPlugin", e);
+    }
+    try {
+      flutterEngine.getPlugins().add(new dev.steenbakker.mobile_scanner.MobileScannerPlugin());
+    } catch (Exception e) {
+      Log.e(TAG, "Error registering plugin mobile_scanner, dev.steenbakker.mobile_scanner.MobileScannerPlugin", e);
+    }
+    try {
+      flutterEngine.getPlugins().add(new com.baseflow.permissionhandler.PermissionHandlerPlugin());
+    } catch (Exception e) {
+      Log.e(TAG, "Error registering plugin permission_handler_android, com.baseflow.permissionhandler.PermissionHandlerPlugin", e);
+    }
+    try {
+      flutterEngine.getPlugins().add(new io.flutter.plugins.sharedpreferences.SharedPreferencesPlugin());
+    } catch (Exception e) {
+      Log.e(TAG, "Error registering plugin shared_preferences_android, io.flutter.plugins.sharedpreferences.SharedPreferencesPlugin", e);
+    }
+    try {
+      flutterEngine.getPlugins().add(new com.tekartik.sqflite.SqflitePlugin());
+    } catch (Exception e) {
+      Log.e(TAG, "Error registering plugin sqflite_android, com.tekartik.sqflite.SqflitePlugin", e);
+    }
+    try {
+      flutterEngine.getPlugins().add(new io.flutter.plugins.urllauncher.UrlLauncherPlugin());
+    } catch (Exception e) {
+      Log.e(TAG, "Error registering plugin url_launcher_android, io.flutter.plugins.urllauncher.UrlLauncherPlugin", e);
+    }
+  }
 }

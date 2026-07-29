@@ -85,4 +85,37 @@ void main() {
     await service.close();
     await folder.delete(recursive: true);
   });
+
+  test('extended RPGGeek metadata persists in the works table', () async {
+    final folder = await Directory.systemTemp.createTemp('rpg_catalog_metadata_');
+    final service = DatabaseService();
+    await service.open('${folder.path}${Platform.pathSeparator}catalog.db');
+    final saved = await service.saveRecord(const CatalogRecord(
+      work: BookWork(
+        title: 'Metadata Manual',
+        moreInfo: 'Expanded details',
+        designers: ['A Designer'],
+        artists: ['An Artist'],
+        productionStaff: ['Editor'],
+        version: '2nd edition',
+        productCode: 'PR-42',
+        seriesCode: 'SER-7',
+        dimensions: '8 x 11 in',
+        series: ['Core line'],
+        setting: ['The Realm'],
+        family: ['Fantasy'],
+        system: ['d20'],
+        category: ['Sourcebook'],
+        mechanics: ['Dice rolling'],
+        genre: ['High fantasy'],
+      ),
+    ));
+    final loaded = await service.getRecord(saved.work.id!);
+    expect(loaded.work.moreInfo, 'Expanded details');
+    expect(loaded.work.designers, ['A Designer']);
+    expect(loaded.work.productionStaff, ['Editor']);
+    expect(loaded.work.genre, ['High fantasy']);
+    await service.close();
+    await folder.delete(recursive: true);
+  });
 }

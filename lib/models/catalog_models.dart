@@ -17,6 +17,11 @@ class BookWork {
     this.remoteCoverUrl = '',
     this.openLibraryId = '',
     this.rpgGeekId = '',
+    this.moreInfo = '', this.designers = const [], this.artists = const [],
+    this.productionStaff = const [], this.version = '', this.productCode = '',
+    this.seriesCode = '', this.dimensions = '', this.series = const [],
+    this.setting = const [], this.family = const [], this.system = const [],
+    this.category = const [], this.mechanics = const [], this.genre = const [],
   });
 
   final int? id;
@@ -33,6 +38,20 @@ class BookWork {
   final String remoteCoverUrl;
   final String openLibraryId;
   final String rpgGeekId;
+  final String moreInfo, version, productCode, seriesCode, dimensions;
+  final List<String> designers, artists, productionStaff, series, setting,
+      family, system, category, mechanics, genre;
+
+  /// The public RPGGeek item page for this work, when an ID is available.
+  String? get rpgGeekUrl {
+    final id = rpgGeekId.trim();
+    if (!RegExp(r'^[0-9]+$').hasMatch(id)) return null;
+    return Uri(
+      scheme: 'https',
+      host: 'rpggeek.com',
+      pathSegments: ['rpgitem', id],
+    ).toString();
+  }
 
   BookWork copyWith({
     int? id,
@@ -50,6 +69,11 @@ class BookWork {
     String? remoteCoverUrl,
     String? openLibraryId,
     String? rpgGeekId,
+    String? moreInfo, List<String>? designers, List<String>? artists,
+    List<String>? productionStaff, String? version, String? productCode,
+    String? seriesCode, String? dimensions, List<String>? series,
+    List<String>? setting, List<String>? family, List<String>? system,
+    List<String>? category, List<String>? mechanics, List<String>? genre,
   }) =>
       BookWork(
         id: id ?? this.id,
@@ -66,6 +90,13 @@ class BookWork {
         remoteCoverUrl: remoteCoverUrl ?? this.remoteCoverUrl,
         openLibraryId: openLibraryId ?? this.openLibraryId,
         rpgGeekId: rpgGeekId ?? this.rpgGeekId,
+        moreInfo: moreInfo ?? this.moreInfo, designers: designers ?? this.designers,
+        artists: artists ?? this.artists, productionStaff: productionStaff ?? this.productionStaff,
+        version: version ?? this.version, productCode: productCode ?? this.productCode,
+        seriesCode: seriesCode ?? this.seriesCode, dimensions: dimensions ?? this.dimensions,
+        series: series ?? this.series, setting: setting ?? this.setting, family: family ?? this.family,
+        system: system ?? this.system, category: category ?? this.category,
+        mechanics: mechanics ?? this.mechanics, genre: genre ?? this.genre,
       );
 
   Map<String, Object?> toRow() => {
@@ -83,6 +114,21 @@ class BookWork {
         'remote_cover_url': remoteCoverUrl.trim(),
         'open_library_id': openLibraryId.trim(),
         'rpggeek_id': rpgGeekId.trim(),
+        'more_info': moreInfo.trim(),
+        'designers': jsonEncode(designers),
+        'artists': jsonEncode(artists),
+        'production_staff': jsonEncode(productionStaff),
+        'version': version.trim(),
+        'product_code': productCode.trim(),
+        'series_code': seriesCode.trim(),
+        'dimensions': dimensions.trim(),
+        'series': jsonEncode(series),
+        'setting': jsonEncode(setting),
+        'family': jsonEncode(family),
+        'system': jsonEncode(system),
+        'category': jsonEncode(category),
+        'mechanics': jsonEncode(mechanics),
+        'genre': jsonEncode(genre),
       };
 
   factory BookWork.fromRow(Map<String, Object?> row) => BookWork(
@@ -100,6 +146,21 @@ class BookWork {
         remoteCoverUrl: row['remote_cover_url'] as String? ?? '',
         openLibraryId: row['open_library_id'] as String? ?? '',
         rpgGeekId: row['rpggeek_id'] as String? ?? '',
+        moreInfo: row['more_info'] as String? ?? '',
+        designers: _stringList(row['designers']),
+        artists: _stringList(row['artists']),
+        productionStaff: _stringList(row['production_staff']),
+        version: row['version'] as String? ?? '',
+        productCode: row['product_code'] as String? ?? '',
+        seriesCode: row['series_code'] as String? ?? '',
+        dimensions: row['dimensions'] as String? ?? '',
+        series: _stringList(row['series']),
+        setting: _stringList(row['setting']),
+        family: _stringList(row['family']),
+        system: _stringList(row['system']),
+        category: _stringList(row['category']),
+        mechanics: _stringList(row['mechanics']),
+        genre: _stringList(row['genre']),
       );
 }
 
@@ -330,6 +391,12 @@ class WorkCandidate {
     this.gameSystem = '',
     this.gameSetting = '',
     this.bookType = '',
+    this.moreInfo = '', this.designers = const [], this.artists = const [],
+    this.productionStaff = const [], this.version = '', this.isbn = '',
+    this.productCode = '', this.seriesCode = '', this.dimensions = '',
+    this.series = const [], this.setting = const [], this.family = const [],
+    this.system = const [], this.category = const [], this.mechanics = const [],
+    this.genre = const [],
   });
 
   final String title;
@@ -345,6 +412,20 @@ class WorkCandidate {
   final String gameSystem;
   final String gameSetting;
   final String bookType;
+  final String moreInfo, version, isbn, productCode, seriesCode, dimensions;
+  final List<String> designers, artists, productionStaff, series, setting,
+      family, system, category, mechanics, genre;
+
+  /// The public RPGGeek item page for this candidate, when an ID is available.
+  String? get rpgGeekUrl {
+    final id = rpgGeekId.trim();
+    if (!RegExp(r'^[0-9]+$').hasMatch(id)) return null;
+    return Uri(
+      scheme: 'https',
+      host: 'rpggeek.com',
+      pathSegments: ['rpgitem', id],
+    ).toString();
+  }
 
   WorkCandidate mergeRpgGeek(WorkCandidate rpgGeek) => WorkCandidate(
         title: rpgGeek.title.trim().isNotEmpty ? rpgGeek.title : title,
@@ -370,6 +451,14 @@ class WorkCandidate {
             : gameSetting,
         bookType:
             rpgGeek.bookType.trim().isNotEmpty ? rpgGeek.bookType : bookType,
+        moreInfo: _prefer(rpgGeek.moreInfo, moreInfo), designers: _preferList(rpgGeek.designers, designers),
+        artists: _preferList(rpgGeek.artists, artists), productionStaff: _preferList(rpgGeek.productionStaff, productionStaff),
+        version: _prefer(rpgGeek.version, version), isbn: _prefer(rpgGeek.isbn, isbn),
+        productCode: _prefer(rpgGeek.productCode, productCode), seriesCode: _prefer(rpgGeek.seriesCode, seriesCode),
+        dimensions: _prefer(rpgGeek.dimensions, dimensions), series: _preferList(rpgGeek.series, series),
+        setting: _preferList(rpgGeek.setting, setting), family: _preferList(rpgGeek.family, family),
+        system: _preferList(rpgGeek.system, system), category: _preferList(rpgGeek.category, category),
+        mechanics: _preferList(rpgGeek.mechanics, mechanics), genre: _preferList(rpgGeek.genre, genre),
       );
 
   CatalogRecord toRecord() => CatalogRecord(
@@ -387,10 +476,17 @@ class WorkCandidate {
           gameSystem: gameSystem,
           gameSetting: gameSetting,
           bookType: bookType,
+          moreInfo: moreInfo, designers: designers, artists: artists,
+          productionStaff: productionStaff, version: version, productCode: productCode,
+          seriesCode: seriesCode, dimensions: dimensions, series: series, setting: setting,
+          family: family, system: system, category: category, mechanics: mechanics, genre: genre,
         ),
         copies: const [UserCopy()],
       );
 }
+
+String _prefer(String a, String b) => a.trim().isNotEmpty ? a : b;
+List<String> _preferList(List<String> a, List<String> b) => a.isNotEmpty ? a : b;
 
 List<String> _stringList(Object? stored) {
   if (stored == null || stored.toString().isEmpty) return const [];

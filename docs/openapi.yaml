@@ -1,89 +1,36 @@
 openapi: 3.0.3
 info:
-  title: RPG Catalog Local Service Contract
+  title: RPG Catalog Debug Harness API
   version: 1.0.0
-  description: |
-    The Flutter client calls these operations through its local DatabaseService,
-    CatalogService, ImageStorageService, and ExternalCatalogService classes.
-    This contract is deliberately transport-neutral so it can be imported into
-    Swagger UI for interactive documentation without exposing the collector's
-    local SQLite database over the network.
+  description: >-
+    Opt-in loopback-only debug service. Swagger is available at / and this
+    contract at /openapi.json. API keys are writeOnly, never persisted by
+    requests, returned, or logged.
 servers:
-  - url: local://rpg-catalog
-    description: In-process local-first service boundary
+  - url: http://127.0.0.1:8080
 paths:
-  /records:
-    get:
-      summary: List locally cataloged works and owned copies
-      responses:
-        '200':
-          description: Catalog records
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/CatalogRecord'
-    post:
-      summary: Create or update a local catalog record
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CatalogRecord'
-      responses:
-        '200':
-          description: Saved record
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CatalogRecord'
-  /records/{workId}:
-    get:
-      summary: Get one local record
-      parameters:
-        - $ref: '#/components/parameters/workId'
-      responses:
-        '200':
-          description: Record
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CatalogRecord'
-    delete:
-      summary: Delete a work, all copies, and database image references
-      parameters:
-        - $ref: '#/components/parameters/workId'
-      responses:
-        '204':
-          description: Deleted
   /lookup/openlibrary:
     get:
-      summary: Search OpenLibrary by ISBN, title, or author when online
       parameters:
-        - name: isbn
-          in: query
-          schema: { type: string }
-        - name: title
-          in: query
-          schema: { type: string }
-        - name: author
-          in: query
-          schema: { type: string }
+        - {name: isbn, in: query, schema: {type: string}}
+        - {name: title, in: query, schema: {type: string}}
+        - {name: author, in: query, schema: {type: string}}
+        - {name: ownerName, in: query, schema: {type: string}}
+        - {name: ownerEmail, in: query, schema: {type: string, format: email}}
       responses:
-        '200':
-          description: Up to five normalized work candidates
-          content:
-            application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/WorkCandidate' }
-        '503':
-          description: Offline or unavailable; manual entry remains available
+        '200': {description: Results envelope, content: {application/json: {schema: {$ref: '#/components/schemas/Results'}}}}
+        '400': {description: Invalid request, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '503': {description: Upstream unavailable, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
   /lookup/rpggeek:
     post:
-      summary: Optionally enrich a selected candidate; nonblank RPGGeek values take precedence
+      summary: Enrich a candidate with RPGGeek
+      description: >-
+        Searches RPGGeek with the full candidate title and, when applicable,
+        a subtitle-stripped fallback. Results are de-duplicated and scored
+        against the title; the best match is fetched from detail XML (including
+        stats) and merged. An empty key or upstream failure returns the
+        original candidate unchanged (fail-open). The API key is writeOnly and
+        is never returned or logged.
       requestBody:
         required: true
         content:
@@ -92,72 +39,85 @@ paths:
               type: object
               required: [candidate]
               properties:
-                apiKey: { type: string, writeOnly: true }
-                candidate: { $ref: '#/components/schemas/WorkCandidate' }
+                apiKey: {type: string, format: password, writeOnly: true}
+                candidate: {$ref: '#/components/schemas/Candidate'}
       responses:
         '200':
-          description: Enriched candidate
+          description: Result envelope containing the enriched (or unchanged) candidate
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/WorkCandidate' }
-  /backups:
-    post:
-      summary: Checkpoint and create a local SQLite snapshot
+              schema: {$ref: '#/components/schemas/Result'}
+              example:
+                ok: true
+                result:
+                  title: Dungeons & Dragons
+                  rpgGeekId: '12345'
+                  rpgGeekUrl: https://rpggeek.com/rpgitem/12345
+                  publisher: Wizards of the Coast
+                  publicationDate: '2014'
+                  summary: Core rulebook
+                  remoteCoverUrl: https://example.invalid/cover.jpg
+        '400': {description: Invalid request, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '503': {description: Upstream unavailable, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /openapi.json:
+    get:
       responses:
-        '201': { description: Backup file created }
-  /images:
-    post:
-      summary: Copy an image into the configured local image folder
-      responses:
-        '201': { description: Local image reference created }
+        '200': {description: This OpenAPI document}
 components:
-  parameters:
-    workId:
-      name: workId
-      in: path
-      required: true
-      schema: { type: integer }
   schemas:
-    Work:
+    Error:
       type: object
-      required: [title]
+      required: [ok, error]
       properties:
-        id: { type: integer, readOnly: true }
-        isbn13: { type: string, example: '9780786915743' }
-        title: { type: string }
-        authors: { type: array, items: { type: string } }
-        publisher: { type: string }
-        publicationDate: { type: string }
-        summary: { type: string }
-        pageCount: { type: integer }
-        gameSystem: { type: string }
-        gameSetting: { type: string }
-        bookType: { type: string }
-        remoteCoverUrl: { type: string, format: uri }
-    UserCopy:
+        ok: {type: boolean, enum: [false]}
+        error: {type: string}
+    Candidate:
       type: object
+      description: >-
+        A catalog work candidate and optional remote metadata. Nonempty RPGGeek
+        title, publisher, publicationDate, summary, and remoteCoverUrl values
+        override Open Library values; OpenLibrary-only fields such as ISBN and
+        authors, plus any RPGGeek-absent fields, remain.
       properties:
-        condition: { type: string, enum: [mint, nearMint, excellent, good, poor, damaged] }
-        pricePaid: { type: number }
-        acquisitionDate: { type: string, format: date }
-        acquiredSource: { type: string }
-        notes: { type: string }
-        favorite: { type: boolean }
-        tags: { type: array, items: { type: string } }
-    BookImage:
+        title: {type: string}
+        isbn13: {type: string}
+        authors: {type: array, items: {type: string}}
+        publisher: {type: string}
+        publicationDate: {type: string}
+        summary: {type: string}
+        pageCount: {type: integer, nullable: true}
+        remoteCoverUrl: {type: string}
+        openLibraryId: {type: string}
+        rpgGeekId: {type: string}
+        rpgGeekUrl: {type: string, format: uri, nullable: true, readOnly: true, description: Public RPGGeek item page derived from rpgGeekId.}
+        gameSystem: {type: string}
+        gameSetting: {type: string}
+        bookType: {type: string}
+        moreInfo: {type: string}
+        designers: {type: array, items: {type: string}}
+        artists: {type: array, items: {type: string}}
+        productionStaff: {type: array, items: {type: string}}
+        version: {type: string}
+        isbn: {type: string}
+        productCode: {type: string}
+        seriesCode: {type: string}
+        dimensions: {type: string}
+        series: {type: array, items: {type: string}}
+        setting: {type: array, items: {type: string}}
+        family: {type: array, items: {type: string}}
+        system: {type: array, items: {type: string}}
+        category: {type: array, items: {type: string}}
+        mechanics: {type: array, items: {type: string}}
+        genre: {type: array, items: {type: string}}
+    Results:
       type: object
+      required: [ok, results]
       properties:
-        localPath: { type: string }
-        remoteUrl: { type: string, format: uri }
-        caption: { type: string }
-        isCover: { type: boolean }
-    CatalogRecord:
+        ok: {type: boolean, enum: [true]}
+        results: {type: array, items: {$ref: '#/components/schemas/Candidate'}}
+    Result:
       type: object
-      required: [work, copies]
+      required: [ok, result]
       properties:
-        work: { $ref: '#/components/schemas/Work' }
-        copies: { type: array, items: { $ref: '#/components/schemas/UserCopy' } }
-        images: { type: array, items: { $ref: '#/components/schemas/BookImage' } }
-    WorkCandidate:
-      allOf:
-        - $ref: '#/components/schemas/Work'
+        ok: {type: boolean, enum: [true]}
+        result: {$ref: '#/components/schemas/Candidate'}
