@@ -78,6 +78,37 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     _notes = TextEditingController();
     _tags = TextEditingController();
     _loadCopy(0);
+    if (_record.images.isEmpty &&
+        _record.work.remoteCoverUrl.trim().isNotEmpty) {
+      _loadRemoteCover();
+    }
+  }
+
+  /// Pre-fetch a searched work's cover so it is visible in the Images tab
+  /// before the user saves the record. A failed fetch is intentionally
+  /// non-fatal: the URL remains available for the save-time retry.
+  Future<void> _loadRemoteCover() async {
+    final work = _record.work;
+    final remoteUrl = work.remoteCoverUrl.trim();
+    if (remoteUrl.isEmpty || _record.images.isNotEmpty) return;
+
+    try {
+      final downloaded = await widget.controller.imageStorage.downloadRemoteCover(
+        work: work,
+        remoteUrl: remoteUrl,
+      );
+      if (!mounted) {
+        await widget.controller.imageStorage.deleteImage(downloaded);
+        return;
+      }
+      if (_record.images.isNotEmpty) {
+        await widget.controller.imageStorage.deleteImage(downloaded);
+        return;
+      }
+      setState(() => _record = _record.copyWith(images: [downloaded]));
+    } on Exception {
+      // Network images are optional; retain the URL for the save-time retry.
+    }
   }
 
   @override
