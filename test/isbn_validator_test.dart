@@ -17,4 +17,17 @@ void main() {
       isFalse,
     );
   });
+
+  test('accepts valid ISBN-10 values, including X check digits', () {
+    expect(isValidIsbn10('0306406152'), isTrue);
+    expect(isValidIsbn10('080442957X'), isTrue);
+    expect(isValidIsbn10('0306406153'), isFalse);
+    expect(isValidIsbn10('030640615'), isFalse);
+  });
+
+  test('recognizes either ISBN format', () {
+    expect(isValidIsbn('0306406152'), isTrue);
+    expect(isValidIsbn('9780306406157'), isTrue);
+    expect(isValidIsbn('1234567890'), isFalse);
+  });
 }
