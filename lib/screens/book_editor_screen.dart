@@ -8,6 +8,84 @@ import '../services/app_controller.dart';
 import '../widgets/autocomplete_field.dart';
 import '../widgets/cover_image.dart';
 
+const _currencies = <({String code, String name})>[
+  (code: 'USD', name: 'United States Dollar'),
+  (code: 'EUR', name: 'European Euro'),
+  (code: 'JPY', name: 'Japanese Yen'),
+  (code: 'GBP', name: 'British Pound Sterling'),
+  (code: 'AUD', name: 'Australian Dollar'),
+  (code: 'CAD', name: 'Canadian Dollar'),
+  (code: 'CHF', name: 'Swiss Franc'),
+  (code: 'CNY', name: 'Chinese Yuan Renminbi'),
+  (code: 'SEK', name: 'Swedish Krona'),
+  (code: 'MXN', name: 'Mexican Peso'),
+  (code: 'NZD', name: 'New Zealand Dollar'),
+  (code: 'SGD', name: 'Singapore Dollar'),
+  (code: 'HKD', name: 'Hong Kong Dollar'),
+  (code: 'NOK', name: 'Norwegian Krone'),
+  (code: 'KRW', name: 'South Korean Won'),
+  (code: 'TRY', name: 'Turkish Lira'),
+  (code: 'INR', name: 'Indian Rupee'),
+  (code: 'RUB', name: 'Russian Ruble'),
+  (code: 'BRL', name: 'Brazilian Real'),
+  (code: 'ZAR', name: 'South African Rand'),
+];
+
+const _currencyByCountry = <String, String>{
+  'AT': 'EUR',
+  'AU': 'AUD',
+  'BE': 'EUR',
+  'BG': 'EUR',
+  'BR': 'BRL',
+  'CA': 'CAD',
+  'CH': 'CHF',
+  'CN': 'CNY',
+  'CY': 'EUR',
+  'DE': 'EUR',
+  'EE': 'EUR',
+  'ES': 'EUR',
+  'FI': 'EUR',
+  'FR': 'EUR',
+  'GB': 'GBP',
+  'GR': 'EUR',
+  'HK': 'HKD',
+  'HR': 'EUR',
+  'IE': 'EUR',
+  'IN': 'INR',
+  'IT': 'EUR',
+  'JP': 'JPY',
+  'KR': 'KRW',
+  'LI': 'CHF',
+  'LT': 'EUR',
+  'LU': 'EUR',
+  'LV': 'EUR',
+  'MC': 'EUR',
+  'ME': 'EUR',
+  'MT': 'EUR',
+  'MX': 'MXN',
+  'NL': 'EUR',
+  'NO': 'NOK',
+  'NZ': 'NZD',
+  'PT': 'EUR',
+  'RU': 'RUB',
+  'SE': 'SEK',
+  'SG': 'SGD',
+  'SI': 'EUR',
+  'SK': 'EUR',
+  'SM': 'EUR',
+  'TR': 'TRY',
+  'US': 'USD',
+  'VA': 'EUR',
+  'XK': 'EUR',
+  'ZA': 'ZAR',
+};
+
+String _defaultCurrencyForDeviceLocale() {
+  final countryCode =
+      WidgetsBinding.instance.platformDispatcher.locale.countryCode;
+  return _currencyByCountry[countryCode?.toUpperCase()] ?? 'USD';
+}
+
 /// Full work/copy/image editor. It is intentionally one route so every mutation is saveable offline.
 class BookEditorScreen extends StatefulWidget {
   const BookEditorScreen({
@@ -52,10 +130,17 @@ class _BookEditorScreenState extends State<BookEditorScreen>
   @override
   void initState() {
     super.initState();
+    final defaultCurrency = _defaultCurrencyForDeviceLocale();
     _record = widget.record.copyWith(
       copies: widget.record.copies.isEmpty
-          ? const [UserCopy()]
-          : List.of(widget.record.copies),
+          ? [UserCopy(currency: defaultCurrency)]
+          : widget.record.copies
+              .map(
+                (copy) => copy.id == null && copy.currency == 'USD'
+                    ? copy.copyWith(currency: defaultCurrency)
+                    : copy,
+              )
+              .toList(),
       images: List.of(widget.record.images),
     );
     _tabs = TabController(length: 3, vsync: this);
@@ -152,7 +237,10 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     _copyIndex = index;
     _condition = copy.condition;
     _price.text = copy.pricePaid?.toString() ?? '';
-    _currency.text = copy.currency;
+    final currency = copy.currency.toUpperCase();
+    _currency.text = _currencies.any((option) => option.code == currency)
+        ? currency
+        : 'USD';
     _acquiredDate.text = copy.acquisitionDate;
     _acquiredSource.text = copy.acquiredSource;
     _notes.text = copy.notes;
@@ -262,7 +350,12 @@ class _BookEditorScreenState extends State<BookEditorScreen>
   Future<void> _addCopy() async {
     _commitCopy();
     setState(() {
-      _record = _record.copyWith(copies: [..._record.copies, const UserCopy()]);
+      _record = _record.copyWith(
+        copies: [
+          ..._record.copies,
+          UserCopy(currency: _defaultCurrencyForDeviceLocale()),
+        ],
+      );
       _loadCopy(_record.copies.length - 1);
     });
   }
@@ -604,11 +697,19 @@ class _BookEditorScreenState extends State<BookEditorScreen>
                   ? 'Use a number.'
                   : null,
             ),
-            TextFormField(
-              controller: _currency,
-              maxLength: 3,
-              textCapitalization: TextCapitalization.characters,
+            DropdownButtonFormField<String>(
+              key: ValueKey('currency-$_copyIndex'),
+              initialValue: _currency.text,
               decoration: const InputDecoration(labelText: 'Currency'),
+              items: _currencies
+                  .map(
+                    (currency) => DropdownMenuItem(
+                      value: currency.code,
+                      child: Text('${currency.code}: ${currency.name}'),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) => _currency.text = value ?? 'USD',
             ),
           ],
         ),

@@ -209,6 +209,8 @@ Map<String, dynamic> _candidateJson(WorkCandidate c) => {
   'mechanics': c.mechanics,
   'genre': c.genre,
 };
+
+// ignore: unused_element
 WorkCandidate _candidate(Map<String, dynamic> m) => WorkCandidate(
   title: m['title']?.toString() ?? '',
   isbn13: m['isbn13']?.toString() ?? '',
