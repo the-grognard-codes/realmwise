@@ -20,6 +20,7 @@ android/app/debug/
 android/app/profile/
 android/app/release/
 android/key.properties
+android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
 *.jks
 *.keystore
 linux/flutter/ephemeral/
