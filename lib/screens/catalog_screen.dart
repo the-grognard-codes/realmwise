@@ -300,43 +300,41 @@ class _CatalogSelector extends StatelessWidget {
             leading: _leading(context, 'bookType', type.key, Icons.book_outlined),
             title: Text(type.key),
             children: type.value
-                .map(
-                  (record) => ListTile(
-                    contentPadding: const EdgeInsets.only(left: 72, right: 8),
-                    selected: record.work.id == selected?.work.id,
-                    leading: record.copies.any((copy) => copy.favorite)
-                        ? const Icon(Icons.favorite, size: 18)
-                        : null,
-                    title: Text(
-                      record.work.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          record.work.authors.isEmpty
-                              ? 'No author recorded'
-                              : record.work.authors.join(', '),
+                .expand(
+                  (record) {
+                    // A record normally has one row per owned copy. Keep a
+                    // title-only fallback for malformed/empty records so the
+                    // work remains reachable in the hierarchy.
+                    final copies = record.copies;
+                    final Iterable<MapEntry<int, UserCopy?>> entries =
+                        copies.isEmpty
+                            ? <MapEntry<int, UserCopy?>>[
+                                const MapEntry(0, null),
+                              ]
+                            : copies.asMap().entries.map(
+                                (entry) => MapEntry(entry.key, entry.value),
+                              );
+                    return entries.map(
+                      (entry) => ListTile(
+                        contentPadding:
+                            const EdgeInsets.only(left: 72, right: 8),
+                        selected: record.work.id == selected?.work.id,
+                        leading: entry.value?.favorite == true
+                            ? const Icon(Icons.favorite, size: 18)
+                            : null,
+                        title: Text(
+                          record.work.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        _RpgGeekField(
-                          id: record.work.rpgGeekId,
-                          url: record.work.rpgGeekUrl,
-                        ),
-                      ],
-                    ),
-                    trailing: Text(
-                      record.copies.length == 1
-                          ? '1 copy'
-                          : '${record.copies.length} copies',
-                    ),
-                    onTap: () => onSelected(record),
-                    onLongPress: () => onOpen(record),
-                  ),
+                        trailing: copies.length > 1
+                            ? Text('copy ${entry.key + 1}')
+                            : null,
+                        onTap: () => onSelected(record),
+                        onLongPress: () => onOpen(record),
+                      ),
+                    );
+                  },
                 )
                 .toList(),
           ),
