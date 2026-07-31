@@ -18,9 +18,10 @@ class ExternalCatalogService {
   final http.Client _client;
 
   Future<List<WorkCandidate>> searchByIsbn(String input, {String? ownerName, String? ownerEmail, String? apiKey}) async {
-    final isbn = input.replaceAll(RegExp(r'[^0-9Xx]'), '');
-    if (isbn.length != 13)
-      throw const CatalogLookupException('Enter a 13-digit ISBN.');
+    final normalized = input.replaceAll(RegExp(r'[^0-9Xx]'), '');
+    final isbn = _isbn13FromInput(normalized);
+    if (isbn == null)
+      throw const CatalogLookupException('Enter a valid 10 or 13 digit ISBN.');
     final url = Uri.https('openlibrary.org', '/api/books', {
       'bibkeys': 'ISBN:$isbn',
       'format': 'json',
@@ -47,6 +48,31 @@ class ExternalCatalogService {
         : hits
             .map((h) => ol.mergeRpgGeek(WorkCandidate(title: h.name, rpgGeekId: h.id)))
             .toList();
+  }
+
+  String? _isbn13FromInput(String value) {
+    if (RegExp(r'^[0-9]{13}$').hasMatch(value)) {
+      // Preserve the existing service contract: any 13-digit value is sent
+      // to OpenLibrary. Checksum validation is applied to ISBN-10 because it
+      // must be converted before lookup.
+      return value;
+    }
+    if (!RegExp(r'^[0-9]{9}[0-9Xx]$').hasMatch(value)) return null;
+    var sum10 = 0;
+    for (var i = 0; i < 10; i++) {
+      final digit = i == 9 && (value[i] == 'X' || value[i] == 'x')
+          ? 10
+          : int.parse(value[i]);
+      sum10 += digit * (10 - i);
+    }
+    if (sum10 % 11 != 0) return null;
+    final prefix = '978${value.substring(0, 9)}';
+    var sum13 = 0;
+    for (var i = 0; i < prefix.length; i++) {
+      sum13 += int.parse(prefix[i]) * (i.isEven ? 1 : 3);
+    }
+    final check = (10 - sum13 % 10) % 10;
+    return '$prefix$check';
   }
 
   Future<List<WorkCandidate>> searchByTitleOrAuthor({

@@ -138,6 +138,28 @@ void main() {
     expect(exact.single.publisher, 'OL');
   });
 
+  test('converts a valid ISBN-10 to ISBN-13 for OpenLibrary lookup', () async {
+    final client = _RecordingClient((request) {
+      expect(request.url.queryParameters['bibkeys'], 'ISBN:9780306406157');
+      return http.Response(
+        '{"ISBN:9780306406157":{"title":"Test Book"}}',
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final result = await ExternalCatalogService(client).searchByIsbn('0306406152');
+    expect(result.single.title, 'Test Book');
+    expect(result.single.isbn13, '9780306406157');
+  });
+
+  test('rejects invalid ISBN-10 values', () async {
+    expect(
+      () => ExternalCatalogService(_RecordingClient((_) => _response('{}')))
+          .searchByIsbn('0306406153'),
+      throwsA(isA<CatalogLookupException>()),
+    );
+  });
+
   test('confirmed RPG detail fills missing cover from ISBN OpenLibrary record', () async {
     final client = _RecordingClient((request) {
       if (request.url.host == 'openlibrary.org') {

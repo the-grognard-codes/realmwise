@@ -19,6 +19,21 @@ bool isValidIsbn13(String value) {
   return sum % 10 == 0;
 }
 
+/// Returns true only for a valid ISBN-10 (nine digits followed by a digit/X).
+bool isValidIsbn10(String value) {
+  if (!RegExp(r'^[0-9]{9}[0-9Xx]$').hasMatch(value)) return false;
+  var sum = 0;
+  for (var i = 0; i < 10; i++) {
+    final digit = i == 9 && (value[i] == 'X' || value[i] == 'x')
+        ? 10
+        : int.parse(value[i]);
+    sum += digit * (10 - i);
+  }
+  return sum % 11 == 0;
+}
+
+bool isValidIsbn(String value) => isValidIsbn13(value) || isValidIsbn10(value);
+
 class SearchAddScreen extends StatefulWidget {
   const SearchAddScreen({
     super.key,
@@ -203,7 +218,7 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
             if (found) return;
             for (final barcode in capture.barcodes) {
               final value = barcode.rawValue;
-              if (value != null && isValidIsbn13(value)) {
+              if (value != null && isValidIsbn(value)) {
                 found = true;
                 controller.stop();
                 Navigator.of(context).pop(value);
@@ -239,7 +254,7 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
                 segments: const [
                   ButtonSegment(
                     value: LookupMode.isbn,
-                    label: Text('ISBN-13'),
+                    label: Text('ISBN-10/13'),
                     icon: Icon(Icons.numbers),
                   ),
                   ButtonSegment(
@@ -270,7 +285,7 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
                 onSubmitted: (_) => _search(),
                 decoration: InputDecoration(
                   labelText: _mode == LookupMode.isbn
-                      ? '13-digit ISBN'
+                      ? '10 or 13 digit ISBN'
                       : (_mode == LookupMode.title
                           ? 'Book title'
                           : 'Author name'),
