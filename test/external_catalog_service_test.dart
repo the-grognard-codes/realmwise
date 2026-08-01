@@ -138,6 +138,36 @@ void main() {
     expect(exact.single.publisher, 'OL');
   });
 
+  test('ISBN non-exact RPGGeek choices do not inherit OpenLibrary metadata', () async {
+    final client = _RecordingClient((request) {
+      if (request.url.host == 'openlibrary.org') {
+        return http.Response(
+          '{"ISBN:9780000000000":{"title":"Dragon Quest","authors":[{"name":"OL Author"}],"publishers":[{"name":"OL Publisher"}],"publish_date":"2001","identifiers":{"isbn_13":["9780000000000"]}}}',
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.url.path.endsWith('/search')) {
+        return _response('<items><item id="1"><name value="Dragon Quest: Deluxe"/></item>'
+            '<item id="2"><name value="Dragon Quest Companion"/></item></items>');
+      }
+      fail('non-exact choices must not fetch RPGGeek details');
+    });
+    final results = await ExternalCatalogService(client).searchByIsbn(
+      '9780000000000',
+      apiKey: 'key',
+    );
+    expect(results.map((result) => result.title), [
+      'Dragon Quest: Deluxe',
+      'Dragon Quest Companion',
+    ]);
+    expect(results.map((result) => result.rpgGeekId), ['1', '2']);
+    expect(results.every((result) => result.authors.isEmpty), isTrue);
+    expect(results.every((result) => result.isbn13.isEmpty), isTrue);
+    expect(results.every((result) => result.publisher.isEmpty), isTrue);
+    expect(results.every((result) => result.publicationDate.isEmpty), isTrue);
+  });
+
   test('converts a valid ISBN-10 to ISBN-13 for OpenLibrary lookup', () async {
     final client = _RecordingClient((request) {
       expect(request.url.queryParameters['bibkeys'], 'ISBN:9780306406157');

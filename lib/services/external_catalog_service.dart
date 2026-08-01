@@ -46,7 +46,11 @@ class ExternalCatalogService {
     return hits.isEmpty
         ? [ol]
         : hits
-            .map((h) => ol.mergeRpgGeek(WorkCandidate(title: h.name, rpgGeekId: h.id)))
+            // Non-exact hits are alternatives, not enrichments of the ISBN
+            // record. Keeping them independent prevents every result from
+            // inheriting the same OpenLibrary metadata while preserving the
+            // hit's own title and RPGGeek identity.
+            .map((h) => WorkCandidate(title: h.name, rpgGeekId: h.id))
             .toList();
   }
 
