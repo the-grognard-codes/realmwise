@@ -109,6 +109,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
   var _saving = false;
 
   late final TextEditingController _isbn;
+  late final TextEditingController _productCode;
   late final TextEditingController _title;
   late final TextEditingController _authors;
   late final TextEditingController _publisher;
@@ -145,6 +146,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     );
     _tabs = TabController(length: 3, vsync: this);
     _isbn = TextEditingController(text: _record.work.isbn13);
+    _productCode = TextEditingController(text: _record.work.productCode);
     _title = TextEditingController(text: _record.work.title);
     _authors = TextEditingController(text: _record.work.authors.join(', '));
     _publisher = TextEditingController(text: _record.work.publisher);
@@ -201,6 +203,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     _tabs.dispose();
     for (final controller in [
       _isbn,
+      _productCode,
       _title,
       _authors,
       _publisher,
@@ -268,6 +271,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
 
   BookWork _committedWork() => _record.work.copyWith(
         isbn13: _isbn.text.replaceAll(RegExp(r'[^0-9Xx]'), ''),
+        productCode: _productCode.text,
         title: _title.text,
         authors: _authors.text
             .split(',')
@@ -551,6 +555,11 @@ class _BookEditorScreenState extends State<BookEditorScreen>
                   ? 'ISBN-13 must contain 13 digits.'
                   : null;
             },
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _productCode,
+            decoration: const InputDecoration(labelText: 'Product code'),
           ),
           const SizedBox(height: 12),
           LocalAutocompleteField(

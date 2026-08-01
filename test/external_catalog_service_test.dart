@@ -102,6 +102,8 @@ void main() {
     expect(result.publisher, 'Pub');
     expect(result.series, ['Series']);
     expect(result.system, ['System']);
+    expect(result.gameSystem, 'System');
+    expect(result.gameSetting, 'Setting');
     expect(result.mechanics, ['Dice']);
     expect(result.genre, ['Fantasy']);
     expect(result.productCode, 'PX');
