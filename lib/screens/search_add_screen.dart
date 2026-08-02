@@ -39,9 +39,19 @@ class SearchAddScreen extends StatefulWidget {
     super.key,
     required this.controller,
     required this.onSaved,
+    this.selectionOnly = false,
+    this.initialIsbn,
+    this.initialTitle,
+    this.initialAuthors,
   });
   final AppController controller;
   final VoidCallback onSaved;
+  /// When true, selecting a remote result returns the enriched candidate
+  /// instead of opening a new editor route.
+  final bool selectionOnly;
+  final String? initialIsbn;
+  final String? initialTitle;
+  final String? initialAuthors;
 
   @override
   State<SearchAddScreen> createState() => _SearchAddScreenState();
@@ -58,7 +68,24 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
   @override
   void initState() {
     super.initState();
+    _mode = widget.initialIsbn?.trim().isNotEmpty == true
+        ? LookupMode.isbn
+        : widget.initialTitle?.trim().isNotEmpty == true
+            ? LookupMode.title
+            : LookupMode.author;
+    _query.text = _queryForMode(_mode);
     if (_isAndroid) _loadCameraPermission();
+  }
+
+  String _queryForMode(LookupMode mode) {
+    switch (mode) {
+      case LookupMode.isbn:
+        return widget.initialIsbn ?? '';
+      case LookupMode.title:
+        return widget.initialTitle ?? '';
+      case LookupMode.author:
+        return widget.initialAuthors ?? '';
+    }
   }
 
   bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
@@ -127,6 +154,11 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
       final enriched = initial.rpgGeekId.trim().isNotEmpty
           ? await widget.controller.lookup.fetchRpgGeekDetails(initial, key)
           : initial;
+      if (!mounted) return;
+      if (widget.selectionOnly) {
+        Navigator.pop(context, enriched);
+        return;
+      }
       final existing = enriched.isbn13.isEmpty
           ? null
           : await widget.controller.catalog.findByIsbn(enriched.isbn13);
@@ -237,12 +269,17 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 860),
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(18, 22, 18, 40),
-            children: [
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(
+          leading: BackButton(onPressed: () => Navigator.pop(context)),
+          title: const Text('Find a work'),
+        ),
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 860),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(18, 22, 18, 40),
+              children: [
               Text('Find a work',
                   style: Theme.of(context).textTheme.headlineSmall),
               const SizedBox(height: 6),
@@ -270,7 +307,8 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
                 ],
                 selected: {_mode},
                 onSelectionChanged: (selection) => setState(() {
-                  _mode = selection.first;
+                    _mode = selection.first;
+                    _query.text = _queryForMode(_mode);
                   _results = const [];
                   _message = null;
                 }),
@@ -358,7 +396,8 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
             ],
           ),
         ),
-      );
+      ),
+    );
 
   String _subtitle(WorkCandidate candidate) {
     final pieces = <String>[

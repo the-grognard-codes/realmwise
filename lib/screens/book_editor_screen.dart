@@ -7,6 +7,7 @@ import '../models/catalog_models.dart';
 import '../services/app_controller.dart';
 import '../widgets/autocomplete_field.dart';
 import '../widgets/cover_image.dart';
+import 'search_add_screen.dart';
 
 const _currencies = <({String code, String name})>[
   (code: 'USD', name: 'United States Dollar'),
@@ -308,6 +309,80 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     }
   }
 
+  Future<void> _refreshFromRemote() async {
+    if (_saving) return;
+    _commitCopy();
+    final candidate = await Navigator.push<WorkCandidate>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => SearchAddScreen(
+          controller: widget.controller,
+          selectionOnly: true,
+          initialIsbn: _record.work.isbn13,
+          initialTitle: _record.work.title,
+          initialAuthors: _record.work.authors.join(', '),
+          onSaved: () {},
+        ),
+      ),
+    );
+    if (candidate == null || !mounted) return;
+
+    final refreshed = candidate.toRecord().work;
+    final existingImages = _record.images;
+    final merged = _record.work.copyWith(
+      isbn13: refreshed.isbn13,
+      title: refreshed.title,
+      authors: refreshed.authors,
+      publisher: refreshed.publisher,
+      publicationDate: refreshed.publicationDate,
+      summary: refreshed.summary,
+      pageCount: refreshed.pageCount,
+      clearPageCount: refreshed.pageCount == null,
+      gameSystem: refreshed.gameSystem,
+      gameSetting: refreshed.gameSetting,
+      bookType: refreshed.bookType,
+      remoteCoverUrl: refreshed.remoteCoverUrl,
+      openLibraryId: refreshed.openLibraryId,
+      rpgGeekId: refreshed.rpgGeekId,
+      moreInfo: refreshed.moreInfo,
+      designers: refreshed.designers,
+      artists: refreshed.artists,
+      productionStaff: refreshed.productionStaff,
+      version: refreshed.version,
+      productCode: refreshed.productCode,
+      seriesCode: refreshed.seriesCode,
+      dimensions: refreshed.dimensions,
+      series: refreshed.series,
+      setting: refreshed.setting,
+      family: refreshed.family,
+      system: refreshed.system,
+      category: refreshed.category,
+      mechanics: refreshed.mechanics,
+      genre: refreshed.genre,
+    );
+    setState(() {
+      _record = _record.copyWith(work: merged, images: existingImages);
+      _isbn.text = merged.isbn13;
+      _title.text = merged.title;
+      _authors.text = merged.authors.join(', ');
+      _publisher.text = merged.publisher;
+      _published.text = merged.publicationDate;
+      _pages.text = merged.pageCount?.toString() ?? '';
+      _system.text = merged.gameSystem;
+      _setting.text = merged.gameSetting;
+      _bookType.text = merged.bookType;
+      _summary.text = merged.summary;
+    });
+    if (existingImages.isEmpty && merged.remoteCoverUrl.trim().isNotEmpty) {
+      await _loadRemoteCover();
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Work details refreshed.')),
+      );
+    }
+  }
+
   Future<void> _delete() async {
     if (_record.work.id == null) {
       if (mounted) Navigator.pop(context);
@@ -505,6 +580,11 @@ class _BookEditorScreenState extends State<BookEditorScreen>
                 onPressed: _saving ? null : _delete,
                 icon: const Icon(Icons.delete_outline),
               ),
+            IconButton(
+              tooltip: 'Refresh work details',
+              onPressed: _saving ? null : _refreshFromRemote,
+              icon: const Icon(Icons.refresh),
+            ),
             IconButton(
               tooltip: 'Save',
               onPressed: _saving ? null : _save,
