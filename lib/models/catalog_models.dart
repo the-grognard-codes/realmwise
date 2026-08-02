@@ -245,19 +245,30 @@ class UserCopy {
 
 enum BookCondition {
   mint('Mint'),
-  nearMint('Near mint'),
-  excellent('Excellent'),
+  nearMint('Near Mint'),
+  veryFine('Very Fine'),
+  fine('Fine'),
+  veryGood('Very Good'),
   good('Good'),
-  poor('Poor'),
-  damaged('Damaged');
+  fair('Fair'),
+  poor('Poor');
 
   const BookCondition(this.label);
   final String label;
 
-  static BookCondition parse(String? value) => BookCondition.values.firstWhere(
-        (condition) => condition.name == value,
-        orElse: () => BookCondition.good,
-      );
+  static BookCondition parse(String? value) {
+    switch (value) {
+      case 'excellent':
+        return BookCondition.veryFine;
+      case 'damaged':
+        return BookCondition.poor;
+      default:
+        return BookCondition.values.firstWhere(
+          (condition) => condition.name == value,
+          orElse: () => BookCondition.good,
+        );
+    }
+  }
 }
 
 /// A locally-owned image; remoteUrl preserves source provenance.

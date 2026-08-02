@@ -2,6 +2,24 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:rpg_catalog/models/catalog_models.dart';
 
 void main() {
+  test('book conditions expose the persisted names and labels in order', () {
+    expect(
+      BookCondition.values.map((condition) => condition.name).toList(),
+      ['mint', 'nearMint', 'veryFine', 'fine', 'veryGood', 'good', 'fair', 'poor'],
+    );
+    expect(
+      BookCondition.values.map((condition) => condition.label).toList(),
+      ['Mint', 'Near Mint', 'Very Fine', 'Fine', 'Very Good', 'Good', 'Fair', 'Poor'],
+    );
+  });
+
+  test('book condition parsing preserves legacy values', () {
+    expect(BookCondition.parse('excellent'), BookCondition.veryFine);
+    expect(BookCondition.parse('damaged'), BookCondition.poor);
+    expect(BookCondition.parse('fair'), BookCondition.fair);
+    expect(BookCondition.parse('unknown'), BookCondition.good);
+  });
+
   test('RPGGeek URL is derived only for a nonempty ID', () {
     const withId = BookWork(title: 'Book', rpgGeekId: ' 42 ');
     const withoutId = BookWork(title: 'Book');

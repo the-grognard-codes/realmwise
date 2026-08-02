@@ -1,4 +1,4 @@
-Create an import from / export to CSV feature.
+Create an import from / export to CSV feature. (Complete)
 
 Fix the file upload on Android for images
 
