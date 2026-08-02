@@ -1,4 +1,10 @@
 Create an import from / export to CSV feature. (Complete)
+    Add option to parse each imported item with external sources.
+
+Add forward / back arrows in the detailed page view
+
+Add refresh from External Sources in details view.
+
 
 Fix the file upload on Android for images
 
