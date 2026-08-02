@@ -203,6 +203,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
   }
 
+  Future<void> _exportCsv() async {
+    final chosen = await FilePicker.saveFile(
+      dialogTitle: 'Export catalog as CSV',
+      fileName: 'rpg_catalog_export.csv',
+      type: FileType.custom,
+      allowedExtensions: const ['csv'],
+    );
+    if (chosen == null) return;
+    final output = chosen.toLowerCase().endsWith('.csv') ? chosen : '$chosen.csv';
+    await _run(
+      () => widget.controller.exportDatabaseCsv(output),
+      success: 'Catalog CSV exported to $output',
+    );
+  }
+
   Future<void> _close() async {
     final yes = await showDialog<bool>(
       context: context,
@@ -493,6 +508,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         }, success: 'Backup created.'),
                   icon: const Icon(Icons.save_as_outlined),
                   label: const Text('Back up now'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _exportCsv,
+                  icon: const Icon(Icons.table_view_outlined),
+                  label: const Text('Export CSV'),
                 ),
                 TextButton.icon(
                   onPressed: _busy ? null : _close,

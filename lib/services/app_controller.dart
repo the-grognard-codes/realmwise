@@ -11,6 +11,7 @@ import '../data/database_service.dart';
 import 'backup_service.dart';
 import 'catalog_service.dart';
 import 'external_catalog_service.dart';
+import 'export_service.dart';
 import 'image_storage_service.dart';
 
 /// Application session state: selected database, theme preference, and services.
@@ -22,6 +23,7 @@ class AppController extends ChangeNotifier {
 
   final DatabaseService database;
   final BackupService backups;
+  final ExportService exporter = ExportService();
   late final ImageStorageService imageStorage = ImageStorageService(_http);
   late final CatalogService catalog = CatalogService(
     database: database,
@@ -147,6 +149,17 @@ class AppController extends ChangeNotifier {
       await database.getSetting('rpggeek_api_key') ?? '';
   Future<void> setRpgGeekKey(String key) =>
       database.setSetting('rpggeek_api_key', key.trim());
+
+  Future<void> exportDatabaseCsv(String outputPath) async {
+    if (!database.isOpen) throw StateError('No database is currently open.');
+    final records = await database.listRecords();
+    final timestamps = await database.workTimestamps();
+    await exporter.exportRecords(
+      records: records,
+      outputPath: outputPath,
+      timestampsByWorkId: timestamps,
+    );
+  }
 
   @override
   void dispose() {

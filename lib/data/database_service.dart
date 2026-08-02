@@ -199,6 +199,17 @@ class DatabaseService {
     return Future.wait(rows.map((row) => getRecord(row['id'] as int)));
   }
 
+  Future<Map<int, Map<String, Object?>>> workTimestamps() async {
+    final rows = await _db.query('works', columns: const ['id', 'created_at', 'updated_at']);
+    return {
+      for (final row in rows)
+        row['id'] as int: {
+          'created_at': row['created_at'],
+          'updated_at': row['updated_at'],
+        },
+    };
+  }
+
   Future<CatalogRecord?> getRecordOrNull(int workId) async {
     final rows = await _db.query(
       'works',
