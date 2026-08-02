@@ -218,6 +218,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Future<void> _importCsv() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['csv'],
+      dialogTitle: 'Import catalog CSV',
+      withData: false,
+    );
+    final source = picked?.files.singleOrNull?.path;
+    if (source == null) return;
+    await _run(
+      () async {
+        final csv = await File(source).readAsString();
+        await widget.controller.importDatabaseCsv(csv);
+      },
+      success: 'Catalog CSV imported.',
+    );
+  }
+
   Future<void> _close() async {
     final yes = await showDialog<bool>(
       context: context,
@@ -513,6 +531,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onPressed: _busy ? null : _exportCsv,
                   icon: const Icon(Icons.table_view_outlined),
                   label: const Text('Export CSV'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _importCsv,
+                  icon: const Icon(Icons.file_upload_outlined),
+                  label: const Text('Import CSV'),
                 ),
                 TextButton.icon(
                   onPressed: _busy ? null : _close,

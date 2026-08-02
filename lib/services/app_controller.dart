@@ -13,6 +13,7 @@ import 'catalog_service.dart';
 import 'external_catalog_service.dart';
 import 'export_service.dart';
 import 'image_storage_service.dart';
+import 'import_service.dart';
 
 /// Application session state: selected database, theme preference, and services.
 class AppController extends ChangeNotifier {
@@ -24,6 +25,7 @@ class AppController extends ChangeNotifier {
   final DatabaseService database;
   final BackupService backups;
   final ExportService exporter = ExportService();
+  late final ImportService importer = ImportService(database);
   late final ImageStorageService imageStorage = ImageStorageService(_http);
   late final CatalogService catalog = CatalogService(
     database: database,
@@ -159,6 +161,12 @@ class AppController extends ChangeNotifier {
       outputPath: outputPath,
       timestampsByWorkId: timestamps,
     );
+  }
+
+  Future<void> importDatabaseCsv(String csv) async {
+    if (!database.isOpen) throw StateError('No database is currently open.');
+    await importer.importCsv(csv);
+    notifyListeners();
   }
 
   @override
