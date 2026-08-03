@@ -144,6 +144,21 @@ void main() {
     expect(results.map((r) => r.rpgGeekId), ['2', '1']);
   });
 
+  test('RPG title hits retain search publication years', () async {
+    final client = _RecordingClient((request) => _response(
+        '<items><item id="1"><name value="Dragon Quest"/><yearpublished value="1998"/></item></items>'));
+    final results = await ExternalCatalogService(client).searchByTitleOrAuthor(
+      term: 'Dragon Quest', author: false, apiKey: 'key');
+    expect(results.single.publicationDate, '1998');
+  });
+
+  test('direct RPGGeek search retains search publication years', () async {
+    final client = _RecordingClient((request) => _response(
+        '<items><item id="1"><name value="Dragon Quest"/><yearpublished value="2004"/></item></items>'));
+    final results = await ExternalCatalogService(client).searchRpgGeek('Dragon Quest', 'key');
+    expect(results.single.publicationDate, '2004');
+  });
+
   test('ISBN exact RPGGeek detail is returned, otherwise ranked choices only', () async {
     final client = _RecordingClient((request) {
       if (request.url.host == 'openlibrary.org') {

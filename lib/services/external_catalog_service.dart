@@ -50,7 +50,7 @@ class ExternalCatalogService {
             // record. Keeping them independent prevents every result from
             // inheriting the same OpenLibrary metadata while preserving the
             // hit's own title and RPGGeek identity.
-            .map((h) => WorkCandidate(title: h.name, rpgGeekId: h.id))
+            .map((h) => WorkCandidate(title: h.name, rpgGeekId: h.id, publicationDate: h.publicationDate))
             .toList();
   }
 
@@ -93,7 +93,7 @@ class ExternalCatalogService {
     final key = apiKey?.trim() ?? '';
     if (key.isNotEmpty) {
       final hits = await _searchRpgGeek(term.trim(), key);
-      if (hits.isNotEmpty) return hits.map((h) => WorkCandidate(title: h.name, rpgGeekId: h.id)).toList();
+      if (hits.isNotEmpty) return hits.map((h) => WorkCandidate(title: h.name, rpgGeekId: h.id, publicationDate: h.publicationDate)).toList();
     }
     final url = Uri.https('openlibrary.org', '/search.json', {
       author ? 'author' : 'title': term.trim(),
@@ -138,7 +138,7 @@ class ExternalCatalogService {
     final key = apiKey.trim();
     if (key.isEmpty) throw const CatalogLookupException('RPGGeek bearer token is required.');
     final hits = await _searchRpgGeek(term, key, failOnError: true);
-    return hits.map((h) => WorkCandidate(title: h.name, rpgGeekId: h.id)).toList();
+    return hits.map((h) => WorkCandidate(title: h.name, rpgGeekId: h.id, publicationDate: h.publicationDate)).toList();
   }
 
   /// Fetches one raw RPGGeek item. This operation never performs Open Library
@@ -191,7 +191,8 @@ class ExternalCatalogService {
         for (final item in XmlDocument.parse(response.body).findAllElements('item')) {
           final id = item.getAttribute('id') ?? '';
           final name = item.findAllElements('name').map((e) => e.getAttribute('value') ?? '').firstWhere((v) => v.isNotEmpty, orElse: () => '');
-          if (id.isNotEmpty && name.isNotEmpty) result.add(_RpgGeekSearchCandidate(id, name));
+          final year = item.findAllElements('yearpublished').map((element) => element.getAttribute('value') ?? '').firstWhere((value) => RegExp(r'^\d{4}$').hasMatch(value), orElse: () => '');
+          if (id.isNotEmpty && name.isNotEmpty) result.add(_RpgGeekSearchCandidate(id, name, year));
         }
       } on CatalogLookupException { rethrow; } on Exception {
         if (failOnError) throw const CatalogLookupException('Could not reach RPGGeek.');
@@ -472,9 +473,10 @@ class ExternalCatalogService {
 }
 
 class _RpgGeekSearchCandidate {
-  const _RpgGeekSearchCandidate(this.id, this.name);
+  const _RpgGeekSearchCandidate(this.id, this.name, [this.publicationDate = '']);
   final String id;
   final String name;
+  final String publicationDate;
 }
 
 extension FirstOrNullExtension<T> on Iterable<T> {

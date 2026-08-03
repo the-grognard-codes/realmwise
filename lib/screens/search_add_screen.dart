@@ -383,7 +383,7 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
                   (candidate) => Card(
                     child: ListTile(
                       leading: const Icon(Icons.menu_book_outlined),
-                      title: Text(candidate.title),
+                      title: Text(_title(candidate)),
                       subtitle: Text(_subtitle(candidate)),
                       trailing: FilledButton(
                         onPressed: _searching ? null : () => _select(candidate),
@@ -409,6 +409,11 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
     return pieces.isEmpty
         ? 'No additional OpenLibrary details'
         : pieces.join(' • ');
+  }
+
+  String _title(WorkCandidate candidate) {
+    final year = RegExp(r'\b(\d{4})\b').firstMatch(candidate.publicationDate)?.group(1);
+    return year == null ? candidate.title : '${candidate.title} ($year)';
   }
 }
 
