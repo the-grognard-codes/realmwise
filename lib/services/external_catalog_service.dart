@@ -170,7 +170,11 @@ class ExternalCatalogService {
             ol = await searchByTitleOrAuthor(term: merged.title, author: false);
           }
           if (ol.isNotEmpty) merged = _mergeRpgGeek(ol.first, merged);
-        } on Exception { }
+        } on Exception {
+          // Open Library is best-effort enrichment; retain the RPGGeek data
+          // when the fallback lookup is unavailable or malformed.
+          return merged;
+        }
       }
       return merged;
     } on Exception { return confirmed; }
