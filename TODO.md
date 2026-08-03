@@ -1,6 +1,3 @@
-Fix empty catch statements
-
-Add a flag for new items.  Items created since the program was opened.
 
 Find out about Android publication.
     Get a manifest of what is required packages, builds, etc.
@@ -15,7 +12,6 @@ Create an import from / export to CSV feature. (Complete)
 Add UI options for hierarchy / tree to display by game system > book type >
 
 Add forward / back arrows in the detailed page view
-
 
 Fix the file upload on Android for images
 
