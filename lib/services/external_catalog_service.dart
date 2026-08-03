@@ -38,7 +38,7 @@ class ExternalCatalogService {
       try {
         final detail = await _fetchRpgGeekDetails(hit.id, key);
         final found = _isbnValues(detail);
-        if (found.contains(isbn)) return [ol.mergeRpgGeek(detail)];
+        if (found.contains(isbn)) return [_mergeRpgGeek(ol, detail)];
       } on Exception {
         // A single unavailable detail must not prevent other candidates/fallback.
       }
@@ -121,7 +121,7 @@ class ExternalCatalogService {
       final selected = _selectRpgGeekCandidate(original.title, candidates);
       if (selected == null) return original;
       final id = selected.id;
-      return original.mergeRpgGeek(await _fetchRpgGeekDetails(id, apiKey));
+      return _mergeRpgGeek(original, await _fetchRpgGeekDetails(id, apiKey));
     } on Exception {
       // RPGGeek is optional; a successful OpenLibrary record remains usable.
       return original;
@@ -148,14 +148,17 @@ class ExternalCatalogService {
     if (itemId.isEmpty) throw const CatalogLookupException('RPGGeek item id is required.');
     final key = apiKey.trim();
     if (key.isEmpty) throw const CatalogLookupException('RPGGeek bearer token is required.');
-    return _fetchRpgGeekDetails(itemId, key);
+    final detail = await _fetchRpgGeekDetails(itemId, key);
+    return detail.authors.isEmpty && detail.designers.isNotEmpty
+        ? _replaceAuthors(detail, detail.designers)
+        : detail;
   }
 
   Future<WorkCandidate> fetchRpgGeekDetails(WorkCandidate confirmed, String apiKey) async {
     if (apiKey.trim().isEmpty || confirmed.rpgGeekId.trim().isEmpty) return confirmed;
     try {
       final detail = await _fetchRpgGeekDetails(confirmed.rpgGeekId, apiKey);
-      var merged = confirmed.mergeRpgGeek(detail);
+      var merged = _mergeRpgGeek(confirmed, detail);
       if (merged.isbn13.isEmpty || merged.remoteCoverUrl.isEmpty || merged.authors.isEmpty) {
         try {
           List<WorkCandidate> ol;
@@ -166,7 +169,7 @@ class ExternalCatalogService {
           } else {
             ol = await searchByTitleOrAuthor(term: merged.title, author: false);
           }
-          if (ol.isNotEmpty) merged = ol.first.mergeRpgGeek(merged);
+          if (ol.isNotEmpty) merged = _mergeRpgGeek(ol.first, merged);
         } on Exception { }
       }
       return merged;
@@ -399,6 +402,7 @@ class ExternalCatalogService {
         textFor(tag).trim().isNotEmpty ? textFor(tag) : (linkValues(linkKey).firstOrNull ?? '');
     final publisherLinks = linkValues('publisher');
     final designers = linkValues('designer');
+    final authors = linkValues('author');
     final artists = linkValues('artist');
     final production = linkValues('production');
     final versionLinks = linkValues('version');
@@ -411,6 +415,7 @@ class ExternalCatalogService {
     final isbn = firstValue('isbn', 'isbn');
     return WorkCandidate(
       title: named,
+      authors: authors,
       isbn13: isbn,
       publisher: publisherLinks.firstOrNull ?? '',
       publicationDate: attrFor('yearpublished', 'value'),
@@ -437,6 +442,28 @@ class ExternalCatalogService {
       rpgGeekId: id,
     );
   }
+
+  WorkCandidate _mergeRpgGeek(WorkCandidate original, WorkCandidate detail) {
+    final merged = original.mergeRpgGeek(detail);
+    if (merged.authors.isNotEmpty || detail.designers.isEmpty) return merged;
+    return _replaceAuthors(merged, detail.designers);
+  }
+
+  WorkCandidate _replaceAuthors(WorkCandidate source, List<String> authors) => WorkCandidate(
+        title: source.title, isbn13: source.isbn13, authors: authors,
+        publisher: source.publisher, publicationDate: source.publicationDate,
+        summary: source.summary, pageCount: source.pageCount,
+        remoteCoverUrl: source.remoteCoverUrl, openLibraryId: source.openLibraryId,
+        rpgGeekId: source.rpgGeekId, gameSystem: source.gameSystem,
+        gameSetting: source.gameSetting, bookType: source.bookType,
+        moreInfo: source.moreInfo, designers: source.designers,
+        artists: source.artists, productionStaff: source.productionStaff,
+        version: source.version, isbn: source.isbn, productCode: source.productCode,
+        seriesCode: source.seriesCode, dimensions: source.dimensions,
+        series: source.series, setting: source.setting, family: source.family,
+        system: source.system, category: source.category, mechanics: source.mechanics,
+        genre: source.genre,
+      );
 
   String _description(Object? raw) {
     if (raw is Map) return raw['value']?.toString() ?? '';
