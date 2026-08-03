@@ -237,7 +237,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _close() async {
-    final yes = await showDialog<bool>(
+    final route = DialogRoute<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Close current database?'),
@@ -256,7 +256,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
-    if (yes == true) await widget.controller.closeDatabase();
+    final yes = await Navigator.of(context).push(route);
+    await route.completed;
+    if (yes == true && mounted && widget.controller.isOpen) {
+      await widget.controller.closeDatabase();
+    }
   }
 
   @override

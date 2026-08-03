@@ -338,9 +338,15 @@ class _BookEditorScreenState extends State<BookEditorScreen>
       summary: refreshed.summary,
       pageCount: refreshed.pageCount,
       clearPageCount: refreshed.pageCount == null,
-      gameSystem: refreshed.gameSystem,
-      gameSetting: refreshed.gameSetting,
-      bookType: refreshed.bookType,
+      gameSystem: refreshed.gameSystem.trim().isEmpty
+          ? _record.work.gameSystem
+          : refreshed.gameSystem,
+      gameSetting: refreshed.gameSetting.trim().isEmpty
+          ? _record.work.gameSetting
+          : refreshed.gameSetting,
+      bookType: refreshed.bookType.trim().isEmpty
+          ? _record.work.bookType
+          : refreshed.bookType,
       remoteCoverUrl: refreshed.remoteCoverUrl,
       openLibraryId: refreshed.openLibraryId,
       rpgGeekId: refreshed.rpgGeekId,
