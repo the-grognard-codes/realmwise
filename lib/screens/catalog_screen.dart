@@ -52,11 +52,13 @@ class _CatalogScreenState extends State<CatalogScreen> {
       ]);
       if (!mounted) return;
       final loaded = values[0] as List<CatalogRecord>;
+      widget.controller.observeCatalogRecords(loaded);
       setState(() {
         _records = loaded;
         _tags = values[1] as List<String>;
         _icons = values[2] as List<CatalogIconMapping>;
-        _selected = loaded
+        _selected =
+            loaded
                 .where((record) => record.work.id == _selected?.work.id)
                 .firstOrNull ??
             (loaded.isEmpty ? null : loaded.first);
@@ -93,10 +95,14 @@ class _CatalogScreenState extends State<CatalogScreen> {
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 900;
         final selector = _CatalogSelector(
+          controller: widget.controller,
           records: _shown,
           icons: _icons,
           selected: _selected,
-          onSelected: (record) => setState(() => _selected = record),
+          onSelected: (record) {
+            widget.controller.clearSessionNewWork(record.work.id);
+            setState(() => _selected = record);
+          },
           onOpen: _edit,
         );
         return Column(
@@ -106,35 +112,35 @@ class _CatalogScreenState extends State<CatalogScreen> {
               child: _records.isEmpty
                   ? const _EmptyCatalog()
                   : wide
-                      ? Row(
-                          children: [
-                            SizedBox(width: 370, child: selector),
-                            const VerticalDivider(width: 1),
-                            Expanded(
-                              child: _BookPreview(
-                                record: _selected,
-                                onEdit: _selected == null
-                                    ? null
-                                    : () => _edit(_selected!),
-                              ),
-                            ),
-                          ],
-                        )
-                      : Column(
-                          children: [
-                            Expanded(flex: 3, child: selector),
-                            const Divider(height: 1),
-                            Expanded(
-                              flex: 4,
-                              child: _BookPreview(
-                                record: _selected,
-                                onEdit: _selected == null
-                                    ? null
-                                    : () => _edit(_selected!),
-                              ),
-                            ),
-                          ],
+                  ? Row(
+                      children: [
+                        SizedBox(width: 370, child: selector),
+                        const VerticalDivider(width: 1),
+                        Expanded(
+                          child: _BookPreview(
+                            record: _selected,
+                            onEdit: _selected == null
+                                ? null
+                                : () => _edit(_selected!),
+                          ),
                         ),
+                      ],
+                    )
+                  : Column(
+                      children: [
+                        Expanded(flex: 3, child: selector),
+                        const Divider(height: 1),
+                        Expanded(
+                          flex: 4,
+                          child: _BookPreview(
+                            record: _selected,
+                            onEdit: _selected == null
+                                ? null
+                                : () => _edit(_selected!),
+                          ),
+                        ),
+                      ],
+                    ),
             ),
           ],
         );
@@ -143,73 +149,82 @@ class _CatalogScreenState extends State<CatalogScreen> {
   }
 
   Widget _catalogTools() => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-        child: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _filterController,
-                decoration: InputDecoration(
-                  labelText: 'Filter catalog text',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: _filterController.text.isEmpty
-                      ? null
-                      : IconButton(
-                          onPressed: () => _filterController.clear(),
-                          icon: const Icon(Icons.clear),
-                        ),
-                ),
-              ),
+    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+    child: Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _filterController,
+            decoration: InputDecoration(
+              labelText: 'Filter catalog text',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _filterController.text.isEmpty
+                  ? null
+                  : IconButton(
+                      onPressed: () => _filterController.clear(),
+                      icon: const Icon(Icons.clear),
+                    ),
             ),
-            const SizedBox(width: 8),
-            PopupMenuButton<String?>(
-              tooltip: 'Filter by tag',
-              onSelected: (tag) => setState(() => _tag = tag),
-              itemBuilder: (context) => [
-                CheckedPopupMenuItem<String?>(
-                  value: null,
-                  checked: _tag == null,
-                  child: const Text('All tags'),
-                ),
-                ..._tags.map(
-                  (tag) => CheckedPopupMenuItem<String?>(
-                    value: tag,
-                    checked: _tag == tag,
-                    child: Text(tag),
-                  ),
-                ),
-              ],
-              child: Chip(
-                avatar: const Icon(Icons.sell_outlined, size: 18),
-                label: Text(_tag ?? 'All tags'),
-              ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        PopupMenuButton<String?>(
+          tooltip: 'Filter by tag',
+          onSelected: (tag) => setState(() => _tag = tag),
+          itemBuilder: (context) => [
+            CheckedPopupMenuItem<String?>(
+              value: null,
+              checked: _tag == null,
+              child: const Text('All tags'),
             ),
-            IconButton(
-              onPressed: _load,
-              tooltip: 'Refresh local catalog',
-              icon: const Icon(Icons.refresh),
+            ..._tags.map(
+              (tag) => CheckedPopupMenuItem<String?>(
+                value: tag,
+                checked: _tag == tag,
+                child: Text(tag),
+              ),
             ),
           ],
+          child: Chip(
+            avatar: const Icon(Icons.sell_outlined, size: 18),
+            label: Text(_tag ?? 'All tags'),
+          ),
         ),
-      );
+        IconButton(
+          onPressed: _load,
+          tooltip: 'Refresh local catalog',
+          icon: const Icon(Icons.refresh),
+        ),
+      ],
+    ),
+  );
 }
 
 class _CatalogSelector extends StatelessWidget {
   const _CatalogSelector({
+    required this.controller,
     required this.records,
     required this.selected,
     required this.onSelected,
     required this.onOpen,
     required this.icons,
   });
+  final AppController controller;
   final List<CatalogRecord> records;
   final CatalogRecord? selected;
   final ValueChanged<CatalogRecord> onSelected;
   final ValueChanged<CatalogRecord> onOpen;
   final List<CatalogIconMapping> icons;
 
-  Widget _leading(BuildContext context, String tier, String name, IconData fallback) {
-    final m = icons.where((x) => x.tier == tier && x.sectionName == name).firstOrNull;
+  Widget _leading(
+    BuildContext context,
+    String tier,
+    String name,
+    IconData fallback,
+  ) {
+    final m = icons
+        .where((x) => x.tier == tier && x.sectionName == name)
+        .firstOrNull;
     if (m == null || !File(m.localPath).existsSync()) return Icon(fallback);
     return ClipOval(
       child: SizedBox(
@@ -250,7 +265,12 @@ class _CatalogSelector extends StatelessWidget {
           .map(
             (system) => ExpansionTile(
               initiallyExpanded: false,
-              leading: _leading(context, 'gameSystem', system.key, Icons.account_tree_outlined),
+              leading: _leading(
+                context,
+                'gameSystem',
+                system.key,
+                Icons.account_tree_outlined,
+              ),
               title: Text(system.key),
               children: _settingNodes(context, system.value),
             ),
@@ -259,7 +279,10 @@ class _CatalogSelector extends StatelessWidget {
     );
   }
 
-  List<Widget> _settingNodes(BuildContext context, List<CatalogRecord> systemRecords) {
+  List<Widget> _settingNodes(
+    BuildContext context,
+    List<CatalogRecord> systemRecords,
+  ) {
     final settings = <String, List<CatalogRecord>>{};
     for (final record in systemRecords) {
       settings
@@ -274,7 +297,12 @@ class _CatalogSelector extends StatelessWidget {
           (setting) => ExpansionTile(
             initiallyExpanded: false,
             tilePadding: const EdgeInsets.only(left: 28, right: 8),
-            leading: _leading(context, 'gameSetting', setting.key, Icons.landscape_outlined),
+            leading: _leading(
+              context,
+              'gameSetting',
+              setting.key,
+              Icons.landscape_outlined,
+            ),
             title: Text(setting.key),
             children: _typeNodes(context, setting.value),
           ),
@@ -282,7 +310,10 @@ class _CatalogSelector extends StatelessWidget {
         .toList();
   }
 
-  List<Widget> _typeNodes(BuildContext context, List<CatalogRecord> settingRecords) {
+  List<Widget> _typeNodes(
+    BuildContext context,
+    List<CatalogRecord> settingRecords,
+  ) {
     final types = <String, List<CatalogRecord>>{};
     for (final record in settingRecords) {
       types
@@ -297,46 +328,56 @@ class _CatalogSelector extends StatelessWidget {
           (type) => ExpansionTile(
             initiallyExpanded: false,
             tilePadding: const EdgeInsets.only(left: 48, right: 8),
-            leading: _leading(context, 'bookType', type.key, Icons.book_outlined),
+            leading: _leading(
+              context,
+              'bookType',
+              type.key,
+              Icons.book_outlined,
+            ),
             title: Text(type.key),
-            children: type.value
-                .expand(
-                  (record) {
-                    // A record normally has one row per owned copy. Keep a
-                    // title-only fallback for malformed/empty records so the
-                    // work remains reachable in the hierarchy.
-                    final copies = record.copies;
-                    final Iterable<MapEntry<int, UserCopy?>> entries =
-                        copies.isEmpty
-                            ? <MapEntry<int, UserCopy?>>[
-                                const MapEntry(0, null),
-                              ]
-                            : copies.asMap().entries.map(
-                                (entry) => MapEntry(entry.key, entry.value),
-                              );
-                    return entries.map(
-                      (entry) => ListTile(
-                        contentPadding:
-                            const EdgeInsets.only(left: 72, right: 8),
-                        selected: record.work.id == selected?.work.id,
-                        leading: entry.value?.favorite == true
-                            ? const Icon(Icons.favorite, size: 18)
-                            : null,
-                        title: Text(
+            children: type.value.expand((record) {
+              // A record normally has one row per owned copy. Keep a
+              // title-only fallback for malformed/empty records so the
+              // work remains reachable in the hierarchy.
+              final copies = record.copies;
+              final Iterable<MapEntry<int, UserCopy?>> entries = copies.isEmpty
+                  ? <MapEntry<int, UserCopy?>>[const MapEntry(0, null)]
+                  : copies.asMap().entries.map(
+                      (entry) => MapEntry(entry.key, entry.value),
+                    );
+              return entries.map(
+                (entry) => ListTile(
+                  contentPadding: const EdgeInsets.only(left: 72, right: 8),
+                  selected: record.work.id == selected?.work.id,
+                  leading: entry.value?.favorite == true
+                      ? const Icon(Icons.favorite, size: 18)
+                      : null,
+                  title: Row(
+                    children: [
+                      if (record.work.id != null &&
+                          controller.sessionNewWorkIds.contains(
+                            record.work.id,
+                          )) ...[
+                        const _NewBadge(),
+                        const SizedBox(width: 6),
+                      ],
+                      Expanded(
+                        child: Text(
                           record.work.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        trailing: copies.length > 1
-                            ? Text('copy ${entry.key + 1}')
-                            : null,
-                        onTap: () => onSelected(record),
-                        onLongPress: () => onOpen(record),
                       ),
-                    );
-                  },
-                )
-                .toList(),
+                    ],
+                  ),
+                  trailing: copies.length > 1
+                      ? Text('copy ${entry.key + 1}')
+                      : null,
+                  onTap: () => onSelected(record),
+                  onLongPress: () => onOpen(record),
+                ),
+              );
+            }).toList(),
           ),
         )
         .toList();
@@ -344,6 +385,26 @@ class _CatalogSelector extends StatelessWidget {
 
   String _name(String value, String fallback) =>
       value.trim().isEmpty ? fallback : value.trim();
+}
+
+class _NewBadge extends StatelessWidget {
+  const _NewBadge();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.primary,
+      borderRadius: BorderRadius.circular(3),
+    ),
+    child: Text(
+      'NEW',
+      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+        color: Theme.of(context).colorScheme.onPrimary,
+        fontWeight: FontWeight.bold,
+      ),
+    ),
+  );
 }
 
 class _BookPreview extends StatelessWidget {
@@ -519,28 +580,27 @@ class _EmptyCatalog extends StatelessWidget {
   const _EmptyCatalog();
   @override
   Widget build(BuildContext context) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.auto_stories_outlined,
-                size: 68,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Your shelf is empty',
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                  'Use Add book to look up a work or enter it manually.'),
-            ],
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.auto_stories_outlined,
+            size: 68,
+            color: Theme.of(context).colorScheme.primary,
           ),
-        ),
-      );
+          const SizedBox(height: 12),
+          Text(
+            'Your shelf is empty',
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 8),
+          const Text('Use Add book to look up a work or enter it manually.'),
+        ],
+      ),
+    ),
+  );
 }
 
 class _ErrorPanel extends StatelessWidget {
@@ -549,15 +609,15 @@ class _ErrorPanel extends StatelessWidget {
   final VoidCallback retry;
   @override
   Widget build(BuildContext context) => Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(message),
-            const SizedBox(height: 10),
-            OutlinedButton(onPressed: retry, child: const Text('Try again')),
-          ],
-        ),
-      );
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(message),
+        const SizedBox(height: 10),
+        OutlinedButton(onPressed: retry, child: const Text('Try again')),
+      ],
+    ),
+  );
 }
 
 extension _FirstCatalogOrNull on Iterable<CatalogRecord> {

@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/database_service.dart';
+import '../models/catalog_models.dart';
 import 'backup_service.dart';
 import 'catalog_service.dart';
 import 'external_catalog_service.dart';
@@ -18,9 +19,9 @@ import 'import_service.dart';
 /// Application session state: selected database, theme preference, and services.
 class AppController extends ChangeNotifier {
   AppController()
-      : database = DatabaseService(),
-        _http = http.Client(),
-        backups = BackupService();
+    : database = DatabaseService(),
+      _http = http.Client(),
+      backups = BackupService();
 
   final DatabaseService database;
   final BackupService backups;
@@ -37,6 +38,11 @@ class AppController extends ChangeNotifier {
   bool loading = true;
   String? error;
   String seedName = 'Dragon red';
+
+  // Work IDs observed after opening a database are the session baseline. Any
+  // IDs appearing later are kept in memory only so the catalog can label them.
+  final Set<int> _sessionBaselineWorkIds = <int>{};
+  final Set<int> sessionNewWorkIds = <int>{};
 
   bool get isOpen => database.isOpen;
   String? get activeDatabasePath => isOpen ? database.databasePath : null;
@@ -64,9 +70,9 @@ class AppController extends ChangeNotifier {
   }) async {
     final documents = await getApplicationDocumentsDirectory();
     final safe = requestedName.trim().replaceAll(
-          RegExp(r'[^A-Za-z0-9_-]+'),
-          '_',
-        );
+      RegExp(r'[^A-Za-z0-9_-]+'),
+      '_',
+    );
     if (safe.isEmpty) throw ArgumentError('Enter a database name.');
     await openDatabase(
       path.join(documents.path, '$safe.db'),
@@ -78,6 +84,14 @@ class AppController extends ChangeNotifier {
     error = null;
     await backups.stop();
     await database.open(databasePath);
+    _sessionBaselineWorkIds
+      ..clear()
+      ..addAll(
+        (await database.listRecords())
+            .map((record) => record.work.id)
+            .whereType<int>(),
+      );
+    sessionNewWorkIds.clear();
     final imageFolder = await database.getSetting('image_folder');
     await imageStorage.initialize(imageFolder);
     seedName = await database.getSetting('theme_seed') ?? 'Dragon red';
@@ -95,6 +109,8 @@ class AppController extends ChangeNotifier {
   Future<void> closeDatabase() async {
     await backups.stop();
     await database.close();
+    _sessionBaselineWorkIds.clear();
+    sessionNewWorkIds.clear();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('last_database_path');
     notifyListeners();
@@ -120,13 +136,37 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> saveCatalogIcon({required String tier, required String sectionName, required String sourcePath, double alignmentX = 0, double alignmentY = 0, double zoom = 1}) async {
+  Future<void> saveCatalogIcon({
+    required String tier,
+    required String sectionName,
+    required String sourcePath,
+    double alignmentX = 0,
+    double alignmentY = 0,
+    double zoom = 1,
+  }) async {
     final old = await database.getCatalogIcon(tier, sectionName);
-    final local = await imageStorage.importCatalogIcon(sourcePath: sourcePath, tier: tier, sectionName: sectionName);
+    final local = await imageStorage.importCatalogIcon(
+      sourcePath: sourcePath,
+      tier: tier,
+      sectionName: sectionName,
+    );
     try {
-      await database.upsertCatalogIcon(CatalogIconMapping(tier: tier, sectionName: sectionName, localPath: local, alignmentX: alignmentX, alignmentY: alignmentY, zoom: zoom));
-    } catch (_) { await _deleteManagedIcon(local); rethrow; }
-    if (old != null && old.localPath != local) await _deleteManagedIcon(old.localPath);
+      await database.upsertCatalogIcon(
+        CatalogIconMapping(
+          tier: tier,
+          sectionName: sectionName,
+          localPath: local,
+          alignmentX: alignmentX,
+          alignmentY: alignmentY,
+          zoom: zoom,
+        ),
+      );
+    } catch (_) {
+      await _deleteManagedIcon(local);
+      rethrow;
+    }
+    if (old != null && old.localPath != local)
+      await _deleteManagedIcon(old.localPath);
   }
 
   Future<void> removeCatalogIcon(String tier, String sectionName) async {
@@ -165,8 +205,37 @@ class AppController extends ChangeNotifier {
 
   Future<void> importDatabaseCsv(String csv) async {
     if (!database.isOpen) throw StateError('No database is currently open.');
+    final before = (await database.listRecords())
+        .map((record) => record.work.id)
+        .whereType<int>()
+        .toSet();
     await importer.importCsv(csv);
+    final after = await database.listRecords();
+    sessionNewWorkIds.addAll(
+      after
+          .map((record) => record.work.id)
+          .whereType<int>()
+          .where((id) => !before.contains(id)),
+    );
     notifyListeners();
+  }
+
+  /// Records IDs that appeared after the database was opened (for example,
+  /// from the Add book flow). This state is intentionally not persisted.
+  void observeCatalogRecords(Iterable<CatalogRecord> records) {
+    sessionNewWorkIds.addAll(
+      records
+          .map((record) => record.work.id)
+          .whereType<int>()
+          .where((id) => !_sessionBaselineWorkIds.contains(id)),
+    );
+  }
+
+  /// Clears the session-only NEW marker for a work once it is selected.
+  void clearSessionNewWork(int? workId) {
+    if (workId != null && sessionNewWorkIds.remove(workId)) {
+      notifyListeners();
+    }
   }
 
   @override

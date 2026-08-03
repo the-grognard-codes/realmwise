@@ -618,6 +618,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
         floatingActionButton: _saving
             ? null
             : FloatingActionButton.extended(
+                heroTag: null,
                 onPressed: _save,
                 icon: const Icon(Icons.save),
                 label: const Text('Save'),
