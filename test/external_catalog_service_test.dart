@@ -98,6 +98,7 @@ void main() {
       const WorkCandidate(title: 'Dragon Quest'), 'key');
     expect(result.moreInfo, 'https://info');
     expect(result.designers, ['Designer']);
+    expect(result.authors, ['Designer']);
     expect(result.artists, ['Artist']);
     expect(result.publisher, 'Pub');
     expect(result.series, ['Series']);
@@ -107,6 +108,27 @@ void main() {
     expect(result.productCode, 'PX');
     expect(result.seriesCode, 'SX');
     expect(result.dimensions, '8x5');
+  });
+
+  test('explicit RPGGeek author takes precedence over designer fallback', () async {
+    final client = _RecordingClient((request) => request.url.path.endsWith('/search')
+        ? _response('<items><item id="8"><name value="Dragon Quest"/></item></items>')
+        : _response('<items><item id="8"><name value="Dragon Quest"/>'
+            '<link type="rpgdesigner" value="Designer"/>'
+            '<link type="rpgauthor" value="Author"/></item></items>'));
+    final result = await ExternalCatalogService(client).enrichWithRpgGeek(
+      const WorkCandidate(title: 'Dragon Quest'), 'key');
+    expect(result.authors, ['Author']);
+    expect(result.designers, ['Designer']);
+  });
+
+  test('designer metadata fills authors when refreshing a confirmed item', () async {
+    final client = _RecordingClient((request) => _response(
+        '<items><item id="8"><name value="Dragon Quest"/>'
+        '<link type="rpgdesigner" value="Designer"/></item></items>'));
+    final result = await ExternalCatalogService(client).fetchRpgGeekItem('8', 'key');
+    expect(result.authors, ['Designer']);
+    expect(result.designers, ['Designer']);
   });
 
   test('RPG title hits are ranked and retain OL bootstrap metadata', () async {

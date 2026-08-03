@@ -18,22 +18,29 @@ class _DatabaseGatewayState extends State<DatabaseGateway> {
   String? _message;
 
   Future<void> _run(Future<void> Function() action) async {
+    if (!mounted) return;
     setState(() {
       _busy = true;
       _message = null;
     });
+    var succeeded = false;
     try {
       await action();
+      succeeded = true;
     } catch (error) {
       if (mounted) setState(() => _message = error.toString());
     } finally {
-      if (mounted) setState(() => _busy = false);
+      // A successful open replaces this route via the controller listener;
+      // avoid touching state while that replacement is underway.
+      if (mounted && (!succeeded || !widget.controller.isOpen)) {
+        setState(() => _busy = false);
+      }
     }
   }
 
   Future<void> _create() async {
     final name = TextEditingController(text: 'my_rpg_catalog');
-    final accepted = await showDialog<bool>(
+    final route = DialogRoute<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Create database'),
@@ -54,9 +61,15 @@ class _DatabaseGatewayState extends State<DatabaseGateway> {
         ],
       ),
     );
-    if (accepted == true)
-      await _run(() => widget.controller.createDatabase(name.text));
-    name.dispose();
+    try {
+      final accepted = await Navigator.of(context).push(route);
+      await route.completed;
+      if (accepted == true && mounted && !widget.controller.isOpen) {
+        await _run(() => widget.controller.createDatabase(name.text));
+      }
+    } finally {
+      name.dispose();
+    }
   }
 
   Future<void> _open() async {
