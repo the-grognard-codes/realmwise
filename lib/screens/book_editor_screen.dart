@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -93,9 +95,13 @@ class BookEditorScreen extends StatefulWidget {
     super.key,
     required this.controller,
     required this.record,
+    this.navigationRecords = const [],
+    this.navigationIndex = -1,
   });
   final AppController controller;
   final CatalogRecord record;
+  final List<CatalogRecord> navigationRecords;
+  final int navigationIndex;
 
   @override
   State<BookEditorScreen> createState() => _BookEditorScreenState();
@@ -105,9 +111,12 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   late CatalogRecord _record;
+  late CatalogRecord _savedRecord;
   late TabController _tabs;
   var _copyIndex = 0;
   var _saving = false;
+  late int _navigationIndex;
+  late final List<CatalogRecord> _navigationRecords;
 
   late final TextEditingController _isbn;
   late final TextEditingController _title;
@@ -131,19 +140,22 @@ class _BookEditorScreenState extends State<BookEditorScreen>
   @override
   void initState() {
     super.initState();
+    _navigationIndex = widget.navigationIndex;
+    _navigationRecords = List<CatalogRecord>.of(widget.navigationRecords);
     final defaultCurrency = _defaultCurrencyForDeviceLocale();
     _record = widget.record.copyWith(
       copies: widget.record.copies.isEmpty
           ? [UserCopy(currency: defaultCurrency)]
           : widget.record.copies
-              .map(
-                (copy) => copy.id == null && copy.currency == 'USD'
-                    ? copy.copyWith(currency: defaultCurrency)
-                    : copy,
-              )
-              .toList(),
+                .map(
+                  (copy) => copy.id == null && copy.currency == 'USD'
+                      ? copy.copyWith(currency: defaultCurrency)
+                      : copy,
+                )
+                .toList(),
       images: List.of(widget.record.images),
     );
+    _savedRecord = _record;
     _tabs = TabController(length: 3, vsync: this);
     _isbn = TextEditingController(text: _record.work.isbn13);
     _title = TextEditingController(text: _record.work.title);
@@ -179,10 +191,8 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     if (remoteUrl.isEmpty || _record.images.isNotEmpty) return;
 
     try {
-      final downloaded = await widget.controller.imageStorage.downloadRemoteCover(
-        work: work,
-        remoteUrl: remoteUrl,
-      );
+      final downloaded = await widget.controller.imageStorage
+          .downloadRemoteCover(work: work, remoteUrl: remoteUrl);
       if (!mounted) {
         await widget.controller.imageStorage.deleteImage(downloaded);
         return;
@@ -268,37 +278,55 @@ class _BookEditorScreenState extends State<BookEditorScreen>
   }
 
   BookWork _committedWork() => _record.work.copyWith(
-        isbn13: _isbn.text.replaceAll(RegExp(r'[^0-9Xx]'), ''),
-        title: _title.text,
-        authors: _authors.text
-            .split(',')
-            .map((author) => author.trim())
-            .where((author) => author.isNotEmpty)
-            .toList(),
-        publisher: _publisher.text,
-        publicationDate: _published.text,
-        pageCount: _intOrNull(_pages.text),
-        clearPageCount: _pages.text.trim().isEmpty,
-        gameSystem: _system.text,
-        gameSetting: _setting.text,
-        bookType: _bookType.text,
-        summary: _summary.text,
-      );
+    isbn13: _isbn.text.replaceAll(RegExp(r'[^0-9Xx]'), ''),
+    title: _title.text,
+    authors: _authors.text
+        .split(',')
+        .map((author) => author.trim())
+        .where((author) => author.isNotEmpty)
+        .toList(),
+    publisher: _publisher.text,
+    publicationDate: _published.text,
+    pageCount: _intOrNull(_pages.text),
+    clearPageCount: _pages.text.trim().isEmpty,
+    gameSystem: _system.text,
+    gameSetting: _setting.text,
+    bookType: _bookType.text,
+    summary: _summary.text,
+  );
 
-  Future<void> _save() async {
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+  String _recordFingerprint(CatalogRecord record) => jsonEncode({
+    'work': record.work.toRow(),
+    'copies': record.copies
+        .map((copy) => copy.toRow(record.work.id ?? 0))
+        .toList(),
+    'images': record.images
+        .map((image) => image.toRow(record.work.id ?? 0))
+        .toList(),
+  });
+
+  Future<bool> _save({bool close = true, bool showFeedback = true}) async {
+    if (!(_formKey.currentState?.validate() ?? false)) return false;
     _commitCopy();
     setState(() => _saving = true);
     try {
       _record = await widget.controller.catalog.save(
         _record.copyWith(work: _committedWork()),
       );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Catalog record saved locally.')),
-        );
-        Navigator.pop(context, true);
+      _savedRecord = _record;
+      if (_navigationIndex >= 0 &&
+          _navigationIndex < _navigationRecords.length) {
+        _navigationRecords[_navigationIndex] = _record;
       }
+      if (mounted) {
+        if (showFeedback) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Catalog record saved locally.')),
+          );
+        }
+        if (close) Navigator.pop(context, true);
+      }
+      return true;
     } catch (error) {
       if (mounted)
         ScaffoldMessenger.of(
@@ -306,6 +334,58 @@ class _BookEditorScreenState extends State<BookEditorScreen>
         ).showSnackBar(SnackBar(content: Text('Could not save: $error')));
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+    return false;
+  }
+
+  Future<void> _navigate(int delta) async {
+    if (_saving || _navigationRecords.isEmpty) return;
+    final next = _navigationIndex + delta;
+    if (next < 0 || next >= _navigationRecords.length) return;
+    // Save before changing records so edits (including copy fields) are not lost,
+    // but leave untouched records alone and keep arrow navigation quiet.
+    _commitCopy();
+    final current = _record.copyWith(work: _committedWork());
+    if (_recordFingerprint(current) != _recordFingerprint(_savedRecord) &&
+        (!await _save(close: false, showFeedback: false) || !mounted)) {
+      return;
+    }
+    if (!mounted) return;
+    _navigationIndex = next;
+    _loadRecord(_navigationRecords[next]);
+  }
+
+  void _loadRecord(CatalogRecord record) {
+    final defaultCurrency = _defaultCurrencyForDeviceLocale();
+    final loaded = record.copyWith(
+      copies: record.copies.isEmpty
+          ? [UserCopy(currency: defaultCurrency)]
+          : record.copies
+                .map(
+                  (copy) => copy.id == null && copy.currency == 'USD'
+                      ? copy.copyWith(currency: defaultCurrency)
+                      : copy,
+                )
+                .toList(),
+      images: List.of(record.images),
+    );
+    setState(() {
+      _record = loaded;
+      _savedRecord = loaded;
+      _isbn.text = loaded.work.isbn13;
+      _title.text = loaded.work.title;
+      _authors.text = loaded.work.authors.join(', ');
+      _publisher.text = loaded.work.publisher;
+      _published.text = loaded.work.publicationDate;
+      _pages.text = loaded.work.pageCount?.toString() ?? '';
+      _system.text = loaded.work.gameSystem;
+      _setting.text = loaded.work.gameSetting;
+      _bookType.text = loaded.work.bookType;
+      _summary.text = loaded.work.summary;
+      _loadCopy(0);
+    });
+    if (loaded.images.isEmpty && loaded.work.remoteCoverUrl.trim().isNotEmpty) {
+      _loadRemoteCover();
     }
   }
 
@@ -383,9 +463,9 @@ class _BookEditorScreenState extends State<BookEditorScreen>
       await _loadRemoteCover();
     }
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Work details refreshed.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Work details refreshed.')));
     }
   }
 
@@ -575,147 +655,162 @@ class _BookEditorScreenState extends State<BookEditorScreen>
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(
-          title: Text(
-            _record.work.id == null ? 'Add book details' : 'Book details',
+    appBar: AppBar(
+      title: Text(
+        _record.work.id == null ? 'Add book details' : 'Book details',
+      ),
+      actions: [
+        if (_navigationRecords.isNotEmpty) ...[
+          IconButton(
+            tooltip: 'Previous book',
+            onPressed: _saving || _navigationIndex <= 0
+                ? null
+                : () => _navigate(-1),
+            icon: const Icon(Icons.arrow_back),
           ),
-          actions: [
-            if (_record.work.id != null)
-              IconButton(
-                tooltip: 'Remove book',
-                onPressed: _saving ? null : _delete,
-                icon: const Icon(Icons.delete_outline),
-              ),
-            IconButton(
-              tooltip: 'Refresh work details',
-              onPressed: _saving ? null : _refreshFromRemote,
-              icon: const Icon(Icons.refresh),
-            ),
-            IconButton(
-              tooltip: 'Save',
-              onPressed: _saving ? null : _save,
-              icon: const Icon(Icons.save_outlined),
-            ),
-          ],
-          bottom: TabBar(
-            controller: _tabs,
-            tabs: const [
-              Tab(text: 'Work'),
-              Tab(text: 'My copy'),
-              Tab(text: 'Images'),
-            ],
-          ),
-        ),
-        body: Form(
-          key: _formKey,
-          child: _saving
-              ? const Center(child: CircularProgressIndicator())
-              : TabBarView(
-                  controller: _tabs,
-                  children: [_workTab(), _copyTab(), _imagesTab()],
-                ),
-        ),
-        floatingActionButton: _saving
-            ? null
-            : FloatingActionButton.extended(
-                heroTag: null,
-                onPressed: _save,
-                icon: const Icon(Icons.save),
-                label: const Text('Save'),
-              ),
-      );
-
-  Widget _workTab() => _ScrollForm(
-        children: [
-          _section('Work metadata'),
-          TextFormField(
-            controller: _isbn,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'ISBN-13'),
-            validator: (value) {
-              final cleaned = (value ?? '').replaceAll(RegExp(r'[^0-9Xx]'), '');
-              return cleaned.isNotEmpty && cleaned.length != 13
-                  ? 'ISBN-13 must contain 13 digits.'
-                  : null;
-            },
-          ),
-          const SizedBox(height: 12),
-          LocalAutocompleteField(
-            controller: _title,
-            label: 'Book title *',
-            suggestions: (text) =>
-                widget.controller.catalog.suggestions('title', text),
-            validator: (value) => value?.trim().isEmpty ?? true
-                ? 'A book title is required.'
-                : null,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _authors,
-            decoration: const InputDecoration(
-              labelText: 'Authors (comma separated)',
-            ),
-          ),
-          const SizedBox(height: 12),
-          LocalAutocompleteField(
-            controller: _publisher,
-            label: 'Publisher',
-            suggestions: (text) =>
-                widget.controller.catalog.suggestions('publisher', text),
-          ),
-          const SizedBox(height: 12),
-          _ResponsiveFields(
-            children: [
-              TextFormField(
-                controller: _published,
-                decoration:
-                    const InputDecoration(labelText: 'Publication date'),
-              ),
-              TextFormField(
-                controller: _pages,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Page count'),
-                validator: (value) => value?.trim().isNotEmpty == true &&
-                        _intOrNull(value!) == null
-                    ? 'Use a whole number.'
-                    : null,
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          _section('Catalog hierarchy'),
-          LocalAutocompleteField(
-            controller: _system,
-            label: 'Game system',
-            suggestions: (text) =>
-                widget.controller.catalog.suggestions('game_system', text),
-          ),
-          const SizedBox(height: 12),
-          LocalAutocompleteField(
-            controller: _setting,
-            label: 'Game setting',
-            suggestions: (text) =>
-                widget.controller.catalog.suggestions('game_setting', text),
-          ),
-          const SizedBox(height: 12),
-          LocalAutocompleteField(
-            controller: _bookType,
-            label: 'Book type',
-            suggestions: (text) =>
-                widget.controller.catalog.suggestions('book_type', text),
-          ),
-          const SizedBox(height: 20),
-          TextFormField(
-            controller: _summary,
-            minLines: 5,
-            maxLines: 10,
-            decoration: const InputDecoration(
-              labelText: 'Summary',
-              alignLabelWithHint: true,
-            ),
+          IconButton(
+            tooltip: 'Next book',
+            onPressed:
+                _saving || _navigationIndex >= _navigationRecords.length - 1
+                ? null
+                : () => _navigate(1),
+            icon: const Icon(Icons.arrow_forward),
           ),
         ],
-      );
+        if (_record.work.id != null)
+          IconButton(
+            tooltip: 'Remove book',
+            onPressed: _saving ? null : _delete,
+            icon: const Icon(Icons.delete_outline),
+          ),
+        IconButton(
+          tooltip: 'Refresh work details',
+          onPressed: _saving ? null : _refreshFromRemote,
+          icon: const Icon(Icons.refresh),
+        ),
+        IconButton(
+          tooltip: 'Save',
+          onPressed: _saving ? null : _save,
+          icon: const Icon(Icons.save_outlined),
+        ),
+      ],
+      bottom: TabBar(
+        controller: _tabs,
+        tabs: const [
+          Tab(text: 'Work'),
+          Tab(text: 'My copy'),
+          Tab(text: 'Images'),
+        ],
+      ),
+    ),
+    body: Form(
+      key: _formKey,
+      child: _saving
+          ? const Center(child: CircularProgressIndicator())
+          : TabBarView(
+              controller: _tabs,
+              children: [_workTab(), _copyTab(), _imagesTab()],
+            ),
+    ),
+    floatingActionButton: _saving
+        ? null
+        : FloatingActionButton.extended(
+            heroTag: null,
+            onPressed: _save,
+            icon: const Icon(Icons.save),
+            label: const Text('Save'),
+          ),
+  );
+
+  Widget _workTab() => _ScrollForm(
+    children: [
+      _section('Work metadata'),
+      TextFormField(
+        controller: _isbn,
+        keyboardType: TextInputType.number,
+        decoration: const InputDecoration(labelText: 'ISBN-13'),
+        validator: (value) {
+          final cleaned = (value ?? '').replaceAll(RegExp(r'[^0-9Xx]'), '');
+          return cleaned.isNotEmpty && cleaned.length != 13
+              ? 'ISBN-13 must contain 13 digits.'
+              : null;
+        },
+      ),
+      const SizedBox(height: 12),
+      LocalAutocompleteField(
+        controller: _title,
+        label: 'Book title *',
+        suggestions: (text) =>
+            widget.controller.catalog.suggestions('title', text),
+        validator: (value) =>
+            value?.trim().isEmpty ?? true ? 'A book title is required.' : null,
+      ),
+      const SizedBox(height: 12),
+      TextFormField(
+        controller: _authors,
+        decoration: const InputDecoration(
+          labelText: 'Authors (comma separated)',
+        ),
+      ),
+      const SizedBox(height: 12),
+      LocalAutocompleteField(
+        controller: _publisher,
+        label: 'Publisher',
+        suggestions: (text) =>
+            widget.controller.catalog.suggestions('publisher', text),
+      ),
+      const SizedBox(height: 12),
+      _ResponsiveFields(
+        children: [
+          TextFormField(
+            controller: _published,
+            decoration: const InputDecoration(labelText: 'Publication date'),
+          ),
+          TextFormField(
+            controller: _pages,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Page count'),
+            validator: (value) =>
+                value?.trim().isNotEmpty == true && _intOrNull(value!) == null
+                ? 'Use a whole number.'
+                : null,
+          ),
+        ],
+      ),
+      const SizedBox(height: 20),
+      _section('Catalog hierarchy'),
+      LocalAutocompleteField(
+        controller: _system,
+        label: 'Game system',
+        suggestions: (text) =>
+            widget.controller.catalog.suggestions('game_system', text),
+      ),
+      const SizedBox(height: 12),
+      LocalAutocompleteField(
+        controller: _setting,
+        label: 'Game setting',
+        suggestions: (text) =>
+            widget.controller.catalog.suggestions('game_setting', text),
+      ),
+      const SizedBox(height: 12),
+      LocalAutocompleteField(
+        controller: _bookType,
+        label: 'Book type',
+        suggestions: (text) =>
+            widget.controller.catalog.suggestions('book_type', text),
+      ),
+      const SizedBox(height: 20),
+      TextFormField(
+        controller: _summary,
+        minLines: 5,
+        maxLines: 10,
+        decoration: const InputDecoration(
+          labelText: 'Summary',
+          alignLabelWithHint: true,
+        ),
+      ),
+    ],
+  );
 
   Widget _copyTab() {
     final selection = DropdownButton<int>(
@@ -779,7 +874,8 @@ class _BookEditorScreenState extends State<BookEditorScreen>
                 decimal: true,
               ),
               decoration: const InputDecoration(labelText: 'Price paid'),
-              validator: (value) => value?.trim().isNotEmpty == true &&
+              validator: (value) =>
+                  value?.trim().isNotEmpty == true &&
                       _doubleOrNull(value!) == null
                   ? 'Use a number.'
                   : null,
@@ -848,84 +944,83 @@ class _BookEditorScreenState extends State<BookEditorScreen>
   }
 
   Widget _imagesTab() => _ScrollForm(
-        children: [
-          _section('Local work images'),
-          const Text(
-            'Images are copied to the configured local image folder. The selected cover is named with “_cover” immediately before its extension.',
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: List.generate(_record.images.length, (index) {
-              final image = _record.images[index];
-              return SizedBox(
-                width: 166,
-                child: Card(
-                  child: Column(
+    children: [
+      _section('Local work images'),
+      const Text(
+        'Images are copied to the configured local image folder. The selected cover is named with “_cover” immediately before its extension.',
+      ),
+      const SizedBox(height: 14),
+      Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        children: List.generate(_record.images.length, (index) {
+          final image = _record.images[index];
+          return SizedBox(
+            width: 166,
+            child: Card(
+              child: Column(
+                children: [
+                  CoverImage(image: image, width: 166, height: 185),
+                  Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Text(
+                      image.isCover
+                          ? 'Current cover'
+                          : (image.caption.isEmpty ? 'Image' : image.caption),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  OverflowBar(
+                    alignment: MainAxisAlignment.center,
                     children: [
-                      CoverImage(image: image, width: 166, height: 185),
-                      Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: Text(
-                          image.isCover
-                              ? 'Current cover'
-                              : (image.caption.isEmpty
-                                  ? 'Image'
-                                  : image.caption),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                      TextButton(
+                        onPressed: image.isCover
+                            ? null
+                            : () => _setCover(index),
+                        child: const Text('Set cover'),
                       ),
-                      OverflowBar(
-                        alignment: MainAxisAlignment.center,
-                        children: [
-                          TextButton(
-                            onPressed:
-                                image.isCover ? null : () => _setCover(index),
-                            child: const Text('Set cover'),
-                          ),
-                          IconButton(
-                            onPressed: () => _removeImage(index),
-                            tooltip: 'Remove local image',
-                            icon: const Icon(Icons.delete_outline),
-                          ),
-                        ],
+                      IconButton(
+                        onPressed: () => _removeImage(index),
+                        tooltip: 'Remove local image',
+                        icon: const Icon(Icons.delete_outline),
                       ),
                     ],
                   ),
-                ),
-              );
-            }),
-          ),
-          if (_record.images.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 28),
-              child: Center(
-                child: Text('No images have been saved locally for this book.'),
+                ],
               ),
             ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: _importImages,
-            icon: const Icon(Icons.add_photo_alternate_outlined),
-            label: const Text('Add local images'),
+          );
+        }),
+      ),
+      if (_record.images.isEmpty)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 28),
+          child: Center(
+            child: Text('No images have been saved locally for this book.'),
           ),
-          if (_record.work.remoteCoverUrl.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 16),
-              child: Text(
-                'Original cover URL: ${_record.work.remoteCoverUrl}',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-        ],
-      );
+        ),
+      const SizedBox(height: 12),
+      OutlinedButton.icon(
+        onPressed: _importImages,
+        icon: const Icon(Icons.add_photo_alternate_outlined),
+        label: const Text('Add local images'),
+      ),
+      if (_record.work.remoteCoverUrl.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: 16),
+          child: Text(
+            'Original cover URL: ${_record.work.remoteCoverUrl}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+    ],
+  );
 
   Widget _section(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 14),
-        child: Text(text, style: Theme.of(context).textTheme.titleLarge),
-      );
+    padding: const EdgeInsets.only(bottom: 14),
+    child: Text(text, style: Theme.of(context).textTheme.titleLarge),
+  );
 }
 
 class _ScrollForm extends StatelessWidget {
@@ -933,14 +1028,14 @@ class _ScrollForm extends StatelessWidget {
   final List<Widget> children;
   @override
   Widget build(BuildContext context) => Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 760),
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(18, 22, 18, 100),
-            children: children,
-          ),
-        ),
-      );
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 760),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(18, 22, 18, 100),
+        children: children,
+      ),
+    ),
+  );
 }
 
 class _ResponsiveFields extends StatelessWidget {
@@ -948,19 +1043,19 @@ class _ResponsiveFields extends StatelessWidget {
   final List<Widget> children;
   @override
   Widget build(BuildContext context) => LayoutBuilder(
-        builder: (context, constraints) => constraints.maxWidth < 480
-            ? Column(
-                children: children
-                    .expand((child) => [child, const SizedBox(height: 12)])
-                    .toList(),
-              )
-            : Row(
-                children: [
-                  for (var i = 0; i < children.length; i++) ...[
-                    Expanded(child: children[i]),
-                    if (i < children.length - 1) const SizedBox(width: 12),
-                  ],
-                ],
-              ),
-      );
+    builder: (context, constraints) => constraints.maxWidth < 480
+        ? Column(
+            children: children
+                .expand((child) => [child, const SizedBox(height: 12)])
+                .toList(),
+          )
+        : Row(
+            children: [
+              for (var i = 0; i < children.length; i++) ...[
+                Expanded(child: children[i]),
+                if (i < children.length - 1) const SizedBox(width: 12),
+              ],
+            ],
+          ),
+  );
 }

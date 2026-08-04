@@ -72,6 +72,25 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   void _filter() => setState(() {});
 
+  int get _selectedIndex {
+    final selected = _selected;
+    if (selected == null) return -1;
+    return _shown.indexWhere(
+      (record) =>
+          (selected.work.id != null && record.work.id == selected.work.id) ||
+          identical(record, selected),
+    );
+  }
+
+  void _selectRelative(int delta) {
+    final shown = _shown;
+    final index = _selectedIndex + delta;
+    if (index < 0 || index >= shown.length) return;
+    final record = shown[index];
+    widget.controller.clearSessionNewWork(record.work.id);
+    setState(() => _selected = record);
+  }
+
   List<CatalogRecord> get _shown => _records
       .where((record) => record.matches(_filterController.text, _tag))
       .toList();
@@ -80,8 +99,16 @@ class _CatalogScreenState extends State<CatalogScreen> {
     final changed = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (context) =>
-            BookEditorScreen(controller: widget.controller, record: record),
+        builder: (context) => BookEditorScreen(
+          controller: widget.controller,
+          record: record,
+          navigationRecords: _shown,
+          navigationIndex: _shown.indexWhere(
+            (item) =>
+                (record.work.id != null && item.work.id == record.work.id) ||
+                identical(item, record),
+          ),
+        ),
       ),
     );
     if (changed == true) await _load();
@@ -122,6 +149,14 @@ class _CatalogScreenState extends State<CatalogScreen> {
                             onEdit: _selected == null
                                 ? null
                                 : () => _edit(_selected!),
+                            onPrevious: _selectedIndex > 0
+                                ? () => _selectRelative(-1)
+                                : null,
+                            onNext:
+                                _selectedIndex >= 0 &&
+                                    _selectedIndex < _shown.length - 1
+                                ? () => _selectRelative(1)
+                                : null,
                           ),
                         ),
                       ],
@@ -137,6 +172,14 @@ class _CatalogScreenState extends State<CatalogScreen> {
                             onEdit: _selected == null
                                 ? null
                                 : () => _edit(_selected!),
+                            onPrevious: _selectedIndex > 0
+                                ? () => _selectRelative(-1)
+                                : null,
+                            onNext:
+                                _selectedIndex >= 0 &&
+                                    _selectedIndex < _shown.length - 1
+                                ? () => _selectRelative(1)
+                                : null,
                           ),
                         ),
                       ],
@@ -409,9 +452,16 @@ class _NewBadge extends StatelessWidget {
 }
 
 class _BookPreview extends StatelessWidget {
-  const _BookPreview({required this.record, required this.onEdit});
+  const _BookPreview({
+    required this.record,
+    required this.onEdit,
+    required this.onPrevious,
+    required this.onNext,
+  });
   final CatalogRecord? record;
   final VoidCallback? onEdit;
+  final VoidCallback? onPrevious;
+  final VoidCallback? onNext;
 
   @override
   Widget build(BuildContext context) {
@@ -437,9 +487,26 @@ class _BookPreview extends StatelessWidget {
                   final details = Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        work.title,
-                        style: Theme.of(context).textTheme.headlineSmall,
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              work.title,
+                              style: Theme.of(context).textTheme.headlineSmall,
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: onPrevious,
+                            tooltip: 'Previous book',
+                            icon: const Icon(Icons.arrow_back),
+                          ),
+                          IconButton(
+                            onPressed: onNext,
+                            tooltip: 'Next book',
+                            icon: const Icon(Icons.arrow_forward),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 8),
                       Text(

@@ -67,8 +67,18 @@ class ImageStorageService {
     required BookWork work,
     required String remoteUrl,
   }) async {
+    final uri = Uri.tryParse(remoteUrl.trim());
+    if (uri == null ||
+        uri.host.isEmpty ||
+        (uri.scheme != 'http' && uri.scheme != 'https')) {
+      throw ArgumentError.value(
+        remoteUrl,
+        'remoteUrl',
+        'A valid HTTP(S) image URL is required.',
+      );
+    }
     final response = await _client
-        .get(Uri.parse(remoteUrl))
+        .get(uri)
         .timeout(const Duration(seconds: 12));
     if (response.statusCode < 200 ||
         response.statusCode >= 300 ||
