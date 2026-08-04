@@ -256,6 +256,25 @@ void main() {
     expect(results.single.title, 'Fallback Book');
     expect(results.single.isbn13, '9781111111111');
   });
+
+  test('cleans encoded OpenLibrary summaries and control characters', () async {
+    final client = _RecordingClient((request) => http.Response(
+          '{"ISBN:9780000000000":{"title":"Book","notes":{"value":"A &amp; B &NBSP; &#x2013; line\\r\\r\\nnext\\u0007"}}}',
+          200,
+          headers: {'content-type': 'application/json'},
+        ));
+    final result = await ExternalCatalogService(client).searchByIsbn('9780000000000');
+    expect(result.single.summary, 'A & B   – line\n\nnext');
+  });
+
+  test('cleans encoded RPGGeek descriptions and normalizes line breaks', () async {
+    final client = _RecordingClient((request) => _response(
+        '<items><item id="8"><name value="Book"/>'
+        '<description>A &amp; B &amp;NBSP; &#13;&#10;line&#10;&#10;&#10;next&amp;#7;</description>'
+        '</item></items>'));
+    final result = await ExternalCatalogService(client).fetchRpgGeekItem('8', 'key');
+    expect(result.summary, 'A & B   \nline\n\nnext');
+  });
 }
 
 String _detailXml(String title, String id) =>

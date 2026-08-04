@@ -340,7 +340,7 @@ class ExternalCatalogService {
           .map((entry) => entry['name']?.toString() ?? '')
           .firstWhere((value) => value.isNotEmpty, orElse: () => ''),
       publicationDate: book['publish_date']?.toString() ?? '',
-      summary: _description(book['notes']),
+      summary: _cleanSummary(_description(book['notes'])),
       pageCount: (book['number_of_pages'] as num?)?.toInt(),
       remoteCoverUrl:
           cover?['large']?.toString() ?? cover?['medium']?.toString() ?? '',
@@ -424,7 +424,7 @@ class ExternalCatalogService {
       isbn13: isbn,
       publisher: publisherLinks.firstOrNull ?? '',
       publicationDate: attrFor('yearpublished', 'value'),
-      summary: textFor('description'),
+      summary: _cleanSummary(textFor('description')),
       moreInfo: textFor('moreinfo'),
       designers: designers,
       artists: artists,
@@ -473,6 +473,41 @@ class ExternalCatalogService {
   String _description(Object? raw) {
     if (raw is Map) return raw['value']?.toString() ?? '';
     return raw?.toString() ?? '';
+  }
+
+  String _cleanSummary(String value) {
+    var cleaned = value
+        .replaceAllMapped(RegExp(r'&#x([0-9a-f]+);', caseSensitive: false), (match) {
+          final code = int.tryParse(match.group(1)!, radix: 16);
+          return _codePoint(code, match.group(0)!);
+        })
+        .replaceAllMapped(RegExp(r'&#([0-9]+);'), (match) {
+          final code = int.tryParse(match.group(1)!);
+          return _codePoint(code, match.group(0)!);
+        });
+    const entities = <String, String>{
+      'amp': '&', 'apos': "'", 'gt': '>', 'lt': '<', 'quot': '"',
+      'nbsp': ' ', 'ndash': '–', 'mdash': '—', 'hellip': '…',
+      'copy': '©', 'reg': '®', 'trade': '™',
+    };
+    cleaned = cleaned.replaceAllMapped(
+      RegExp(r'&([a-z][a-z0-9]+);', caseSensitive: false),
+      (match) => entities[match.group(1)!.toLowerCase()] ?? match.group(0)!,
+    );
+    return cleaned
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n')
+        .replaceAll(RegExp(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'), '')
+        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+        .trim();
+  }
+
+  String _codePoint(int? code, String original) {
+    if (code == null || code < 0 || code > 0x10ffff ||
+        (code >= 0xd800 && code <= 0xdfff)) {
+      return original;
+    }
+    return String.fromCharCode(code);
   }
 }
 
