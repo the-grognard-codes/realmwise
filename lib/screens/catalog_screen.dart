@@ -317,72 +317,71 @@ class _CatalogSelector extends StatelessWidget {
     List<CatalogRecord> settingRecords,
   ) {
     final types = <String, List<CatalogRecord>>{};
+    final untyped = <CatalogRecord>[];
     for (final record in settingRecords) {
-      types
-          .putIfAbsent(
-            _name(record.work.bookType, 'Unclassified type'),
-            () => [],
-          )
-          .add(record);
+      final type = record.work.bookType.trim();
+      if (type.isEmpty) {
+        // A missing type is not a meaningful hierarchy level. Keep the book
+        // directly under its setting instead of creating a synthetic group.
+        untyped.add(record);
+      } else {
+        types.putIfAbsent(type, () => []).add(record);
+      }
     }
-    return types.entries
-        .map(
-          (type) => ExpansionTile(
-            initiallyExpanded: false,
-            tilePadding: const EdgeInsets.only(left: 48, right: 8),
-            leading: _leading(
-              context,
-              'bookType',
-              type.key,
-              Icons.book_outlined,
+    return [
+      ...types.entries.map(
+        (type) => ExpansionTile(
+          initiallyExpanded: false,
+          tilePadding: const EdgeInsets.only(left: 48, right: 8),
+          leading: _leading(context, 'bookType', type.key, Icons.book_outlined),
+          title: Text(type.key),
+          children: type.value
+              .expand((record) => _recordTiles(record, left: 72))
+              .toList(),
+        ),
+      ),
+      ...untyped.expand((record) => _recordTiles(record, left: 48)),
+    ];
+  }
+
+  Iterable<Widget> _recordTiles(CatalogRecord record, {required double left}) {
+    // A record normally has one row per owned copy. Keep a title-only fallback
+    // for malformed/empty records so the work remains reachable in the
+    // hierarchy.
+    final copies = record.copies;
+    final Iterable<MapEntry<int, UserCopy?>> entries = copies.isEmpty
+        ? <MapEntry<int, UserCopy?>>[const MapEntry(0, null)]
+        : copies.asMap().entries.map(
+            (entry) => MapEntry(entry.key, entry.value),
+          );
+    return entries.map(
+      (entry) => ListTile(
+        contentPadding: EdgeInsets.only(left: left, right: 8),
+        selected: record.work.id == selected?.work.id,
+        leading: entry.value?.favorite == true
+            ? const Icon(Icons.favorite, size: 18)
+            : null,
+        title: Row(
+          children: [
+            if (record.work.id != null &&
+                controller.sessionNewWorkIds.contains(record.work.id)) ...[
+              const _NewBadge(),
+              const SizedBox(width: 6),
+            ],
+            Expanded(
+              child: Text(
+                record.work.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-            title: Text(type.key),
-            children: type.value.expand((record) {
-              // A record normally has one row per owned copy. Keep a
-              // title-only fallback for malformed/empty records so the
-              // work remains reachable in the hierarchy.
-              final copies = record.copies;
-              final Iterable<MapEntry<int, UserCopy?>> entries = copies.isEmpty
-                  ? <MapEntry<int, UserCopy?>>[const MapEntry(0, null)]
-                  : copies.asMap().entries.map(
-                      (entry) => MapEntry(entry.key, entry.value),
-                    );
-              return entries.map(
-                (entry) => ListTile(
-                  contentPadding: const EdgeInsets.only(left: 72, right: 8),
-                  selected: record.work.id == selected?.work.id,
-                  leading: entry.value?.favorite == true
-                      ? const Icon(Icons.favorite, size: 18)
-                      : null,
-                  title: Row(
-                    children: [
-                      if (record.work.id != null &&
-                          controller.sessionNewWorkIds.contains(
-                            record.work.id,
-                          )) ...[
-                        const _NewBadge(),
-                        const SizedBox(width: 6),
-                      ],
-                      Expanded(
-                        child: Text(
-                          record.work.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                  trailing: copies.length > 1
-                      ? Text('copy ${entry.key + 1}')
-                      : null,
-                  onTap: () => onSelected(record),
-                  onLongPress: () => onOpen(record),
-                ),
-              );
-            }).toList(),
-          ),
-        )
-        .toList();
+          ],
+        ),
+        trailing: copies.length > 1 ? Text('copy ${entry.key + 1}') : null,
+        onTap: () => onSelected(record),
+        onLongPress: () => onOpen(record),
+      ),
+    );
   }
 
   String _name(String value, String fallback) =>
