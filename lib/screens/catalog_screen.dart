@@ -168,17 +168,19 @@ class _CatalogScreenState extends State<CatalogScreen> {
           ),
         ),
         const SizedBox(width: 8),
-        PopupMenuButton<String?>(
+        PopupMenuButton<String>(
           tooltip: 'Filter by tag',
-          onSelected: (tag) => setState(() => _tag = tag),
+          onSelected: (tag) => setState(() => _tag = tag.isEmpty ? null : tag),
           itemBuilder: (context) => [
-            CheckedPopupMenuItem<String?>(
-              value: null,
+            // Popup menus treat a null value as dismissal, so use an empty
+            // sentinel for the explicit "All tags" choice.
+            CheckedPopupMenuItem<String>(
+              value: '',
               checked: _tag == null,
               child: const Text('All tags'),
             ),
             ..._tags.map(
-              (tag) => CheckedPopupMenuItem<String?>(
+              (tag) => CheckedPopupMenuItem<String>(
                 value: tag,
                 checked: _tag == tag,
                 child: Text(tag),
