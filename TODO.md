@@ -3,9 +3,6 @@ Find out about Android publication.
     Are we relatively up-to-date?
     Is this code ready for publication?
 
-Create an import from / export to CSV feature. (Complete)
-    Add option to parse each imported item with external sources.
-
 Add UI options for hierarchy / tree to display by game system > book type >
 
 Add forward / back arrows in the detailed page view
