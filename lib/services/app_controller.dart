@@ -15,13 +15,15 @@ import 'external_catalog_service.dart';
 import 'export_service.dart';
 import 'image_storage_service.dart';
 import 'import_service.dart';
+import 'secure_storage_service.dart';
 
 /// Application session state: selected database, theme preference, and services.
 class AppController extends ChangeNotifier {
-  AppController()
+  AppController({TokenStorage? tokenStorage})
     : database = DatabaseService(),
       _http = http.Client(),
-      backups = BackupService();
+      backups = BackupService(),
+      _tokenStorage = tokenStorage ?? SecureStorageService();
 
   final DatabaseService database;
   final BackupService backups;
@@ -34,6 +36,7 @@ class AppController extends ChangeNotifier {
   );
   late final ExternalCatalogService lookup = ExternalCatalogService(_http);
   final http.Client _http;
+  final TokenStorage _tokenStorage;
 
   bool loading = true;
   String? error;
@@ -84,6 +87,8 @@ class AppController extends ChangeNotifier {
     error = null;
     await backups.stop();
     await database.open(databasePath);
+    final catalogIdentity = await database.ensureCatalogIdentity();
+    await _migrateRpgGeekToken(catalogIdentity);
     _sessionBaselineWorkIds
       ..clear()
       ..addAll(
@@ -104,6 +109,19 @@ class AppController extends ChangeNotifier {
       await prefs.setString('last_database_path', database.databasePath);
     }
     notifyListeners();
+  }
+
+  Future<void> _migrateRpgGeekToken(String catalogIdentity) async {
+    final secureKey = _storageKey(catalogIdentity);
+    final secure = await _tokenStorage.read(secureKey);
+    final legacy = (await database.getLegacyRpgGeekKey())?.trim();
+    if (secure == null && legacy != null && legacy.isNotEmpty) {
+      await _tokenStorage.write(secureKey, legacy);
+    }
+    if (legacy != null && legacy.isNotEmpty) {
+      await database.deleteLegacyRpgGeekKey();
+    }
+    await backups.scrubLegacyTokens(database.databasePath);
   }
 
   Future<void> closeDatabase() async {
@@ -187,10 +205,47 @@ class AppController extends ChangeNotifier {
     } catch (_) {}
   }
 
-  Future<String> rpgGeekKey() async =>
-      await database.getSetting('rpggeek_api_key') ?? '';
-  Future<void> setRpgGeekKey(String key) =>
-      database.setSetting('rpggeek_api_key', key.trim());
+  String _storageKey(String identity) => 'rpggeek_api_key:$identity';
+
+  String get _legacyPathStorageKey {
+    if (!database.isOpen) throw StateError('No database is currently open.');
+    return 'rpggeek_api_key:${path.normalize(database.databasePath)}';
+  }
+
+  Future<String> rpgGeekKey() async {
+    final identity = await database.ensureCatalogIdentity();
+    final storageKey = _storageKey(identity);
+    final secure = await _tokenStorage.read(storageKey);
+    if (secure != null) {
+      // Remove any stale plaintext value left by an interrupted migration.
+      await database.deleteLegacyRpgGeekKey();
+      return secure;
+    }
+    final previous = await _tokenStorage.read(_legacyPathStorageKey);
+    if (previous != null) {
+      await _tokenStorage.write(storageKey, previous);
+      await _tokenStorage.delete(_legacyPathStorageKey);
+      return previous;
+    }
+    final legacy = (await database.getLegacyRpgGeekKey())?.trim();
+    if (legacy == null || legacy.isEmpty) return '';
+    await _tokenStorage.write(storageKey, legacy);
+    await database.deleteLegacyRpgGeekKey();
+    return legacy;
+  }
+
+  Future<void> setRpgGeekKey(String key) async {
+    final identity = await database.ensureCatalogIdentity();
+    final storageKey = _storageKey(identity);
+    final trimmed = key.trim();
+    if (trimmed.isEmpty) {
+      await _tokenStorage.delete(storageKey);
+    } else {
+      await _tokenStorage.write(storageKey, trimmed);
+    }
+    await _tokenStorage.delete(_legacyPathStorageKey);
+    await database.deleteLegacyRpgGeekKey();
+  }
 
   Future<void> exportDatabaseCsv(String outputPath) async {
     if (!database.isOpen) throw StateError('No database is currently open.');

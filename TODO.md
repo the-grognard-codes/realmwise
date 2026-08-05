@@ -5,8 +5,6 @@ Find out about Android publication.
 
 Add UI options for hierarchy / tree to display by game system > book type >
 
-Add forward / back arrows in the detailed page view
-
 Fix the file upload on Android for images
 
 Add support for Google Books API, and maybe Library of Congress?
