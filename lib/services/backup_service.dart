@@ -19,8 +19,10 @@ class BackupService {
     });
   }
 
-  Future<void> _attemptBackup(
-      {required String databasePath, required Database database}) async {
+  Future<void> _attemptBackup({
+    required String databasePath,
+    required Database database,
+  }) async {
     try {
       await createBackup(databasePath: databasePath, database: database);
     } on Exception {
@@ -53,8 +55,48 @@ class BackupService {
       '${path.basenameWithoutExtension(databasePath)}_$stamp.backup.db',
     );
     final backup = await source.copy(destination);
+    await _scrubLegacyToken(backup);
     await _trimBackups(folder);
     return backup;
+  }
+
+  Future<void> scrubLegacyTokens(String databasePath) async {
+    final folder = Directory(path.join(path.dirname(databasePath), 'backups'));
+    if (!await folder.exists()) return;
+    final files = await folder
+        .list()
+        .where((entity) => entity is File && entity.path.endsWith('.backup.db'))
+        .cast<File>()
+        .toList();
+    for (final file in files) {
+      try {
+        await _scrubLegacyToken(file);
+      } on Exception {
+        // A damaged backup must not prevent the active catalog from opening.
+      }
+    }
+  }
+
+  Future<void> _scrubLegacyToken(File file) async {
+    Database? db;
+    try {
+      db = await openDatabase(file.path);
+      final tables = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'",
+      );
+      if (tables.isNotEmpty) {
+        await db.execute('PRAGMA secure_delete = ON');
+        await db.delete(
+          'settings',
+          where: 'setting_key = ?',
+          whereArgs: ['rpggeek_api_key'],
+        );
+        await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+        await db.execute('VACUUM');
+      }
+    } finally {
+      await db?.close();
+    }
   }
 
   Future<void> _trimBackups(Directory folder) async {

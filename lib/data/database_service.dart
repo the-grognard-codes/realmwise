@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:math';
+import 'dart:convert';
 
 import 'package:path/path.dart' as path;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -44,11 +46,18 @@ class DatabaseService {
           )''');
         }
         if (oldVersion < 3) {
-          await db.execute('ALTER TABLE catalog_icons ADD COLUMN zoom REAL NOT NULL DEFAULT 1');
+          await db.execute(
+            'ALTER TABLE catalog_icons ADD COLUMN zoom REAL NOT NULL DEFAULT 1',
+          );
         }
         if (oldVersion < 4) {
           for (final definition in _extendedWorkColumns.entries) {
-            await _addColumnIfMissing(db, 'works', definition.key, definition.value);
+            await _addColumnIfMissing(
+              db,
+              'works',
+              definition.key,
+              definition.value,
+            );
           }
         }
       },
@@ -160,8 +169,12 @@ class DatabaseService {
     'genre': "TEXT NOT NULL DEFAULT '[]'",
   };
 
-  static Future<void> _addColumnIfMissing(Database db, String table,
-      String column, String definition) async {
+  static Future<void> _addColumnIfMissing(
+    Database db,
+    String table,
+    String column,
+    String definition,
+  ) async {
     final tableRows = await db.rawQuery(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
       [table],
@@ -173,25 +186,61 @@ class DatabaseService {
   }
 
   Future<List<CatalogIconMapping>> listCatalogIcons() async {
-    final rows = await _db.query('catalog_icons', orderBy: 'tier, section_name COLLATE NOCASE');
+    final rows = await _db.query(
+      'catalog_icons',
+      orderBy: 'tier, section_name COLLATE NOCASE',
+    );
     return rows.map(CatalogIconMapping.fromRow).toList();
   }
 
-  Future<CatalogIconMapping?> getCatalogIcon(String tier, String sectionName) async {
-    final rows = await _db.query('catalog_icons', where: 'tier = ? AND section_name = ?', whereArgs: [tier, sectionName], limit: 1);
+  Future<CatalogIconMapping?> getCatalogIcon(
+    String tier,
+    String sectionName,
+  ) async {
+    final rows = await _db.query(
+      'catalog_icons',
+      where: 'tier = ? AND section_name = ?',
+      whereArgs: [tier, sectionName],
+      limit: 1,
+    );
     return rows.isEmpty ? null : CatalogIconMapping.fromRow(rows.single);
   }
 
-  Future<void> upsertCatalogIcon(CatalogIconMapping mapping) => _db.insert('catalog_icons', mapping.toRow(), conflictAlgorithm: ConflictAlgorithm.replace);
+  Future<void> upsertCatalogIcon(CatalogIconMapping mapping) => _db.insert(
+    'catalog_icons',
+    mapping.toRow(),
+    conflictAlgorithm: ConflictAlgorithm.replace,
+  );
 
-  Future<void> removeCatalogIcon(String tier, String sectionName) => _db.delete('catalog_icons', where: 'tier = ? AND section_name = ?', whereArgs: [tier, sectionName]);
+  Future<void> removeCatalogIcon(String tier, String sectionName) => _db.delete(
+    'catalog_icons',
+    where: 'tier = ? AND section_name = ?',
+    whereArgs: [tier, sectionName],
+  );
 
   Future<List<String>> listCatalogTierSections(String tier) async {
-    final column = {'gameSystem':'game_system','gameSetting':'game_setting','bookType':'book_type'}[tier];
+    final column = {
+      'gameSystem': 'game_system',
+      'gameSetting': 'game_setting',
+      'bookType': 'book_type',
+    }[tier];
     if (column == null) return const [];
-    final rows = await _db.rawQuery("SELECT DISTINCT $column AS value FROM works ORDER BY value COLLATE NOCASE");
-    final fallback = {'gameSystem':'Unclassified system','gameSetting':'General setting','bookType':'Unclassified type'}[tier]!;
-    return rows.map((r) { final value = (r['value'] as String?)?.trim() ?? ''; return value.isEmpty ? fallback : value; }).toSet().toList()..sort((a,b)=>a.toLowerCase().compareTo(b.toLowerCase()));
+    final rows = await _db.rawQuery(
+      "SELECT DISTINCT $column AS value FROM works ORDER BY value COLLATE NOCASE",
+    );
+    final fallback = {
+      'gameSystem': 'Unclassified system',
+      'gameSetting': 'General setting',
+      'bookType': 'Unclassified type',
+    }[tier]!;
+    return rows
+        .map((r) {
+          final value = (r['value'] as String?)?.trim() ?? '';
+          return value.isEmpty ? fallback : value;
+        })
+        .toSet()
+        .toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
   }
 
   Future<List<CatalogRecord>> listRecords() async {
@@ -200,7 +249,10 @@ class DatabaseService {
   }
 
   Future<Map<int, Map<String, Object?>>> workTimestamps() async {
-    final rows = await _db.query('works', columns: const ['id', 'created_at', 'updated_at']);
+    final rows = await _db.query(
+      'works',
+      columns: const ['id', 'created_at', 'updated_at'],
+    );
     return {
       for (final row in rows)
         row['id'] as int: {
@@ -339,7 +391,13 @@ class DatabaseService {
         if (suppliedId == null) {
           workId = await tx.insert('works', row);
         } else {
-          final found = await tx.query('works', columns: ['id'], where: 'id = ?', whereArgs: [suppliedId], limit: 1);
+          final found = await tx.query(
+            'works',
+            columns: ['id'],
+            where: 'id = ?',
+            whereArgs: [suppliedId],
+            limit: 1,
+          );
           workId = suppliedId;
           if (found.isEmpty) {
             await tx.insert('works', {...row, 'id': suppliedId});
@@ -347,14 +405,29 @@ class DatabaseService {
             await tx.update('works', row, where: 'id = ?', whereArgs: [workId]);
           }
         }
-        final timestamps = suppliedId == null ? const <String, Object?>{} : (timestampsByWorkId[suppliedId] ?? const {});
-        if (timestamps['created_at'] != null || timestamps['updated_at'] != null) {
+        final timestamps = suppliedId == null
+            ? const <String, Object?>{}
+            : (timestampsByWorkId[suppliedId] ?? const {});
+        if (timestamps['created_at'] != null ||
+            timestamps['updated_at'] != null) {
           final values = <String, Object?>{};
-          if (timestamps['created_at'] != null) values['created_at'] = timestamps['created_at'];
-          if (timestamps['updated_at'] != null) values['updated_at'] = timestamps['updated_at'];
-          await tx.update('works', values, where: 'id = ?', whereArgs: [workId]);
+          if (timestamps['created_at'] != null)
+            values['created_at'] = timestamps['created_at'];
+          if (timestamps['updated_at'] != null)
+            values['updated_at'] = timestamps['updated_at'];
+          await tx.update(
+            'works',
+            values,
+            where: 'id = ?',
+            whereArgs: [workId],
+          );
         } else if (suppliedId != null) {
-          await tx.update('works', {'updated_at': DateTime.now().toIso8601String()}, where: 'id = ?', whereArgs: [workId]);
+          await tx.update(
+            'works',
+            {'updated_at': DateTime.now().toIso8601String()},
+            where: 'id = ?',
+            whereArgs: [workId],
+          );
         }
         await tx.delete('copies', where: 'work_id = ?', whereArgs: [workId]);
         await tx.delete('images', where: 'work_id = ?', whereArgs: [workId]);
@@ -422,19 +495,62 @@ class DatabaseService {
     return rows.isEmpty ? null : rows.single['setting_value'] as String;
   }
 
-  Future<void> setSetting(String key, String value) => _db.insert(
+  /// Reads the pre-secure-storage RPGGeek token during one-time migration.
+  Future<String?> getLegacyRpgGeekKey() => getSetting('rpggeek_api_key');
+
+  /// Removes the pre-secure-storage RPGGeek token after it is copied safely.
+  Future<void> deleteLegacyRpgGeekKey() async {
+    await _db.execute('PRAGMA secure_delete = ON');
+    await _db.delete(
       'settings',
-      {
-        'setting_key': key,
-        'setting_value': value,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace);
+      where: 'setting_key = ?',
+      whereArgs: ['rpggeek_api_key'],
+    );
+    await _db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+    await _db.execute('VACUUM');
+  }
+
+  Future<String> ensureCatalogIdentity() async {
+    final existing = await getSetting('catalog_identity');
+    if (existing != null && existing.isNotEmpty) return existing;
+    final bytes = List<int>.generate(16, (_) => Random.secure().nextInt(256));
+    final identity = base64UrlEncode(bytes);
+    await setSetting('catalog_identity', identity);
+    return identity;
+  }
+
+  Future<void> setSetting(String key, String value) => _db.insert('settings', {
+    'setting_key': key,
+    'setting_value': value,
+  }, conflictAlgorithm: ConflictAlgorithm.replace);
 }
 
 class CatalogIconMapping {
-  const CatalogIconMapping({required this.tier, required this.sectionName, required this.localPath, this.alignmentX = 0, this.alignmentY = 0, this.zoom = 1});
+  const CatalogIconMapping({
+    required this.tier,
+    required this.sectionName,
+    required this.localPath,
+    this.alignmentX = 0,
+    this.alignmentY = 0,
+    this.zoom = 1,
+  });
   final String tier, sectionName, localPath;
   final double alignmentX, alignmentY, zoom;
-  factory CatalogIconMapping.fromRow(Map<String, Object?> row) => CatalogIconMapping(tier: row['tier'] as String, sectionName: row['section_name'] as String, localPath: row['local_path'] as String, alignmentX: (row['alignment_x'] as num?)?.toDouble() ?? 0, alignmentY: (row['alignment_y'] as num?)?.toDouble() ?? 0, zoom: (row['zoom'] as num?)?.toDouble() ?? 1);
-  Map<String,Object?> toRow() => {'tier':tier,'section_name':sectionName,'local_path':localPath,'alignment_x':alignmentX,'alignment_y':alignmentY,'zoom':zoom};
+  factory CatalogIconMapping.fromRow(Map<String, Object?> row) =>
+      CatalogIconMapping(
+        tier: row['tier'] as String,
+        sectionName: row['section_name'] as String,
+        localPath: row['local_path'] as String,
+        alignmentX: (row['alignment_x'] as num?)?.toDouble() ?? 0,
+        alignmentY: (row['alignment_y'] as num?)?.toDouble() ?? 0,
+        zoom: (row['zoom'] as num?)?.toDouble() ?? 1,
+      );
+  Map<String, Object?> toRow() => {
+    'tier': tier,
+    'section_name': sectionName,
+    'local_path': localPath,
+    'alignment_x': alignmentX,
+    'alignment_y': alignmentY,
+    'zoom': zoom,
+  };
 }
