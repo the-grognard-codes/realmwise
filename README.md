@@ -1,6 +1,6 @@
-# RPG Catalog
+# Realmwise
 
-RPG Catalog is a local-first Flutter application for cataloging tabletop RPG books and the individual copies a collector owns. It runs on Android, Windows, and Debian-family Linux desktops from a single codebase.
+Realmwise is a local-first Flutter application for cataloging tabletop RPG books and the individual copies a collector owns. It runs on Android, Windows, and Debian-family Linux desktops from a single codebase.
 
 ## Highlights
 

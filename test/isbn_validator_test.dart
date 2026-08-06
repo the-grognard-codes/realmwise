@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:rpg_catalog/screens/search_add_screen.dart';
+import 'package:realmwise/screens/search_add_screen.dart';
 
 void main() {
   test('accepts valid ISBN-13 values', () {

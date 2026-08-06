@@ -9,14 +9,14 @@ import 'screens/settings_screen.dart';
 import 'services/app_controller.dart';
 import 'theme/app_theme.dart';
 
-class RpgCatalogBootstrap extends StatefulWidget {
-  const RpgCatalogBootstrap({super.key});
+class RealmwiseBootstrap extends StatefulWidget {
+  const RealmwiseBootstrap({super.key});
 
   @override
-  State<RpgCatalogBootstrap> createState() => _RpgCatalogBootstrapState();
+  State<RealmwiseBootstrap> createState() => _RealmwiseBootstrapState();
 }
 
-class _RpgCatalogBootstrapState extends State<RpgCatalogBootstrap> {
+class _RealmwiseBootstrapState extends State<RealmwiseBootstrap> {
   final AppController _controller = AppController();
   ApiDebugHarness? _debugHarness;
   Future<ApiDebugHarness>? _debugStart;
@@ -84,7 +84,7 @@ class _RpgCatalogBootstrapState extends State<RpgCatalogBootstrap> {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'RPG Catalog',
+      title: 'Realmwise RPG Tracker',
     debugShowCheckedModeBanner: false,
     theme: buildRpgTheme(_controller.seedName, Brightness.light),
     darkTheme: buildRpgTheme(_controller.seedName, Brightness.dark),
@@ -133,7 +133,7 @@ class _CatalogShellState extends State<CatalogShell> {
     ),
   ];
 
-  String get _title => ['RPG Catalog', 'Add to catalog', 'Settings'][_page];
+  String get _title => ['Realmwise', 'Add to catalog', 'Settings'][_page];
 
   @override
   Widget build(BuildContext context) {

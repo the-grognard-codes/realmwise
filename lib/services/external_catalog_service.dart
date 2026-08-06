@@ -17,7 +17,12 @@ class ExternalCatalogService {
   ExternalCatalogService(this._client);
   final http.Client _client;
 
-  Future<List<WorkCandidate>> searchByIsbn(String input, {String? ownerName, String? ownerEmail, String? apiKey}) async {
+  Future<List<WorkCandidate>> searchByIsbn(
+    String input, {
+    String? ownerName,
+    String? ownerEmail,
+    String? apiKey,
+  }) async {
     final normalized = input.replaceAll(RegExp(r'[^0-9Xx]'), '');
     final isbn = _isbn13FromInput(normalized);
     if (isbn == null)
@@ -27,7 +32,11 @@ class ExternalCatalogService {
       'format': 'json',
       'jscmd': 'data',
     });
-    final payload = await _json(url, ownerName: ownerName, ownerEmail: ownerEmail);
+    final payload = await _json(
+      url,
+      ownerName: ownerName,
+      ownerEmail: ownerEmail,
+    );
     final book = payload['ISBN:$isbn'];
     if (book is! Map<String, dynamic>) return const [];
     final ol = _fromOpenLibraryBook(book, isbn);
@@ -46,12 +55,18 @@ class ExternalCatalogService {
     return hits.isEmpty
         ? [ol]
         : hits
-            // Non-exact hits are alternatives, not enrichments of the ISBN
-            // record. Keeping them independent prevents every result from
-            // inheriting the same OpenLibrary metadata while preserving the
-            // hit's own title and RPGGeek identity.
-            .map((h) => WorkCandidate(title: h.name, rpgGeekId: h.id, publicationDate: h.publicationDate))
-            .toList();
+              // Non-exact hits are alternatives, not enrichments of the ISBN
+              // record. Keeping them independent prevents every result from
+              // inheriting the same OpenLibrary metadata while preserving the
+              // hit's own title and RPGGeek identity.
+              .map(
+                (h) => WorkCandidate(
+                  title: h.name,
+                  rpgGeekId: h.id,
+                  publicationDate: h.publicationDate,
+                ),
+              )
+              .toList();
   }
 
   String? _isbn13FromInput(String value) {
@@ -93,7 +108,16 @@ class ExternalCatalogService {
     final key = apiKey?.trim() ?? '';
     if (key.isNotEmpty) {
       final hits = await _searchRpgGeek(term.trim(), key);
-      if (hits.isNotEmpty) return hits.map((h) => WorkCandidate(title: h.name, rpgGeekId: h.id, publicationDate: h.publicationDate)).toList();
+      if (hits.isNotEmpty)
+        return hits
+            .map(
+              (h) => WorkCandidate(
+                title: h.name,
+                rpgGeekId: h.id,
+                publicationDate: h.publicationDate,
+              ),
+            )
+            .toList();
     }
     final url = Uri.https('openlibrary.org', '/search.json', {
       author ? 'author' : 'title': term.trim(),
@@ -101,7 +125,11 @@ class ExternalCatalogService {
       'fields':
           'key,title,author_name,isbn,publisher,publish_date,first_publish_year,cover_i,number_of_pages_median',
     });
-    final payload = await _json(url, ownerName: ownerName, ownerEmail: ownerEmail);
+    final payload = await _json(
+      url,
+      ownerName: ownerName,
+      ownerEmail: ownerEmail,
+    );
     final docs = payload['docs'];
     if (docs is! List) return const [];
     return docs
@@ -133,39 +161,65 @@ class ExternalCatalogService {
   Future<List<WorkCandidate>> searchRpgGeek(String query, String apiKey) async {
     final term = query.trim();
     if (term.length < 2) {
-      throw const CatalogLookupException('Type at least two characters to search.');
+      throw const CatalogLookupException(
+        'Type at least two characters to search.',
+      );
     }
     final key = apiKey.trim();
-    if (key.isEmpty) throw const CatalogLookupException('RPGGeek bearer token is required.');
+    if (key.isEmpty)
+      throw const CatalogLookupException('RPGGeek bearer token is required.');
     final hits = await _searchRpgGeek(term, key, failOnError: true);
-    return hits.map((h) => WorkCandidate(title: h.name, rpgGeekId: h.id, publicationDate: h.publicationDate)).toList();
+    return hits
+        .map(
+          (h) => WorkCandidate(
+            title: h.name,
+            rpgGeekId: h.id,
+            publicationDate: h.publicationDate,
+          ),
+        )
+        .toList();
   }
 
   /// Fetches one raw RPGGeek item. This operation never performs Open Library
   /// gap-fill or other enrichment.
   Future<WorkCandidate> fetchRpgGeekItem(String id, String apiKey) async {
     final itemId = id.trim();
-    if (itemId.isEmpty) throw const CatalogLookupException('RPGGeek item id is required.');
+    if (itemId.isEmpty)
+      throw const CatalogLookupException('RPGGeek item id is required.');
     final key = apiKey.trim();
-    if (key.isEmpty) throw const CatalogLookupException('RPGGeek bearer token is required.');
+    if (key.isEmpty)
+      throw const CatalogLookupException('RPGGeek bearer token is required.');
     final detail = await _fetchRpgGeekDetails(itemId, key);
     return detail.authors.isEmpty && detail.designers.isNotEmpty
         ? _replaceAuthors(detail, detail.designers)
         : detail;
   }
 
-  Future<WorkCandidate> fetchRpgGeekDetails(WorkCandidate confirmed, String apiKey) async {
-    if (apiKey.trim().isEmpty || confirmed.rpgGeekId.trim().isEmpty) return confirmed;
+  Future<WorkCandidate> fetchRpgGeekDetails(
+    WorkCandidate confirmed,
+    String apiKey,
+  ) async {
+    if (apiKey.trim().isEmpty || confirmed.rpgGeekId.trim().isEmpty)
+      return confirmed;
     try {
       final detail = await _fetchRpgGeekDetails(confirmed.rpgGeekId, apiKey);
       var merged = _mergeRpgGeek(confirmed, detail);
-      if (merged.isbn13.isEmpty || merged.remoteCoverUrl.isEmpty || merged.authors.isEmpty) {
+      if (merged.isbn13.isEmpty ||
+          merged.remoteCoverUrl.isEmpty ||
+          merged.authors.isEmpty) {
         try {
           List<WorkCandidate> ol;
-          final normalizedIsbn = merged.isbn13.replaceAll(RegExp(r'[^0-9Xx]'), '');
+          final normalizedIsbn = merged.isbn13.replaceAll(
+            RegExp(r'[^0-9Xx]'),
+            '',
+          );
           if (normalizedIsbn.length == 13) {
             ol = await searchByIsbn(normalizedIsbn);
-            if (ol.isEmpty) ol = await searchByTitleOrAuthor(term: merged.title, author: false);
+            if (ol.isEmpty)
+              ol = await searchByTitleOrAuthor(
+                term: merged.title,
+                author: false,
+              );
           } else {
             ol = await searchByTitleOrAuthor(term: merged.title, author: false);
           }
@@ -177,35 +231,74 @@ class ExternalCatalogService {
         }
       }
       return merged;
-    } on Exception { return confirmed; }
+    } on Exception {
+      return confirmed;
+    }
   }
 
-  Future<List<_RpgGeekSearchCandidate>> _searchRpgGeek(String query, String apiKey, {bool failOnError = false}) async {
-    final headers = {'Accept': 'application/xml', 'User-Agent': 'RpgCatalog/1.0', 'Authorization': 'Bearer ${apiKey.trim()}'};
+  Future<List<_RpgGeekSearchCandidate>> _searchRpgGeek(
+    String query,
+    String apiKey, {
+    bool failOnError = false,
+  }) async {
+    final headers = {
+      'Accept': 'application/xml',
+      'User-Agent': 'Realmwise/1.0',
+      'Authorization': 'Bearer ${apiKey.trim()}',
+    };
     var hadResponse = false;
     final result = <_RpgGeekSearchCandidate>[];
     for (final q in _rpgGeekQueries(WorkCandidate(title: query))) {
       try {
-        final response = await _client.get(Uri.https('boardgamegeek.com', '/xmlapi2/search', {'query': q, 'type': 'rpgitem'}), headers: headers).timeout(const Duration(seconds: 12));
+        final response = await _client
+            .get(
+              Uri.https('boardgamegeek.com', '/xmlapi2/search', {
+                'query': q,
+                'type': 'rpgitem',
+              }),
+              headers: headers,
+            )
+            .timeout(const Duration(seconds: 12));
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          if (failOnError) throw CatalogLookupException('RPGGeek returned HTTP ${response.statusCode}.');
+          if (failOnError)
+            throw CatalogLookupException(
+              'RPGGeek returned HTTP ${response.statusCode}.',
+            );
           continue;
         }
         hadResponse = true;
-        for (final item in XmlDocument.parse(response.body).findAllElements('item')) {
+        for (final item in XmlDocument.parse(
+          response.body,
+        ).findAllElements('item')) {
           final id = item.getAttribute('id') ?? '';
-          final name = item.findAllElements('name').map((e) => e.getAttribute('value') ?? '').firstWhere((v) => v.isNotEmpty, orElse: () => '');
-          final year = item.findAllElements('yearpublished').map((element) => element.getAttribute('value') ?? '').firstWhere((value) => RegExp(r'^\d{4}$').hasMatch(value), orElse: () => '');
-          if (id.isNotEmpty && name.isNotEmpty) result.add(_RpgGeekSearchCandidate(id, name, year));
+          final name = item
+              .findAllElements('name')
+              .map((e) => e.getAttribute('value') ?? '')
+              .firstWhere((v) => v.isNotEmpty, orElse: () => '');
+          final year = item
+              .findAllElements('yearpublished')
+              .map((element) => element.getAttribute('value') ?? '')
+              .firstWhere(
+                (value) => RegExp(r'^\d{4}$').hasMatch(value),
+                orElse: () => '',
+              );
+          if (id.isNotEmpty && name.isNotEmpty)
+            result.add(_RpgGeekSearchCandidate(id, name, year));
         }
-      } on CatalogLookupException { rethrow; } on Exception {
-        if (failOnError) throw const CatalogLookupException('Could not reach RPGGeek.');
+      } on CatalogLookupException {
+        rethrow;
+      } on Exception {
+        if (failOnError)
+          throw const CatalogLookupException('Could not reach RPGGeek.');
       }
     }
     final seen = <String>{};
     result.retainWhere((e) => seen.add(e.id));
-    result.sort((a,b) => _scoreRpg(query,b.name).compareTo(_scoreRpg(query,a.name)));
-    if (failOnError && !hadResponse) throw const CatalogLookupException('Could not reach RPGGeek.');
+    result.sort(
+      (a, b) => _scoreRpg(query, b.name).compareTo(_scoreRpg(query, a.name)),
+    );
+    if (failOnError && !hadResponse)
+      throw const CatalogLookupException('Could not reach RPGGeek.');
     return result;
   }
 
@@ -217,15 +310,31 @@ class ExternalCatalogService {
   }
 
   Future<WorkCandidate> _fetchRpgGeekDetails(String id, String apiKey) async {
-    final response = await _client.get(Uri.https('boardgamegeek.com', '/xmlapi2/thing', {'id': id, 'stats': '1', 'versions': '1'}), headers: {'Accept': 'application/xml', 'User-Agent': 'RpgCatalog/1.0', 'Authorization': 'Bearer ${apiKey.trim()}'}).timeout(const Duration(seconds: 12));
-    if (response.statusCode < 200 || response.statusCode >= 300) throw CatalogLookupException('RPGGeek returned HTTP ${response.statusCode}.');
+    final response = await _client
+        .get(
+          Uri.https('boardgamegeek.com', '/xmlapi2/thing', {
+            'id': id,
+            'stats': '1',
+            'versions': '1',
+          }),
+          headers: {
+            'Accept': 'application/xml',
+            'User-Agent': 'Realmwise/1.0',
+            'Authorization': 'Bearer ${apiKey.trim()}',
+          },
+        )
+        .timeout(const Duration(seconds: 12));
+    if (response.statusCode < 200 || response.statusCode >= 300)
+      throw CatalogLookupException(
+        'RPGGeek returned HTTP ${response.statusCode}.',
+      );
     return _fromRpgGeek(XmlDocument.parse(response.body), id);
   }
 
   Set<String> _isbnValues(WorkCandidate c) => {
-        if (c.isbn13.isNotEmpty) c.isbn13.replaceAll(RegExp(r'[^0-9Xx]'), ''),
-        if (c.isbn.isNotEmpty) c.isbn.replaceAll(RegExp(r'[^0-9Xx]'), ''),
-      };
+    if (c.isbn13.isNotEmpty) c.isbn13.replaceAll(RegExp(r'[^0-9Xx]'), ''),
+    if (c.isbn.isNotEmpty) c.isbn.replaceAll(RegExp(r'[^0-9Xx]'), ''),
+  };
 
   List<String> _rpgGeekQueries(WorkCandidate original) {
     final title = original.title.trim();
@@ -246,14 +355,20 @@ class ExternalCatalogService {
   ) {
     if (candidates.isEmpty) return null;
     final normalizedTitle = _normalizeRpgGeekTitle(title);
-    final titleTokens = normalizedTitle.split(' ').where((token) => token.isNotEmpty).toSet();
+    final titleTokens = normalizedTitle
+        .split(' ')
+        .where((token) => token.isNotEmpty)
+        .toSet();
     _RpgGeekSearchCandidate? best;
     var bestScore = -1;
     final seen = <String>{};
     for (final candidate in candidates) {
       if (!seen.add(candidate.id)) continue;
       final normalizedName = _normalizeRpgGeekTitle(candidate.name);
-      final nameTokens = normalizedName.split(' ').where((token) => token.isNotEmpty).toSet();
+      final nameTokens = normalizedName
+          .split(' ')
+          .where((token) => token.isNotEmpty)
+          .toSet();
       if (normalizedName.isEmpty) continue;
       var score = 0;
       if (normalizedName == normalizedTitle && normalizedName.isNotEmpty) {
@@ -281,17 +396,21 @@ class ExternalCatalogService {
       .trim()
       .replaceAll(RegExp(r'\s+'), ' ');
 
-  Future<Map<String, dynamic>> _json(Uri url, {String? ownerName, String? ownerEmail}) async {
+  Future<Map<String, dynamic>> _json(
+    Uri url, {
+    String? ownerName,
+    String? ownerEmail,
+  }) async {
     final headers = <String, String>{
       'Accept': 'application/json',
       'User-Agent': _userAgent(ownerName, ownerEmail),
     };
-    if (ownerEmail?.trim().isNotEmpty == true) headers['From'] = ownerEmail!.trim();
+    if (ownerEmail?.trim().isNotEmpty == true)
+      headers['From'] = ownerEmail!.trim();
     try {
-      final response = await _client.get(
-        url,
-        headers: headers,
-      ).timeout(const Duration(seconds: 12));
+      final response = await _client
+          .get(url, headers: headers)
+          .timeout(const Duration(seconds: 12));
       if (response.statusCode < 200 || response.statusCode >= 300)
         throw CatalogLookupException(
           'OpenLibrary returned HTTP ${response.statusCode}.',
@@ -314,9 +433,12 @@ class ExternalCatalogService {
   String _userAgent(String? ownerName, String? ownerEmail) {
     final name = ownerName?.trim() ?? '';
     final email = ownerEmail?.trim() ?? '';
-    if (name.isEmpty && email.isEmpty) return 'RpgCatalog/1.0';
-    final identity = [if (name.isNotEmpty) name, if (email.isNotEmpty) email].join(' ');
-    return 'RpgCatalog/1.0 ($identity)';
+    if (name.isEmpty && email.isEmpty) return 'Realmwise/1.0';
+    final identity = [
+      if (name.isNotEmpty) name,
+      if (email.isNotEmpty) email,
+    ].join(' ');
+    return 'Realmwise/1.0 ($identity)';
   }
 
   WorkCandidate _fromOpenLibraryBook(
@@ -350,7 +472,9 @@ class ExternalCatalogService {
 
   WorkCandidate _fromOpenLibrarySearch(Map<String, dynamic> doc) {
     final isbnList = doc['isbn'] as List? ?? const [];
-    final isbn = isbnList.map((value) => value.toString()).firstWhere(
+    final isbn = isbnList
+        .map((value) => value.toString())
+        .firstWhere(
           (value) => value.replaceAll(RegExp(r'[^0-9]'), '').length == 13,
           orElse: () => '',
         );
@@ -364,7 +488,8 @@ class ExternalCatalogService {
       publisher: (doc['publisher'] as List? ?? const [])
           .map((value) => value.toString())
           .firstWhere((value) => value.isNotEmpty, orElse: () => ''),
-      publicationDate: doc['first_publish_year']?.toString() ??
+      publicationDate:
+          doc['first_publish_year']?.toString() ??
           (doc['publish_date'] as List?)?.firstOrNull?.toString() ??
           '',
       pageCount: (doc['number_of_pages_median'] as num?)?.toInt(),
@@ -399,12 +524,19 @@ class ExternalCatalogService {
       }
     }
     List<String> linkValues(String key) => links.entries
-        .where((entry) => entry.key == key || entry.key.endsWith(key) || entry.key.contains(key))
+        .where(
+          (entry) =>
+              entry.key == key ||
+              entry.key.endsWith(key) ||
+              entry.key.contains(key),
+        )
         .expand((entry) => entry.value)
         .toSet()
         .toList();
     String firstValue(String tag, String linkKey) =>
-        textFor(tag).trim().isNotEmpty ? textFor(tag) : (linkValues(linkKey).firstOrNull ?? '');
+        textFor(tag).trim().isNotEmpty
+        ? textFor(tag)
+        : (linkValues(linkKey).firstOrNull ?? '');
     final publisherLinks = linkValues('publisher');
     final designers = linkValues('designer');
     final authors = linkValues('author');
@@ -414,7 +546,10 @@ class ExternalCatalogService {
     final versionNames = item
         .findAllElements('versions')
         .expand((element) => element.findAllElements('name'))
-        .map((element) => element.getAttribute('value') ?? element.innerText.trim())
+        .map(
+          (element) =>
+              element.getAttribute('value') ?? element.innerText.trim(),
+        )
         .where((value) => value.trim().isNotEmpty)
         .toList();
     final isbn = firstValue('isbn', 'isbn');
@@ -429,7 +564,10 @@ class ExternalCatalogService {
       designers: designers,
       artists: artists,
       productionStaff: production,
-      version: versionLinks.firstOrNull ?? versionNames.firstOrNull ?? textFor('version'),
+      version:
+          versionLinks.firstOrNull ??
+          versionNames.firstOrNull ??
+          textFor('version'),
       isbn: isbn,
       productCode: firstValue('productcode', 'productcode'),
       seriesCode: firstValue('seriescode', 'seriescode'),
@@ -454,19 +592,36 @@ class ExternalCatalogService {
     return _replaceAuthors(merged, detail.designers);
   }
 
-  WorkCandidate _replaceAuthors(WorkCandidate source, List<String> authors) => WorkCandidate(
-        title: source.title, isbn13: source.isbn13, authors: authors,
-        publisher: source.publisher, publicationDate: source.publicationDate,
-        summary: source.summary, pageCount: source.pageCount,
-        remoteCoverUrl: source.remoteCoverUrl, openLibraryId: source.openLibraryId,
-        rpgGeekId: source.rpgGeekId, gameSystem: source.gameSystem,
-        gameSetting: source.gameSetting, bookType: source.bookType,
-        moreInfo: source.moreInfo, designers: source.designers,
-        artists: source.artists, productionStaff: source.productionStaff,
-        version: source.version, isbn: source.isbn, productCode: source.productCode,
-        seriesCode: source.seriesCode, dimensions: source.dimensions,
-        series: source.series, setting: source.setting, family: source.family,
-        system: source.system, category: source.category, mechanics: source.mechanics,
+  WorkCandidate _replaceAuthors(WorkCandidate source, List<String> authors) =>
+      WorkCandidate(
+        title: source.title,
+        isbn13: source.isbn13,
+        authors: authors,
+        publisher: source.publisher,
+        publicationDate: source.publicationDate,
+        summary: source.summary,
+        pageCount: source.pageCount,
+        remoteCoverUrl: source.remoteCoverUrl,
+        openLibraryId: source.openLibraryId,
+        rpgGeekId: source.rpgGeekId,
+        gameSystem: source.gameSystem,
+        gameSetting: source.gameSetting,
+        bookType: source.bookType,
+        moreInfo: source.moreInfo,
+        designers: source.designers,
+        artists: source.artists,
+        productionStaff: source.productionStaff,
+        version: source.version,
+        isbn: source.isbn,
+        productCode: source.productCode,
+        seriesCode: source.seriesCode,
+        dimensions: source.dimensions,
+        series: source.series,
+        setting: source.setting,
+        family: source.family,
+        system: source.system,
+        category: source.category,
+        mechanics: source.mechanics,
         genre: source.genre,
       );
 
@@ -477,7 +632,9 @@ class ExternalCatalogService {
 
   String _cleanSummary(String value) {
     var cleaned = value
-        .replaceAllMapped(RegExp(r'&#x([0-9a-f]+);', caseSensitive: false), (match) {
+        .replaceAllMapped(RegExp(r'&#x([0-9a-f]+);', caseSensitive: false), (
+          match,
+        ) {
           final code = int.tryParse(match.group(1)!, radix: 16);
           return _codePoint(code, match.group(0)!);
         })
@@ -486,9 +643,18 @@ class ExternalCatalogService {
           return _codePoint(code, match.group(0)!);
         });
     const entities = <String, String>{
-      'amp': '&', 'apos': "'", 'gt': '>', 'lt': '<', 'quot': '"',
-      'nbsp': ' ', 'ndash': '–', 'mdash': '—', 'hellip': '…',
-      'copy': '©', 'reg': '®', 'trade': '™',
+      'amp': '&',
+      'apos': "'",
+      'gt': '>',
+      'lt': '<',
+      'quot': '"',
+      'nbsp': ' ',
+      'ndash': '–',
+      'mdash': '—',
+      'hellip': '…',
+      'copy': '©',
+      'reg': '®',
+      'trade': '™',
     };
     cleaned = cleaned.replaceAllMapped(
       RegExp(r'&([a-z][a-z0-9]+);', caseSensitive: false),
@@ -503,7 +669,9 @@ class ExternalCatalogService {
   }
 
   String _codePoint(int? code, String original) {
-    if (code == null || code < 0 || code > 0x10ffff ||
+    if (code == null ||
+        code < 0 ||
+        code > 0x10ffff ||
         (code >= 0xd800 && code <= 0xdfff)) {
       return original;
     }
@@ -512,7 +680,11 @@ class ExternalCatalogService {
 }
 
 class _RpgGeekSearchCandidate {
-  const _RpgGeekSearchCandidate(this.id, this.name, [this.publicationDate = '']);
+  const _RpgGeekSearchCandidate(
+    this.id,
+    this.name, [
+    this.publicationDate = '',
+  ]);
   final String id;
   final String name;
   final String publicationDate;

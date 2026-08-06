@@ -57,7 +57,14 @@ class AppController extends ChangeNotifier {
       if (saved != null && await File(saved).exists()) {
         await openDatabase(saved, remember: false);
       } else {
-        await createDatabase('my_rpg_catalog', remember: false);
+        final documents = await getApplicationDocumentsDirectory();
+        final current = path.join(documents.path, 'my_realmwise.db');
+        final legacy = path.join(documents.path, 'my_rpg_catalog.db');
+        if (!await File(current).exists() && await File(legacy).exists()) {
+          await openDatabase(legacy, remember: false);
+        } else {
+          await createDatabase('my_realmwise', remember: false);
+        }
       }
     } catch (exception) {
       error = exception.toString();

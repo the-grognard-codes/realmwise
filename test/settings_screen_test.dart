@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:rpg_catalog/screens/settings_screen.dart';
-import 'package:rpg_catalog/services/app_controller.dart';
+import 'package:realmwise/screens/settings_screen.dart';
+import 'package:realmwise/services/app_controller.dart';
 
 void main() {
   testWidgets('settings are grouped into three tabs', (tester) async {

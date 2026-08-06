@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:rpg_catalog/models/catalog_models.dart';
+import 'package:realmwise/models/catalog_models.dart';
 
 void main() {
   test('book conditions expose the persisted names and labels in order', () {

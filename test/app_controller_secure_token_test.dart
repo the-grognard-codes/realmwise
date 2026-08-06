@@ -2,9 +2,10 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
-import 'package:rpg_catalog/data/database_service.dart';
-import 'package:rpg_catalog/services/app_controller.dart';
-import 'package:rpg_catalog/services/secure_storage_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:realmwise/data/database_service.dart';
+import 'package:realmwise/services/app_controller.dart';
+import 'package:realmwise/services/secure_storage_service.dart';
 
 class _MemoryTokenStorage implements TokenStorage {
   final values = <String, String>{};
@@ -88,6 +89,28 @@ void main() {
     controller.dispose();
     await folder.delete(recursive: true);
   });
+
+  test(
+    'initialize opens legacy default database when Realmwise default is absent',
+    () async {
+      final folder = await Directory.systemTemp.createTemp(
+        'realmwise_default_',
+      );
+      PathProviderPlatform.instance = _FakePathProvider(folder.path);
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final legacyPath =
+          '${folder.path}${Platform.pathSeparator}my_rpg_catalog.db';
+      final seed = DatabaseService();
+      await seed.open(legacyPath);
+      await seed.close();
+      final controller = AppController(tokenStorage: _MemoryTokenStorage());
+      await controller.initialize();
+      expect(controller.activeDatabasePath, legacyPath);
+      await controller.closeDatabase();
+      controller.dispose();
+      await folder.delete(recursive: true);
+    },
+  );
 
   test('secure token round trips and is namespaced per database', () async {
     final folder = await Directory.systemTemp.createTemp(

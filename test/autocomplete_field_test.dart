@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:rpg_catalog/widgets/autocomplete_field.dart';
+import 'package:realmwise/widgets/autocomplete_field.dart';
 
 void main() {
   testWidgets('external controller changes update the visible field', (

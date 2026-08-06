@@ -1,8 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:rpg_catalog/data/database_service.dart';
-import 'package:rpg_catalog/models/catalog_models.dart';
+import 'package:realmwise/data/database_service.dart';
+import 'package:realmwise/models/catalog_models.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
@@ -11,7 +11,7 @@ void main() {
   test(
     'SQLite saves, updates, filters suggestions, and deletes a complete record',
     () async {
-      final folder = await Directory.systemTemp.createTemp('rpg_catalog_test_');
+      final folder = await Directory.systemTemp.createTemp('realmwise_test_');
       final service = DatabaseService();
       await service.open('${folder.path}${Platform.pathSeparator}catalog.db');
 
@@ -55,7 +55,7 @@ void main() {
   );
 
   test('catalog icon mappings round trip and v1 databases migrate', () async {
-    final folder = await Directory.systemTemp.createTemp('rpg_catalog_icons_');
+      final folder = await Directory.systemTemp.createTemp('realmwise_icons_');
     final dbPath = '${folder.path}${Platform.pathSeparator}catalog.db';
     final service = DatabaseService();
     await service.open(dbPath);
@@ -87,7 +87,7 @@ void main() {
   });
 
   test('extended RPGGeek metadata persists in the works table', () async {
-    final folder = await Directory.systemTemp.createTemp('rpg_catalog_metadata_');
+      final folder = await Directory.systemTemp.createTemp('realmwise_metadata_');
     final service = DatabaseService();
     await service.open('${folder.path}${Platform.pathSeparator}catalog.db');
     final saved = await service.saveRecord(const CatalogRecord(

@@ -20,10 +20,16 @@ class ImageStorageService {
     final defaultDirectory = await getApplicationDocumentsDirectory();
     final chosen = configuredPath?.trim().isNotEmpty == true
         ? configuredPath!.trim()
-        : path.join(defaultDirectory.path, 'rpg_catalog_images');
+        : await _defaultDirectory(defaultDirectory.path);
     await Directory(chosen).create(recursive: true);
     _rootPath = chosen;
     return chosen;
+  }
+
+  Future<String> _defaultDirectory(String documentsPath) async {
+    final legacy = Directory(path.join(documentsPath, 'rpg_catalog_images'));
+    if (await legacy.exists()) return legacy.path;
+    return path.join(documentsPath, 'realmwise_images');
   }
 
   Future<BookImage> importFile({
@@ -53,9 +59,17 @@ class ImageStorageService {
     );
   }
 
-  Future<String> importCatalogIcon({required String sourcePath, required String tier, required String sectionName}) async {
+  Future<String> importCatalogIcon({
+    required String sourcePath,
+    required String tier,
+    required String sectionName,
+  }) async {
     final source = File(sourcePath);
-    if (!await source.exists()) throw FileSystemException('The selected image no longer exists.', sourcePath);
+    if (!await source.exists())
+      throw FileSystemException(
+        'The selected image no longer exists.',
+        sourcePath,
+      );
     final ext = _extensionFor(sourcePath, fallback: '.png');
     final label = _cleanLabel('${tier}_$sectionName');
     final destination = await _uniquePath(rootPath, 'icon_$label', ext);
@@ -144,8 +158,8 @@ class ImageStorageService {
   }) async {
     final identifier =
         work.isbn13.replaceAll(RegExp(r'[^0-9Xx]'), '').isNotEmpty
-            ? work.isbn13.replaceAll(RegExp(r'[^0-9Xx]'), '')
-            : 'work_${work.id ?? DateTime.now().millisecondsSinceEpoch}';
+        ? work.isbn13.replaceAll(RegExp(r'[^0-9Xx]'), '')
+        : 'work_${work.id ?? DateTime.now().millisecondsSinceEpoch}';
     final name = '${identifier}_${_cleanLabel(label)}${cover ? '_cover' : ''}';
     return _uniquePath(rootPath, name, extension);
   }
@@ -170,21 +184,22 @@ class ImageStorageService {
         .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_')
         .replaceAll(RegExp(r'_+'), '_')
         .replaceAll(RegExp(r'^_|_$'), '');
-    final cropped =
-        normalized.length > 32 ? normalized.substring(0, 32) : normalized;
+    final cropped = normalized.length > 32
+        ? normalized.substring(0, 32)
+        : normalized;
     return cropped.isEmpty ? 'image' : cropped;
   }
 
   String _extensionFor(String filePath, {required String fallback}) {
     final extension = path.extension(filePath).toLowerCase();
     return const [
-      '.jpg',
-      '.jpeg',
-      '.png',
-      '.webp',
-      '.gif',
-      '.bmp',
-    ].contains(extension)
+          '.jpg',
+          '.jpeg',
+          '.png',
+          '.webp',
+          '.gif',
+          '.bmp',
+        ].contains(extension)
         ? extension
         : fallback;
   }

@@ -1,4 +1,4 @@
-name: rpg_catalog
+name: realmwise
 description: A local-first catalog for tabletop role-playing game books.
 publish_to: none
 version: 1.0.0+1

@@ -39,7 +39,7 @@ class _DatabaseGatewayState extends State<DatabaseGateway> {
   }
 
   Future<void> _create() async {
-    final name = TextEditingController(text: 'my_rpg_catalog');
+    final name = TextEditingController(text: 'my_realmwise');
     final route = DialogRoute<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -76,7 +76,7 @@ class _DatabaseGatewayState extends State<DatabaseGateway> {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['db', 'sqlite', 'sqlite3'],
-      dialogTitle: 'Open RPG Catalog database',
+      dialogTitle: 'Open Realmwise database',
     );
     final selected = result?.files.singleOrNull?.path;
     if (selected != null)
@@ -85,70 +85,69 @@ class _DatabaseGatewayState extends State<DatabaseGateway> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 500),
+    body: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 500),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Card(
             child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(28),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        Icons.menu_book,
-                        size: 48,
-                        color: Theme.of(context).colorScheme.primary,
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.menu_book,
+                    size: 48,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Open your Realmwise',
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Choose an existing SQLite catalog or create a fresh local database. No account or connection is needed.',
+                  ),
+                  if (widget.error != null || _message != null) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      widget.error ?? _message!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
                       ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Open your RPG Catalog',
-                        style: Theme.of(context).textTheme.headlineSmall,
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Choose an existing SQLite catalog or create a fresh local database. No account or connection is needed.',
-                      ),
-                      if (widget.error != null || _message != null) ...[
-                        const SizedBox(height: 16),
-                        Text(
-                          widget.error ?? _message!,
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.error,
-                          ),
+                    ),
+                  ],
+                  const SizedBox(height: 24),
+                  if (_busy)
+                    const Center(child: CircularProgressIndicator())
+                  else
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        FilledButton.icon(
+                          onPressed: _create,
+                          icon: const Icon(Icons.create_new_folder_outlined),
+                          label: const Text('Create database'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: _open,
+                          icon: const Icon(Icons.folder_open),
+                          label: const Text('Open database'),
                         ),
                       ],
-                      const SizedBox(height: 24),
-                      if (_busy)
-                        const Center(child: CircularProgressIndicator())
-                      else
-                        Wrap(
-                          spacing: 12,
-                          runSpacing: 12,
-                          children: [
-                            FilledButton.icon(
-                              onPressed: _create,
-                              icon:
-                                  const Icon(Icons.create_new_folder_outlined),
-                              label: const Text('Create database'),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed: _open,
-                              icon: const Icon(Icons.folder_open),
-                              label: const Text('Open database'),
-                            ),
-                          ],
-                        ),
-                    ],
-                  ),
-                ),
+                    ),
+                ],
               ),
             ),
           ),
         ),
-      );
+      ),
+    ),
+  );
 }
 
 extension _FirstOrNull<T> on List<T> {

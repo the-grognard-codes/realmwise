@@ -140,7 +140,7 @@ class ApiDebugHarness {
       '<html lang="en"><head>\n'
       '<meta charset="utf-8">\n'
       '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-      '<title>RPG Catalog API</title>\n'
+      '<title>Realmwise API</title>\n'
       '<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><text y=%2224%22 font-size=%2224%22>R</text></svg>">\n'
       '<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.11.10/swagger-ui.css" integrity="sha256-WudGeIrWwvGbuMdjjWO1dE4+/rqss7yrzNySjb7GxN8=" crossorigin="anonymous">\n'
       '</head><body><div id="swagger-ui"></div>\n'
@@ -246,7 +246,7 @@ AppController _requireController(AppController? controller) =>
 final Map<String, dynamic> _openApi = {
   'openapi': '3.0.3',
   'info': {
-    'title': 'RPG Catalog Debug Harness API',
+    'title': 'Realmwise Debug Harness API',
     'version': '1.0.0',
     'description':
         'Opt-in loopback-only debug service. Swagger is available at / and this contract at /openapi.json. API keys are writeOnly, never persisted by requests, returned, or logged.',

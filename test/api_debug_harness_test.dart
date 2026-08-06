@@ -4,9 +4,9 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
-import 'package:rpg_catalog/debug/api_debug_harness.dart';
-import 'package:rpg_catalog/models/catalog_models.dart';
-import 'package:rpg_catalog/services/external_catalog_service.dart';
+import 'package:realmwise/debug/api_debug_harness.dart';
+import 'package:realmwise/models/catalog_models.dart';
+import 'package:realmwise/services/external_catalog_service.dart';
 
 void main() {
   test('RPGGeek GET search and thing routes propagate bearer auth', () async {
@@ -80,7 +80,7 @@ void main() {
       );
       expect(contract.statusCode, 200);
       final document = jsonDecode(contract.body) as Map<String, dynamic>;
-      expect(document['info']['title'], 'RPG Catalog Debug Harness API');
+      expect(document['info']['title'], 'Realmwise Debug Harness API');
       expect(
         document['info']['description'],
         contains('Opt-in loopback-only debug service.'),

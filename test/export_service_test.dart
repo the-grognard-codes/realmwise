@@ -1,8 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:rpg_catalog/models/catalog_models.dart';
-import 'package:rpg_catalog/services/export_service.dart';
+import 'package:realmwise/models/catalog_models.dart';
+import 'package:realmwise/services/export_service.dart';
 
 void main() {
   test('exports a flat, escaped and future-importable schema', () async {

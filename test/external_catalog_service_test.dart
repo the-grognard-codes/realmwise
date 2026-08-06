@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:rpg_catalog/models/catalog_models.dart';
-import 'package:rpg_catalog/services/external_catalog_service.dart';
+import 'package:realmwise/models/catalog_models.dart';
+import 'package:realmwise/services/external_catalog_service.dart';
 
 void main() {
   test('tries subtitle fallback and selects its matching result', () async {

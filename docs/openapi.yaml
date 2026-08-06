@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: RPG Catalog Debug Harness API
+  title: Realmwise Debug Harness API
   version: 1.0.0
   description: >-
     Opt-in loopback-only debug service. Swagger is available at / and this
