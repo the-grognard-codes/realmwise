@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:realmwise/models/catalog_models.dart';
 import 'package:realmwise/screens/catalog_screen.dart';
+import 'package:realmwise/services/app_controller.dart';
 
 CatalogRecord _record(
   String title, {
@@ -66,5 +67,24 @@ void main() {
       flattenCatalogHierarchy(filtered).map((record) => record.work.title),
       ['guide-2', 'guide-1'],
     );
+  });
+
+  test('supports game system, book type, setting order', () {
+    final records = [
+      _record('setting-a', system: 'S', setting: 'A', type: 'Type'),
+      _record('setting-b', system: 'S', setting: 'B', type: 'Type'),
+      _record('other-type', system: 'S', setting: 'A', type: 'Other'),
+      _record('untyped', system: 'S', setting: 'A'),
+    ];
+    final ordered = flattenCatalogHierarchy(
+      records,
+      order: CatalogHierarchyOrder.gameSystemBookTypeSetting,
+    );
+    expect(ordered.map((record) => record.work.title), [
+      'setting-a',
+      'setting-b',
+      'other-type',
+      'untyped',
+    ]);
   });
 }

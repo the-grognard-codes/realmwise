@@ -12,47 +12,81 @@ import 'book_editor_screen.dart';
 /// presented. Group insertion order and record order are preserved, matching
 /// [_CatalogSelector]; untyped books remain after typed groups within a
 /// setting.
-List<CatalogRecord> flattenCatalogHierarchy(Iterable<CatalogRecord> records) {
+List<CatalogRecord> flattenCatalogHierarchy(
+  Iterable<CatalogRecord> records, {
+  CatalogHierarchyOrder order = CatalogHierarchyOrder.gameSystemSettingBookType,
+}) {
   String name(String raw, String fallback) =>
       raw.trim().isEmpty ? fallback : raw.trim();
-  final systems = <String, List<CatalogRecord>>{};
-  for (final record in records) {
-    systems
-        .putIfAbsent(
-          name(record.work.gameSystem, 'Unclassified system'),
-          () => [],
-        )
-        .add(record);
-  }
+  final source = records.toList(growable: false);
   final flattened = <CatalogRecord>[];
-  for (final systemRecords in systems.values) {
-    final settings = <String, List<CatalogRecord>>{};
-    for (final record in systemRecords) {
-      settings
+  if (order == CatalogHierarchyOrder.gameSystemBookTypeSetting) {
+    final systems = <String, List<CatalogRecord>>{};
+    for (final record in source)
+      systems
           .putIfAbsent(
-            name(record.work.gameSetting, 'General setting'),
+            name(record.work.gameSystem, 'Unclassified system'),
             () => [],
           )
           .add(record);
-    }
-    for (final settingRecords in settings.values) {
+    for (final systemRecords in systems.values) {
       final types = <String, List<CatalogRecord>>{};
       final untyped = <CatalogRecord>[];
-      for (final record in settingRecords) {
+      for (final record in systemRecords) {
         final type = record.work.bookType.trim();
-        if (type.isEmpty) {
+        if (type.isEmpty)
           untyped.add(record);
-        } else {
+        else
           types.putIfAbsent(type, () => []).add(record);
-        }
       }
       for (final typeRecords in types.values) {
-        flattened.addAll(typeRecords);
+        final settings = <String, List<CatalogRecord>>{};
+        for (final record in typeRecords)
+          settings
+              .putIfAbsent(
+                name(record.work.gameSetting, 'General setting'),
+                () => [],
+              )
+              .add(record);
+        for (final settingRecords in settings.values)
+          flattened.addAll(settingRecords);
       }
       flattened.addAll(untyped);
     }
+  } else {
+    final systems = <String, List<CatalogRecord>>{};
+    for (final record in source)
+      systems
+          .putIfAbsent(
+            name(record.work.gameSystem, 'Unclassified system'),
+            () => [],
+          )
+          .add(record);
+    for (final systemRecords in systems.values) {
+      final settings = <String, List<CatalogRecord>>{};
+      for (final record in systemRecords)
+        settings
+            .putIfAbsent(
+              name(record.work.gameSetting, 'General setting'),
+              () => [],
+            )
+            .add(record);
+      for (final settingRecords in settings.values) {
+        final types = <String, List<CatalogRecord>>{};
+        final untyped = <CatalogRecord>[];
+        for (final record in settingRecords) {
+          final type = record.work.bookType.trim();
+          if (type.isEmpty)
+            untyped.add(record);
+          else
+            types.putIfAbsent(type, () => []).add(record);
+        }
+        for (final typeRecords in types.values) flattened.addAll(typeRecords);
+        flattened.addAll(untyped);
+      }
+    }
   }
-  return List<CatalogRecord>.unmodifiable(flattened);
+  return List.unmodifiable(flattened);
 }
 
 class CatalogScreen extends StatefulWidget {
@@ -77,14 +111,18 @@ class _CatalogScreenState extends State<CatalogScreen> {
   void initState() {
     super.initState();
     _filterController.addListener(_filter);
+    widget.controller.addListener(_controllerChanged);
     _load();
   }
 
   @override
   void dispose() {
+    widget.controller.removeListener(_controllerChanged);
     _filterController.dispose();
     super.dispose();
   }
+
+  void _controllerChanged() => mounted ? setState(() {}) : null;
 
   Future<void> _load() async {
     setState(() {
@@ -142,7 +180,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
       .where((record) => record.matches(_filterController.text, _tag))
       .toList();
 
-  List<CatalogRecord> get _navigationRecords => flattenCatalogHierarchy(_shown);
+  List<CatalogRecord> get _navigationRecords =>
+      flattenCatalogHierarchy(_shown, order: widget.controller.hierarchyOrder);
 
   Future<void> _edit(CatalogRecord record) async {
     final changed = await Navigator.push<bool>(
@@ -368,17 +407,54 @@ class _CatalogSelector extends StatelessWidget {
                 Icons.account_tree_outlined,
               ),
               title: Text(system.key),
-              children: _settingNodes(context, system.value),
+              children:
+                  controller.hierarchyOrder ==
+                      CatalogHierarchyOrder.gameSystemBookTypeSetting
+                  ? _typeFirstNodes(context, system.value)
+                  : _settingNodes(context, system.value),
             ),
           )
           .toList(),
     );
   }
 
+  List<Widget> _typeFirstNodes(
+    BuildContext context,
+    List<CatalogRecord> records,
+  ) {
+    final types = <String, List<CatalogRecord>>{};
+    final untyped = <CatalogRecord>[];
+    for (final record in records) {
+      final type = record.work.bookType.trim();
+      if (type.isEmpty)
+        untyped.add(record);
+      else
+        types.putIfAbsent(type, () => []).add(record);
+    }
+    return [
+      ...types.entries.map(
+        (type) => ExpansionTile(
+          tilePadding: const EdgeInsets.only(left: 28, right: 8),
+          leading: _leading(context, 'bookType', type.key, Icons.book_outlined),
+          title: Text(type.key),
+          children: _settingNodes(
+            context,
+            type.value,
+            left: 48,
+            includeTypes: false,
+          ),
+        ),
+      ),
+      ...untyped.expand((record) => _recordTiles(record, left: 28)),
+    ];
+  }
+
   List<Widget> _settingNodes(
     BuildContext context,
-    List<CatalogRecord> systemRecords,
-  ) {
+    List<CatalogRecord> systemRecords, {
+    double left = 28,
+    bool includeTypes = true,
+  }) {
     final settings = <String, List<CatalogRecord>>{};
     for (final record in systemRecords) {
       settings
@@ -392,7 +468,7 @@ class _CatalogSelector extends StatelessWidget {
         .map(
           (setting) => ExpansionTile(
             initiallyExpanded: false,
-            tilePadding: const EdgeInsets.only(left: 28, right: 8),
+            tilePadding: EdgeInsets.only(left: left, right: 8),
             leading: _leading(
               context,
               'gameSetting',
@@ -400,7 +476,11 @@ class _CatalogSelector extends StatelessWidget {
               Icons.landscape_outlined,
             ),
             title: Text(setting.key),
-            children: _typeNodes(context, setting.value),
+            children: includeTypes
+                ? _typeNodes(context, setting.value)
+                : setting.value
+                      .expand((record) => _recordTiles(record, left: left + 20))
+                      .toList(),
           ),
         )
         .toList();
