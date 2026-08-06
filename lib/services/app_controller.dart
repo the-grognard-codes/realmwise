@@ -17,6 +17,11 @@ import 'image_storage_service.dart';
 import 'import_service.dart';
 import 'secure_storage_service.dart';
 
+enum CatalogHierarchyOrder {
+  gameSystemSettingBookType,
+  gameSystemBookTypeSetting,
+}
+
 /// Application session state: selected database, theme preference, and services.
 class AppController extends ChangeNotifier {
   AppController({TokenStorage? tokenStorage})
@@ -41,6 +46,8 @@ class AppController extends ChangeNotifier {
   bool loading = true;
   String? error;
   String seedName = 'Dragon red';
+  CatalogHierarchyOrder hierarchyOrder =
+      CatalogHierarchyOrder.gameSystemSettingBookType;
 
   // Work IDs observed after opening a database are the session baseline. Any
   // IDs appearing later are kept in memory only so the catalog can label them.
@@ -107,6 +114,10 @@ class AppController extends ChangeNotifier {
     final imageFolder = await database.getSetting('image_folder');
     await imageStorage.initialize(imageFolder);
     seedName = await database.getSetting('theme_seed') ?? 'Dragon red';
+    final savedHierarchy = await database.getSetting('catalog_hierarchy_order');
+    hierarchyOrder = savedHierarchy == 'gameSystemBookTypeSetting'
+        ? CatalogHierarchyOrder.gameSystemBookTypeSetting
+        : CatalogHierarchyOrder.gameSystemSettingBookType;
     await backups.start(
       databasePath: database.databasePath,
       database: database.databaseHandle,
@@ -158,6 +169,19 @@ class AppController extends ChangeNotifier {
   Future<void> setTheme(String name) async {
     seedName = name;
     await database.setSetting('theme_seed', name);
+    notifyListeners();
+  }
+
+  Future<void> setHierarchyOrder(CatalogHierarchyOrder order) async {
+    hierarchyOrder = order;
+    if (database.isOpen) {
+      await database.setSetting(
+        'catalog_hierarchy_order',
+        order == CatalogHierarchyOrder.gameSystemBookTypeSetting
+            ? 'gameSystemBookTypeSetting'
+            : 'gameSystemSettingBookType',
+      );
+    }
     notifyListeners();
   }
 

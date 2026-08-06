@@ -365,6 +365,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }).toList(),
       ),
     ),
+    _Section(
+      title: 'User Interface',
+      child: SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Book type before game setting'),
+        subtitle: Text(
+          widget.controller.hierarchyOrder ==
+                  CatalogHierarchyOrder.gameSystemBookTypeSetting
+              ? 'Game System > Book Type > Game Setting'
+              : 'Game System > Game Setting > Book Type',
+        ),
+        value:
+            widget.controller.hierarchyOrder ==
+            CatalogHierarchyOrder.gameSystemBookTypeSetting,
+        onChanged: _busy
+            ? null
+            : (value) {
+                final order = value
+                    ? CatalogHierarchyOrder.gameSystemBookTypeSetting
+                    : CatalogHierarchyOrder.gameSystemSettingBookType;
+                _run(() => widget.controller.setHierarchyOrder(order));
+              },
+      ),
+    ),
     _catalogIconsSection(),
   ];
 
