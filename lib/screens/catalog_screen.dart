@@ -8,6 +8,53 @@ import '../services/app_controller.dart';
 import '../widgets/cover_image.dart';
 import 'book_editor_screen.dart';
 
+/// Returns records in the same order in which the catalog hierarchy is
+/// presented. Group insertion order and record order are preserved, matching
+/// [_CatalogSelector]; untyped books remain after typed groups within a
+/// setting.
+List<CatalogRecord> flattenCatalogHierarchy(Iterable<CatalogRecord> records) {
+  String name(String raw, String fallback) =>
+      raw.trim().isEmpty ? fallback : raw.trim();
+  final systems = <String, List<CatalogRecord>>{};
+  for (final record in records) {
+    systems
+        .putIfAbsent(
+          name(record.work.gameSystem, 'Unclassified system'),
+          () => [],
+        )
+        .add(record);
+  }
+  final flattened = <CatalogRecord>[];
+  for (final systemRecords in systems.values) {
+    final settings = <String, List<CatalogRecord>>{};
+    for (final record in systemRecords) {
+      settings
+          .putIfAbsent(
+            name(record.work.gameSetting, 'General setting'),
+            () => [],
+          )
+          .add(record);
+    }
+    for (final settingRecords in settings.values) {
+      final types = <String, List<CatalogRecord>>{};
+      final untyped = <CatalogRecord>[];
+      for (final record in settingRecords) {
+        final type = record.work.bookType.trim();
+        if (type.isEmpty) {
+          untyped.add(record);
+        } else {
+          types.putIfAbsent(type, () => []).add(record);
+        }
+      }
+      for (final typeRecords in types.values) {
+        flattened.addAll(typeRecords);
+      }
+      flattened.addAll(untyped);
+    }
+  }
+  return List<CatalogRecord>.unmodifiable(flattened);
+}
+
 class CatalogScreen extends StatefulWidget {
   const CatalogScreen({super.key, required this.controller});
   final AppController controller;
@@ -75,7 +122,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
   int get _selectedIndex {
     final selected = _selected;
     if (selected == null) return -1;
-    return _shown.indexWhere(
+    return _navigationRecords.indexWhere(
       (record) =>
           (selected.work.id != null && record.work.id == selected.work.id) ||
           identical(record, selected),
@@ -83,7 +130,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
   }
 
   void _selectRelative(int delta) {
-    final shown = _shown;
+    final shown = _navigationRecords;
     final index = _selectedIndex + delta;
     if (index < 0 || index >= shown.length) return;
     final record = shown[index];
@@ -95,6 +142,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
       .where((record) => record.matches(_filterController.text, _tag))
       .toList();
 
+  List<CatalogRecord> get _navigationRecords => flattenCatalogHierarchy(_shown);
+
   Future<void> _edit(CatalogRecord record) async {
     final changed = await Navigator.push<bool>(
       context,
@@ -102,8 +151,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
         builder: (context) => BookEditorScreen(
           controller: widget.controller,
           record: record,
-          navigationRecords: _shown,
-          navigationIndex: _shown.indexWhere(
+          navigationRecords: _navigationRecords,
+          navigationIndex: _navigationRecords.indexWhere(
             (item) =>
                 (record.work.id != null && item.work.id == record.work.id) ||
                 identical(item, record),
@@ -154,7 +203,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
                                 : null,
                             onNext:
                                 _selectedIndex >= 0 &&
-                                    _selectedIndex < _shown.length - 1
+                                    _selectedIndex <
+                                        _navigationRecords.length - 1
                                 ? () => _selectRelative(1)
                                 : null,
                           ),
@@ -177,7 +227,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
                                 : null,
                             onNext:
                                 _selectedIndex >= 0 &&
-                                    _selectedIndex < _shown.length - 1
+                                    _selectedIndex <
+                                        _navigationRecords.length - 1
                                 ? () => _selectRelative(1)
                                 : null,
                           ),

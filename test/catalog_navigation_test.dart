@@ -1,0 +1,70 @@
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:realmwise/models/catalog_models.dart';
+import 'package:realmwise/screens/catalog_screen.dart';
+
+CatalogRecord _record(
+  String title, {
+  String system = '',
+  String setting = '',
+  String type = '',
+}) => CatalogRecord(
+  work: BookWork(
+    id: title.hashCode,
+    title: title,
+    gameSystem: system,
+    gameSetting: setting,
+    bookType: type,
+  ),
+);
+
+void main() {
+  test('navigation follows the selector hierarchy traversal', () {
+    final records = [
+      _record('zeta', system: 'Fantasy', setting: 'Core', type: 'Guide'),
+      _record('Beta', system: 'fantasy', setting: 'core', type: 'Guide'),
+      _record('alpha', system: 'Fantasy', setting: 'Core', type: 'Core'),
+      _record('Untyped', system: 'Fantasy', setting: 'Core'),
+      _record('General', system: 'Fantasy'),
+      _record('Other'),
+    ];
+
+    final ordered = flattenCatalogHierarchy(records);
+    expect(ordered.map((record) => record.work.title).toList(), [
+      'zeta',
+      'alpha',
+      'Untyped',
+      'General',
+      'Beta',
+      'Other',
+    ]);
+  });
+
+  test('empty values use selector fallbacks and untyped books stay last', () {
+    final records = [
+      _record('Untyped', system: 'S', setting: 'Set'),
+      _record('Typed', system: 'S', setting: 'Set', type: 'Type'),
+      _record('No setting', system: 'S'),
+    ];
+
+    final ordered = flattenCatalogHierarchy(records);
+    expect(ordered.map((record) => record.work.title), [
+      'Typed',
+      'Untyped',
+      'No setting',
+    ]);
+  });
+
+  test('filtered subsets retain supplied traversal order within sections', () {
+    final records = [
+      _record('guide-1', system: 'S', setting: 'Set', type: 'Guide'),
+      _record('other', system: 'S', setting: 'Other', type: 'Core'),
+      _record('guide-2', system: 'S', setting: 'Set', type: 'Guide'),
+    ];
+    final filtered = [records[2], records[0]];
+    expect(
+      flattenCatalogHierarchy(filtered).map((record) => record.work.title),
+      ['guide-2', 'guide-1'],
+    );
+  });
+}
