@@ -370,24 +370,28 @@ class _CatalogSelector extends StatelessWidget {
         .where((x) => x.tier == tier && x.sectionName == name)
         .firstOrNull;
     if (m == null || !File(m.localPath).existsSync()) return Icon(fallback);
-    return ClipOval(
-      child: SizedBox(
-        width: 24,
-        height: 24,
-        child: ClipOval(
-          child: Transform.scale(
-            scale: m.zoom,
-            child: Image.file(
-              File(m.localPath),
-              width: 24,
-              height: 24,
-              fit: BoxFit.contain,
-              alignment: Alignment(m.alignmentX, m.alignmentY),
-            ),
+    // Category images are easier to recognize when their corners remain
+    // visible. Keep book-type icons circular while using a small rounded
+    // square for game systems and settings.
+    final frame = SizedBox(
+      width: 24,
+      height: 24,
+      child: ClipRect(
+        child: Transform.scale(
+          scale: m.zoom,
+          child: Image.file(
+            File(m.localPath),
+            width: 24,
+            height: 24,
+            fit: BoxFit.contain,
+            alignment: Alignment(m.alignmentX, m.alignmentY),
           ),
         ),
       ),
     );
+    return tier == 'bookType'
+        ? ClipOval(child: frame)
+        : ClipRRect(borderRadius: BorderRadius.circular(6), child: frame);
   }
 
   @override

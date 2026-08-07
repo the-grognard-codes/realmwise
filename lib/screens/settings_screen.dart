@@ -178,6 +178,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: value,
             min: min,
             max: max,
+            divisions: ((max - min) * 10).round(),
             label: value.toStringAsFixed(2),
             onChanged: onChanged,
           ),
@@ -401,8 +402,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           final controls = Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              DropdownButton<String>(
-                value: _iconTier,
+              DropdownButtonFormField<String>(
+                initialValue: _iconTier,
+                decoration: const InputDecoration(labelText: 'Icon category'),
+                isExpanded: true,
                 items: const [
                   DropdownMenuItem(
                     value: 'gameSystem',
@@ -424,11 +427,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _iconZoom = 1;
                 }),
               ),
-              DropdownButton<String>(
-                value: snap.data?.contains(_iconSection) == true
+              DropdownButtonFormField<String>(
+                initialValue: snap.data?.contains(_iconSection) == true
                     ? _iconSection
                     : null,
-                hint: const Text('Choose section'),
+                decoration: const InputDecoration(labelText: 'Category'),
+                isExpanded: true,
                 items: (snap.data ?? const [])
                     .map(
                       (section) => DropdownMenuItem(
@@ -438,6 +442,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     )
                     .toList(),
                 onChanged: _selectIconSection,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Game systems and settings use a rounded-square frame; book types remain circular.',
               ),
               if (_iconSection != null) ...[
                 _slider(
@@ -497,18 +505,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   !File(_iconPreviewPath!).existsSync())
                 const Text('No saved icon for this section.')
               else
-                ClipOval(
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(
+                    _iconTier == 'bookType' ? 48 : 14,
+                  ),
                   child: SizedBox(
                     width: 96,
                     height: 96,
-                    child: Transform.scale(
-                      scale: _iconZoom,
-                      child: Image.file(
-                        File(_iconPreviewPath!),
-                        width: 96,
-                        height: 96,
-                        fit: BoxFit.contain,
-                        alignment: Alignment(_iconX, _iconY),
+                    child: ClipRect(
+                      child: Transform.scale(
+                        scale: _iconZoom,
+                        child: Image.file(
+                          File(_iconPreviewPath!),
+                          width: 96,
+                          height: 96,
+                          fit: BoxFit.contain,
+                          alignment: Alignment(_iconX, _iconY),
+                        ),
                       ),
                     ),
                   ),
