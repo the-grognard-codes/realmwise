@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../data/database_service.dart';
 import '../models/catalog_models.dart';
 import 'backup_service.dart';
+import 'catalog_bundle_service.dart';
 import 'catalog_service.dart';
 import 'external_catalog_service.dart';
 import 'export_service.dart';
@@ -33,6 +34,7 @@ class AppController extends ChangeNotifier {
   final DatabaseService database;
   final BackupService backups;
   final ExportService exporter = ExportService();
+  final CatalogBundleService bundles = CatalogBundleService();
   late final ImportService importer = ImportService(database);
   late final ImageStorageService imageStorage = ImageStorageService(_http);
   late final CatalogService catalog = CatalogService(
@@ -157,6 +159,20 @@ class AppController extends ChangeNotifier {
     final name = 'restored_${DateTime.now().millisecondsSinceEpoch}.db';
     final target = path.join(documents.path, name);
     await File(backupFile).copy(target);
+    await openDatabase(target);
+  }
+
+  Future<void> exportDeviceBundle(String outputPath) =>
+      bundles.exportBundle(database: database, outputPath: outputPath);
+
+  Future<void> restoreDeviceBundle(String bundlePath) async {
+    await bundles.validateBundle(bundlePath);
+    final documents = await getApplicationDocumentsDirectory();
+    final target = path.join(
+      documents.path,
+      'restored_${DateTime.now().millisecondsSinceEpoch}.db',
+    );
+    await bundles.extractDatabase(bundlePath, target);
     await openDatabase(target);
   }
 

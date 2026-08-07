@@ -246,6 +246,69 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
   }
 
+  Future<void> _exportDeviceBundle() async {
+    final chosen = await FilePicker.saveFile(
+      dialogTitle: 'Export portable device bundle',
+      fileName: 'realmwise.realmwise',
+      type: FileType.custom,
+      allowedExtensions: const ['realmwise', 'zip'],
+    );
+    if (chosen == null) return;
+    final output =
+        chosen.toLowerCase().endsWith('.realmwise') ||
+            chosen.toLowerCase().endsWith('.zip')
+        ? chosen
+        : '$chosen.realmwise';
+    await _run(
+      () => widget.controller.exportDeviceBundle(output),
+      success: 'Portable device bundle exported to $output',
+    );
+  }
+
+  Future<void> _restoreDeviceBundle() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['realmwise', 'zip'],
+      dialogTitle: 'Choose portable device bundle',
+    );
+    final source = picked?.files.singleOrNull?.path;
+    if (source == null || !mounted) return;
+    try {
+      await widget.controller.bundles.validateBundle(source);
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Bundle is not valid: $error')));
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Restore portable bundle?'),
+        content: const Text(
+          'This will open the catalog from the bundle as a new active database. Your current database remains unchanged.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Restore'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _run(
+        () => widget.controller.restoreDeviceBundle(source),
+        success: 'Portable device bundle restored into a new active database.',
+      );
+    }
+  }
+
   Future<void> _exportCsv() async {
     final chosen = await FilePicker.saveFile(
       dialogTitle: 'Export catalog as CSV',
@@ -600,7 +663,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     ),
     _databaseRecoverySection(),
+    _deviceSyncSection(),
   ];
+
+  Widget _deviceSyncSection() => _Section(
+    title: 'Manual Device Sync',
+    child: Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: [
+        OutlinedButton.icon(
+          onPressed: _busy ? null : _exportDeviceBundle,
+          icon: const Icon(Icons.archive_outlined),
+          label: const Text('Export device bundle'),
+        ),
+        OutlinedButton.icon(
+          onPressed: _busy ? null : _restoreDeviceBundle,
+          icon: const Icon(Icons.unarchive_outlined),
+          label: const Text('Restore device bundle'),
+        ),
+        const Text(
+          'Bundles contain catalog data only; API keys, image folders, and device preferences are excluded.',
+        ),
+      ],
+    ),
+  );
 
   Widget _databaseRecoverySection() => _Section(
     title: 'Database and Recovery',
