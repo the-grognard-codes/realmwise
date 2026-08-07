@@ -32,9 +32,12 @@ List<CatalogRecord> flattenCatalogHierarchy(
     for (final systemRecords in systems.values) {
       final types = <String, List<CatalogRecord>>{};
       final untyped = <CatalogRecord>[];
+      final unsetSetting = <CatalogRecord>[];
       for (final record in systemRecords) {
         final type = record.work.bookType.trim();
-        if (type.isEmpty)
+        if (record.work.gameSetting.trim().isEmpty)
+          unsetSetting.add(record);
+        else if (type.isEmpty)
           untyped.add(record);
         else
           types.putIfAbsent(type, () => []).add(record);
@@ -44,7 +47,7 @@ List<CatalogRecord> flattenCatalogHierarchy(
         for (final record in typeRecords)
           settings
               .putIfAbsent(
-                name(record.work.gameSetting, 'General setting'),
+                name(record.work.gameSetting, 'Unspecified Setting'),
                 () => [],
               )
               .add(record);
@@ -52,6 +55,7 @@ List<CatalogRecord> flattenCatalogHierarchy(
           flattened.addAll(settingRecords);
       }
       flattened.addAll(untyped);
+      flattened.addAll(unsetSetting);
     }
   } else {
     final systems = <String, List<CatalogRecord>>{};
@@ -64,13 +68,14 @@ List<CatalogRecord> flattenCatalogHierarchy(
           .add(record);
     for (final systemRecords in systems.values) {
       final settings = <String, List<CatalogRecord>>{};
+      final unsetSetting = <CatalogRecord>[];
       for (final record in systemRecords)
-        settings
-            .putIfAbsent(
-              name(record.work.gameSetting, 'General setting'),
-              () => [],
-            )
-            .add(record);
+        if (record.work.gameSetting.trim().isEmpty)
+          unsetSetting.add(record);
+        else
+          settings
+              .putIfAbsent(record.work.gameSetting.trim(), () => [])
+              .add(record);
       for (final settingRecords in settings.values) {
         final types = <String, List<CatalogRecord>>{};
         final untyped = <CatalogRecord>[];
@@ -84,6 +89,10 @@ List<CatalogRecord> flattenCatalogHierarchy(
         for (final typeRecords in types.values) flattened.addAll(typeRecords);
         flattened.addAll(untyped);
       }
+      // A missing setting is not a meaningful hierarchy level. Keep these
+      // books directly under their game system rather than creating a
+      // synthetic "Unspecified Setting" group.
+      flattened.addAll(unsetSetting);
     }
   }
   return List.unmodifiable(flattened);
@@ -424,9 +433,12 @@ class _CatalogSelector extends StatelessWidget {
   ) {
     final types = <String, List<CatalogRecord>>{};
     final untyped = <CatalogRecord>[];
+    final unsetSetting = <CatalogRecord>[];
     for (final record in records) {
       final type = record.work.bookType.trim();
-      if (type.isEmpty)
+      if (record.work.gameSetting.trim().isEmpty)
+        unsetSetting.add(record);
+      else if (type.isEmpty)
         untyped.add(record);
       else
         types.putIfAbsent(type, () => []).add(record);
@@ -446,6 +458,7 @@ class _CatalogSelector extends StatelessWidget {
         ),
       ),
       ...untyped.expand((record) => _recordTiles(record, left: 28)),
+      ...unsetSetting.expand((record) => _recordTiles(record, left: 28)),
     ];
   }
 
@@ -456,34 +469,36 @@ class _CatalogSelector extends StatelessWidget {
     bool includeTypes = true,
   }) {
     final settings = <String, List<CatalogRecord>>{};
+    final unsetSetting = <CatalogRecord>[];
     for (final record in systemRecords) {
-      settings
-          .putIfAbsent(
-            _name(record.work.gameSetting, 'General setting'),
-            () => [],
-          )
-          .add(record);
+      if (record.work.gameSetting.trim().isEmpty)
+        unsetSetting.add(record);
+      else
+        settings
+            .putIfAbsent(record.work.gameSetting.trim(), () => [])
+            .add(record);
     }
-    return settings.entries
-        .map(
-          (setting) => ExpansionTile(
-            initiallyExpanded: false,
-            tilePadding: EdgeInsets.only(left: left, right: 8),
-            leading: _leading(
-              context,
-              'gameSetting',
-              setting.key,
-              Icons.landscape_outlined,
-            ),
-            title: Text(setting.key),
-            children: includeTypes
-                ? _typeNodes(context, setting.value)
-                : setting.value
-                      .expand((record) => _recordTiles(record, left: left + 20))
-                      .toList(),
+    return [
+      ...settings.entries.map(
+        (setting) => ExpansionTile(
+          initiallyExpanded: false,
+          tilePadding: EdgeInsets.only(left: left, right: 8),
+          leading: _leading(
+            context,
+            'gameSetting',
+            setting.key,
+            Icons.landscape_outlined,
           ),
-        )
-        .toList();
+          title: Text(setting.key),
+          children: includeTypes
+              ? _typeNodes(context, setting.value)
+              : setting.value
+                    .expand((record) => _recordTiles(record, left: left + 20))
+                    .toList(),
+        ),
+      ),
+      ...unsetSetting.expand((record) => _recordTiles(record, left: left)),
+    ];
   }
 
   List<Widget> _typeNodes(

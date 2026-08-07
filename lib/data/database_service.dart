@@ -230,7 +230,7 @@ class DatabaseService {
     );
     final fallback = {
       'gameSystem': 'Unclassified system',
-      'gameSetting': 'General setting',
+      'gameSetting': 'Unspecified Setting',
       'bookType': 'Unclassified type',
     }[tier]!;
     return rows

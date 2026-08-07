@@ -1,11 +1,19 @@
+Add default and debug level logging feature.
+    Any logging built in by default?
+    Toggle in the UI
+
+Revise the category image to be a small square rather than circle.  Update the focus zoom sliders to account for this.
+
+Cloud storage syncing.
+    Scope
+    Support for Google Drive, One-Drive, Dropbox
+
 Find out about Android publication.
     Get a manifest of what is required packages, builds, etc.
     Are we relatively up-to-date?
     Is this code ready for publication?
 
-Add UI options for hierarchy / tree to display by game system > book type >
 
-Fix pagination bypassing the tree/hierarchy view and using the full list.
 
 Fix the file upload on Android for images
 
@@ -16,7 +24,6 @@ Add support for Google Books API, and maybe Library of Congress?
     
 P1 — Android releases use the debug signing key and a placeholder app ID. The authored configuration signs release with the debug keystore and uses com.example.rpg_catalog, undermining production provenance and store readiness. build.gradle.kts (line 17)
 
-P1 — RPGGeek bearer tokens are stored in plaintext in the catalog SQLite database. Backups copy that database, so a shared/stolen catalog or backup exposes the token. Move credentials to OS-backed secure storage and migrate/remove existing stored values. app_controller.dart (line 190) · backup_service.dart (line 42)
 
 P2 — Remote image downloads accept arbitrary HTTP(S) URLs, including private/local targets, with unbounded in-memory downloads and no content validation. This enables plaintext interception, local-network requests, and memory/disk exhaustion on Windows, Linux, and Android. Require HTTPS, block local/private addresses after redirects, stream with size caps, and validate image content. image_storage_service.dart (line 66)
 

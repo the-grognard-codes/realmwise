@@ -56,6 +56,26 @@ void main() {
     ]);
   });
 
+  test('books without a setting stay directly under their game system', () {
+    final records = [
+      _record('typed missing setting', system: 'S', type: 'Type'),
+      _record('untyped missing setting', system: 'S'),
+      _record('with setting', system: 'S', setting: 'Set', type: 'Type'),
+    ];
+
+    expect(
+      flattenCatalogHierarchy(records).map((record) => record.work.title),
+      ['with setting', 'typed missing setting', 'untyped missing setting'],
+    );
+    expect(
+      flattenCatalogHierarchy(
+        records,
+        order: CatalogHierarchyOrder.gameSystemBookTypeSetting,
+      ).map((record) => record.work.title),
+      ['with setting', 'typed missing setting', 'untyped missing setting'],
+    );
+  });
+
   test('filtered subsets retain supplied traversal order within sections', () {
     final records = [
       _record('guide-1', system: 'S', setting: 'Set', type: 'Guide'),

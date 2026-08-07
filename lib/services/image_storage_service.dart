@@ -1,15 +1,64 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 
 import '../models/catalog_models.dart';
 
+/// Optional test seam. The resolved peer is supplied by the service, so an
+/// injected transport cannot perform an independent DNS lookup.
+typedef ImageSecureTransport =
+    Future<http.StreamedResponse> Function(Uri uri, InternetAddress peer);
+typedef ImageSocketConnector =
+    Future<ConnectionTask<Socket>> Function(InternetAddress peer, int port);
+typedef ImageTlsUpgrader =
+    Future<Socket> Function(Socket socket, {required String host});
+
+/// Opens a pinned TCP connection and upgrades it to TLS using the original
+/// hostname for SNI and certificate validation.
+@visibleForTesting
+Future<ConnectionTask<Socket>> imagePinnedTlsConnection(
+  Uri uri,
+  InternetAddress peer, {
+  required int port,
+  ImageSocketConnector? connector,
+  ImageTlsUpgrader? upgrader,
+}) {
+  final tcpTask = (connector ?? Socket.startConnect)(peer, port);
+  final tlsUpgrade =
+      upgrader ??
+      (Socket socket, {required String host}) =>
+          SecureSocket.secure(socket, host: host);
+  return tcpTask.then(
+    (task) => ConnectionTask.fromSocket<Socket>(
+      task.socket.then((socket) => tlsUpgrade(socket, host: uri.host)),
+      task.cancel,
+    ),
+  );
+}
+
+class _DownloadedImage {
+  _DownloadedImage(this.bodyBytes, this.headers);
+  final Uint8List bodyBytes;
+  final Map<String, String> headers;
+}
+
+enum _ImageFormat { jpeg, png, gif, bmp, webp }
+
 /// Keeps work imagery in a portable local folder and never relies on a URL at display time.
 class ImageStorageService {
-  ImageStorageService(this._client);
-  final http.Client _client;
+  ImageStorageService(
+    http.Client? legacyClient, {
+    Future<List<InternetAddress>> Function(String host)? resolver,
+    this._transport,
+  }) : _resolver = resolver ?? ((host) => InternetAddress.lookup(host));
+  final Future<List<InternetAddress>> Function(String host) _resolver;
+  final ImageSecureTransport? _transport;
+  static const _maxRemoteBytes = 10 * 1024 * 1024;
+  static const _maxRedirects = 5;
   String? _rootPath;
 
   String get rootPath =>
@@ -82,42 +131,239 @@ class ImageStorageService {
     required String remoteUrl,
   }) async {
     final uri = Uri.tryParse(remoteUrl.trim());
-    if (uri == null ||
-        uri.host.isEmpty ||
-        (uri.scheme != 'http' && uri.scheme != 'https')) {
-      throw ArgumentError.value(
-        remoteUrl,
-        'remoteUrl',
-        'A valid HTTP(S) image URL is required.',
+    try {
+      if (uri == null || uri.host.isEmpty || uri.scheme != 'https') {
+        throw ArgumentError.value(
+          remoteUrl,
+          'remoteUrl',
+          'A valid HTTPS image URL is required.',
+        );
+      }
+      final response = await _download(
+        uri,
+      ).timeout(const Duration(seconds: 12));
+      final contentType = response.headers['content-type'];
+      final format = _imageFormat(response.bodyBytes);
+      final type = contentType?.split(';').first.trim().toLowerCase();
+      // The bytes are the authoritative image format. CDNs commonly omit the
+      // header, use a generic binary type, or label a valid image with a stale
+      // image subtype. Keep rejecting explicit non-image responses while
+      // allowing supported image signatures through.
+      if (format == null || !_contentTypeAllowsImage(type)) {
+        throw HttpException('Image download did not return an image.');
+      }
+      final extension = _extensionForFormat(format);
+      final destination = await _availableFile(
+        work: work,
+        label: 'remote',
+        extension: extension,
+        cover: true,
       );
+      final partial = File('${destination.path}.part');
+      try {
+        await partial.writeAsBytes(response.bodyBytes, flush: true);
+        await partial.rename(destination.path);
+      } catch (_) {
+        if (await partial.exists()) await partial.delete();
+        rethrow;
+      }
+      return BookImage(
+        localPath: destination.path,
+        remoteUrl: remoteUrl,
+        caption: 'Remote cover',
+        isCover: true,
+      );
+    } catch (_) {
+      rethrow;
     }
-    final response = await _client
-        .get(uri)
-        .timeout(const Duration(seconds: 12));
-    if (response.statusCode < 200 ||
-        response.statusCode >= 300 ||
-        response.bodyBytes.isEmpty) {
+  }
+
+  Future<_DownloadedImage> _download(Uri initial) async {
+    var uri = initial;
+    for (var redirect = 0; redirect <= _maxRedirects; redirect++) {
+      final peers = await _validateEndpoint(uri);
+      http.StreamedResponse? response;
+      for (final peer in peers) {
+        try {
+          response = await _sendPinned(uri, peer);
+          break;
+        } catch (_) {}
+      }
+      if (response == null) {
+        throw HttpException('Image download connection failed.');
+      }
+      if (response.statusCode >= 300 && response.statusCode < 400) {
+        final location = response.headers['location'];
+        if (location == null)
+          throw HttpException('Image download redirect lacked a location.');
+        await response.stream.drain();
+        uri = uri.resolve(location);
+        if (uri.scheme != 'https')
+          throw HttpException('Image download redirects must use HTTPS.');
+        continue;
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException(
+          'Image download returned HTTP ${response.statusCode}.',
+        );
+      }
+      final bytes = <int>[];
+      await for (final chunk in response.stream) {
+        if (bytes.length + chunk.length > _maxRemoteBytes) {
+          throw HttpException('Image download exceeds the size limit.');
+        }
+        bytes.addAll(chunk);
+      }
+      if (bytes.isEmpty)
+        throw HttpException('Image download returned an empty body.');
+      return _DownloadedImage(Uint8List.fromList(bytes), response.headers);
+    }
+    throw HttpException('Image download exceeded the redirect limit.');
+  }
+
+  Future<List<InternetAddress>> _validateEndpoint(Uri uri) async {
+    if (uri.scheme != 'https' || uri.host.isEmpty)
+      throw HttpException('Image download URL must use HTTPS.');
+    List<InternetAddress> addresses;
+    try {
+      addresses = await _resolver(uri.host);
+    } catch (_) {
+      throw HttpException('Image download host could not be resolved.');
+    }
+    final peers = addresses
+        .where((address) => !_isBlockedAddress(address))
+        .toList();
+    if (peers.isEmpty) {
       throw HttpException(
-        'Image download returned HTTP ${response.statusCode}.',
+        'Image download host resolves to a restricted address.',
       );
     }
-    final extension = _extensionFromResponse(
-      remoteUrl,
-      response.headers['content-type'],
-    );
-    final destination = await _availableFile(
-      work: work,
-      label: 'remote',
-      extension: extension,
-      cover: true,
-    );
-    await destination.writeAsBytes(response.bodyBytes, flush: true);
-    return BookImage(
-      localPath: destination.path,
-      remoteUrl: remoteUrl,
-      caption: 'Remote cover',
-      isCover: true,
-    );
+    return peers;
+  }
+
+  Future<http.StreamedResponse> _sendPinned(
+    Uri uri,
+    InternetAddress peer,
+  ) async {
+    if (_transport != null) return _transport(uri, peer);
+    final client = HttpClient()
+      ..findProxy = ((_) => 'DIRECT')
+      ..connectionFactory = (requestUri, host, port) =>
+          imagePinnedTlsConnection(
+            requestUri,
+            peer,
+            port: port ?? requestUri.port,
+          );
+    try {
+      final request = await client.getUrl(uri);
+      request.followRedirects = false;
+      request.headers.set(HttpHeaders.acceptHeader, 'image/*');
+      final response = await request.close();
+      final headers = <String, String>{};
+      response.headers.forEach((name, values) {
+        headers[name] = values.join(', ');
+      });
+      final body = StreamController<List<int>>(sync: true);
+      late StreamSubscription<List<int>> subscription;
+      body.onListen = () {
+        subscription = response.listen(
+          body.add,
+          onError: (Object error, StackTrace stack) {
+            client.close(force: true);
+            body.addError(error, stack);
+            body.close();
+          },
+          onDone: () {
+            client.close();
+            body.close();
+          },
+          cancelOnError: false,
+        );
+      };
+      body.onCancel = () async {
+        client.close(force: true);
+        await subscription.cancel();
+      };
+      return http.StreamedResponse(
+        body.stream,
+        response.statusCode,
+        contentLength: response.contentLength,
+        request: http.Request('GET', uri),
+        headers: headers,
+        isRedirect: response.isRedirect,
+        persistentConnection: response.persistentConnection,
+        reasonPhrase: response.reasonPhrase,
+      );
+    } catch (_) {
+      client.close(force: true);
+      rethrow;
+    }
+  }
+
+  bool _isBlockedAddress(InternetAddress address) {
+    final raw = address.rawAddress;
+    if (address.type == InternetAddressType.IPv4 && raw.length == 4) {
+      final a = raw[0], b = raw[1];
+      return a == 0 ||
+          a == 10 ||
+          a == 127 ||
+          (a == 169 && b == 254) ||
+          (a == 172 && b >= 16 && b <= 31) ||
+          (a == 192 && b == 168) ||
+          (a == 192 && (b == 0 || b == 2)) ||
+          (a == 198 && (b == 18 || b == 19 || b == 51)) ||
+          (a == 203 && b == 0) ||
+          (a == 100 && b >= 64 && b <= 127) ||
+          a >= 224;
+    }
+    if (raw.length != 16) return true;
+    final isV4Mapped =
+        raw.sublist(0, 10).every((v) => v == 0) &&
+        raw[10] == 255 &&
+        raw[11] == 255;
+    if (isV4Mapped)
+      return _isBlockedAddress(InternetAddress.fromRawAddress(raw.sublist(12)));
+    return raw.every((v) => v == 0) ||
+        (raw.sublist(0, 15).every((v) => v == 0) && raw[15] == 1) ||
+        (raw[0] & 0xfe) == 0xfc ||
+        (raw[0] & 0xfe) == 0xfe && (raw[1] & 0xc0) == 0x80 ||
+        raw[0] == 0xff;
+  }
+
+  _ImageFormat? _imageFormat(Uint8List b) {
+    bool starts(List<int> p) =>
+        b.length >= p.length &&
+        p.asMap().entries.every((e) => b[e.key] == e.value);
+    if (starts([0xff, 0xd8, 0xff])) return _ImageFormat.jpeg;
+    if (starts([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+      return _ImageFormat.png;
+    if (starts([0x47, 0x49, 0x46, 0x38, 0x37, 0x61]) ||
+        starts([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]))
+      return _ImageFormat.gif;
+    if (starts([0x42, 0x4d])) return _ImageFormat.bmp;
+    if (starts([0x52, 0x49, 0x46, 0x46]) &&
+        b.length >= 12 &&
+        String.fromCharCodes(b.sublist(8, 12)) == 'WEBP')
+      return _ImageFormat.webp;
+    return null;
+  }
+
+  bool _contentTypeAllowsImage(String? type) {
+    if (type == null || type.isEmpty) return true;
+    if (type.startsWith('image/')) return true;
+    return type == 'application/octet-stream' ||
+        type == 'binary/octet-stream' ||
+        type == 'application/x-download';
+  }
+
+  String _extensionForFormat(_ImageFormat format) {
+    return switch (format) {
+      _ImageFormat.jpeg => '.jpg',
+      _ImageFormat.png => '.png',
+      _ImageFormat.gif => '.gif',
+      _ImageFormat.bmp => '.bmp',
+      _ImageFormat.webp => '.webp',
+    };
   }
 
   Future<BookImage> setCover(BookImage image, bool cover) async {
@@ -202,15 +448,5 @@ class ImageStorageService {
         ].contains(extension)
         ? extension
         : fallback;
-  }
-
-  String _extensionFromResponse(String url, String? contentType) {
-    final fromUrl = _extensionFor(Uri.tryParse(url)?.path ?? '', fallback: '');
-    if (fromUrl.isNotEmpty) return fromUrl;
-    final type = (contentType ?? '').toLowerCase();
-    if (type.contains('png')) return '.png';
-    if (type.contains('webp')) return '.webp';
-    if (type.contains('gif')) return '.gif';
-    return '.jpg';
   }
 }

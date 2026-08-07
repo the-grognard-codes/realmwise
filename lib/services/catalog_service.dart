@@ -26,8 +26,9 @@ class CatalogService {
           remoteUrl: record.work.remoteCoverUrl,
         );
         record = record.copyWith(images: [downloaded]);
-      } on Exception {
+      } catch (_) {
         // Network images are optional; saved URL remains provenance for later retry.
+        // TODO: Add normal structured download diagnostics with the planned logging feature.
       }
     }
     return database.saveRecord(record);
