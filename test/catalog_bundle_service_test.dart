@@ -122,7 +122,11 @@ void main() {
       'source_type': 'userImported',
     });
     final bundle = '${dir.path}/owned.realmwise';
-    await service.exportBundle(database: database, outputPath: bundle);
+    await service.exportBundle(
+      database: database,
+      outputPath: bundle,
+      includePersonalImages: true,
+    );
     final restoredDb = '${dir.path}/restored.db';
     final root = '${dir.path}/restored_images';
     await service.extractDatabase(bundle, restoredDb, imageRootPath: root);
@@ -161,6 +165,43 @@ void main() {
     expect(row['local_path'], '');
     expect(row['remote_url'], 'https://example.com/cover.png');
     await restored.close();
+    await database.close();
+  });
+  test('database-only export excludes personal assets by default', () async {
+    final database = DatabaseService();
+    await database.open('${dir.path}/default.db');
+    await database.databaseHandle.insert('works', {'title': 'Default'});
+    final owned = File('${dir.path}/default.png')..writeAsBytesSync([4, 5]);
+    await database.databaseHandle.insert('images', {
+      'work_id': 1,
+      'local_path': owned.path,
+      'source_type': 'userImported',
+    });
+    final bundle = '${dir.path}/default.realmwise';
+    await service.exportBundle(database: database, outputPath: bundle);
+    final archive = ZipDecoder().decodeBytes(await File(bundle).readAsBytes());
+    expect(archive.files.where((f) => f.name.startsWith('assets/')), isEmpty);
+    await database.close();
+  });
+
+  test('missing selected asset can cancel export', () async {
+    final database = DatabaseService();
+    await database.open('${dir.path}/missing.db');
+    await database.databaseHandle.insert('works', {'title': 'Missing'});
+    await database.databaseHandle.insert('images', {
+      'work_id': 1,
+      'local_path': '${dir.path}/does-not-exist.png',
+      'source_type': 'userImported',
+    });
+    expect(
+      () => service.exportBundle(
+        database: database,
+        outputPath: '${dir.path}/missing.realmwise',
+        includePersonalImages: true,
+        missingAssetPolicy: MissingAssetPolicy.cancelExport,
+      ),
+      throwsStateError,
+    );
     await database.close();
   });
   test('missing manifest is rejected', () async {
