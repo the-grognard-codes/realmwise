@@ -50,6 +50,7 @@ class AppController extends ChangeNotifier {
   String seedName = 'Dragon red';
   CatalogHierarchyOrder hierarchyOrder =
       CatalogHierarchyOrder.gameSystemSettingBookType;
+  bool includePersonalImagesInBundles = false;
 
   // Work IDs observed after opening a database are the session baseline. Any
   // IDs appearing later are kept in memory only so the catalog can label them.
@@ -62,6 +63,8 @@ class AppController extends ChangeNotifier {
   Future<void> initialize() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      includePersonalImagesInBundles =
+          prefs.getBool('include_personal_images_in_bundles') ?? false;
       final saved = prefs.getString('last_database_path');
       if (saved != null && await File(saved).exists()) {
         await openDatabase(saved, remember: false);
@@ -166,7 +169,15 @@ class AppController extends ChangeNotifier {
     database: database,
     outputPath: outputPath,
     imageRootPath: imageStorage.rootPath,
+    includePersonalImages: includePersonalImagesInBundles,
   );
+
+  Future<void> setIncludePersonalImagesInBundles(bool value) async {
+    includePersonalImagesInBundles = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('include_personal_images_in_bundles', value);
+    notifyListeners();
+  }
 
   Future<void> restoreDeviceBundle(String bundlePath) async {
     await bundles.validateBundle(bundlePath);

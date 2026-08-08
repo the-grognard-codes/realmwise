@@ -8,6 +8,8 @@ import 'package:path/path.dart' as p;
 
 import '../data/database_service.dart';
 
+enum MissingAssetPolicy { continueExport, cancelExport }
+
 /// Portable, database-only device sync bundles.
 class CatalogBundleService {
   static const formatVersion = 1;
@@ -15,10 +17,16 @@ class CatalogBundleService {
   static const databaseEntry = 'catalog.db';
   static const manifestEntry = 'manifest.json';
 
+  /// Controls what happens when an explicitly selected personal asset is
+  /// missing or unreadable at export time.
+  static const continueOnMissingAssets = MissingAssetPolicy.continueExport;
+
   Future<void> exportBundle({
     required DatabaseService database,
     required String outputPath,
     String? imageRootPath,
+    bool includePersonalImages = false,
+    MissingAssetPolicy missingAssetPolicy = MissingAssetPolicy.continueExport,
   }) async {
     if (!database.isOpen) throw StateError('No database is currently open.');
     await database.databaseHandle.execute('PRAGMA wal_checkpoint(TRUNCATE)');
@@ -46,7 +54,7 @@ class CatalogBundleService {
         );
         for (final row in imageRows) {
           final type = row['source_type'] as String? ?? 'userImported';
-          if (type == 'remoteCache') {
+          if (!includePersonalImages || type == 'remoteCache') {
             await db.update(
               'images',
               {'local_path': ''},
@@ -59,30 +67,51 @@ class CatalogBundleService {
           'catalog_icons',
           columns: ['tier', 'section_name', 'local_path'],
         );
+        final missingAssets = <String>[];
         for (final row in imageRows) {
           final raw = row['local_path'] as String? ?? '';
-          if (raw.isEmpty || row['source_type'] == 'remoteCache') continue;
+          if (!includePersonalImages ||
+              raw.isEmpty ||
+              row['source_type'] != 'userImported')
+            continue;
           final file = File(raw);
           if (await file.exists()) {
             assetFiles[_imageAssetPath(row['id'], raw)] = file;
+          } else {
+            missingAssets.add(raw);
           }
         }
-        for (final row in iconRows) {
-          final raw = row['local_path'] as String? ?? '';
-          if (raw.isEmpty || raw.replaceAll('\\', '/').startsWith('assets/')) {
-            continue;
+        if (includePersonalImages)
+          for (final row in iconRows) {
+            final raw = row['local_path'] as String? ?? '';
+            if (raw.isEmpty ||
+                raw.replaceAll('\\', '/').startsWith('assets/')) {
+              continue;
+            }
+            final file = File(raw);
+            if (await file.exists()) {
+              assetFiles[_iconAssetPath(
+                    row['tier'],
+                    row['section_name'],
+                    raw,
+                  )] =
+                  file;
+            } else {
+              missingAssets.add(raw);
+            }
           }
-          final file = File(raw);
-          if (await file.exists()) {
-            assetFiles[_iconAssetPath(row['tier'], row['section_name'], raw)] =
-                file;
-          }
+        if (missingAssets.isNotEmpty &&
+            missingAssetPolicy == MissingAssetPolicy.cancelExport) {
+          throw StateError(
+            'Selected bundle assets are missing or unreadable: ${missingAssets.join(', ')}',
+          );
         }
         // Paths are made portable in the copied database; remote caches remain blank.
         for (final row in imageRows) {
           final raw = row['local_path'] as String? ?? '';
-          if (raw.isEmpty ||
-              (row['source_type'] as String? ?? '') == 'remoteCache')
+          if (!includePersonalImages ||
+              raw.isEmpty ||
+              (row['source_type'] as String? ?? '') != 'userImported')
             continue;
           final key = _imageAssetPath(row['id'], raw);
           if (assetFiles.containsKey(key)) {
@@ -104,7 +133,9 @@ class CatalogBundleService {
         for (final row in iconRows) {
           final raw = row['local_path'] as String? ?? '';
           final key =
-              raw.isEmpty || raw.replaceAll('\\', '/').startsWith('assets/')
+              !includePersonalImages ||
+                  raw.isEmpty ||
+                  raw.replaceAll('\\', '/').startsWith('assets/')
               ? ''
               : _iconAssetPath(row['tier'], row['section_name'], raw);
           if (key.isNotEmpty && assetFiles.containsKey(key))
@@ -115,6 +146,15 @@ class CatalogBundleService {
               whereArgs: [row['tier'], row['section_name']],
             );
           else if (key.isNotEmpty)
+            await db.update(
+              'catalog_icons',
+              {'local_path': ''},
+              where: 'tier = ? AND section_name = ?',
+              whereArgs: [row['tier'], row['section_name']],
+            );
+          else if (!includePersonalImages &&
+              raw.isNotEmpty &&
+              !raw.replaceAll('\\', '/').startsWith('assets/'))
             await db.update(
               'catalog_icons',
               {'local_path': ''},
@@ -136,20 +176,25 @@ class CatalogBundleService {
         'catalog_identity': await identity,
         'database_filename': databaseEntry,
         'database_sha256': sha256.convert(bytes).toString(),
+        'assets': <Map<String, Object?>>[],
       };
       final archive = Archive()
-        ..addFile(
-          ArchiveFile(
-            manifestEntry,
-            utf8.encode(jsonEncode(manifest)).length,
-            utf8.encode(jsonEncode(manifest)),
-          ),
-        )
         ..addFile(ArchiveFile(databaseEntry, bytes.length, bytes));
       for (final entry in assetFiles.entries) {
         final data = await entry.value.readAsBytes();
         archive.addFile(ArchiveFile(entry.key, data.length, data));
+        (manifest['assets'] as List<Map<String, Object?>>).add({
+          'path': entry.key,
+          'size': data.length,
+          'type': entry.key.startsWith('assets/images/') ? 'image' : 'icon',
+          'sha256': sha256.convert(data).toString(),
+        });
       }
+      // Manifest is assembled after assets so its metadata is complete.
+      final manifestBytes = utf8.encode(jsonEncode(manifest));
+      archive.addFile(
+        ArchiveFile(manifestEntry, manifestBytes.length, manifestBytes),
+      );
       final encoded = ZipEncoder().encode(archive);
       if (encoded == null) throw StateError('Could not encode catalog bundle.');
       await File(outputPath).writeAsBytes(encoded, flush: true);
@@ -203,6 +248,52 @@ class CatalogBundleService {
       throw const FormatException(
         'Bundle database checksum does not match manifest.',
       );
+    final declaredAssets = json['assets'];
+    if (declaredAssets != null) {
+      if (declaredAssets is! List) {
+        throw const FormatException('Bundle manifest assets are malformed.');
+      }
+      final names = <String>{};
+      for (final raw in declaredAssets) {
+        if (raw is! Map ||
+            raw['path'] is! String ||
+            raw['size'] is! int ||
+            raw['type'] is! String ||
+            raw['sha256'] is! String) {
+          throw const FormatException('Bundle manifest assets are malformed.');
+        }
+        final name = raw['path'] as String;
+        if (!name.startsWith('assets/') || !names.add(name)) {
+          throw const FormatException(
+            'Bundle manifest contains invalid assets.',
+          );
+        }
+        final asset = find(name);
+        if (asset == null ||
+            asset.content.length != raw['size'] ||
+            sha256.convert(List<int>.from(asset.content)).toString() !=
+                raw['sha256']) {
+          throw const FormatException(
+            'Bundle asset checksum does not match manifest.',
+          );
+        }
+      }
+      final archiveAssetNames = archive.files
+          .where((f) => f.name.startsWith('assets/'))
+          .map((f) => f.name)
+          .toList();
+      if (archiveAssetNames.length != archiveAssetNames.toSet().length ||
+          !archiveAssetNames.toSet().containsAll(names) ||
+          archiveAssetNames.toSet().length != names.length) {
+        throw const FormatException(
+          'Bundle assets do not match manifest declarations.',
+        );
+      }
+    } else if (archive.files.any((f) => f.name.startsWith('assets/'))) {
+      throw const FormatException(
+        'Bundle assets do not match manifest declarations.',
+      );
+    }
     final temp = File('${file.path}.validate.tmp');
     await temp.writeAsBytes(bytes, flush: true);
     try {
@@ -263,8 +354,12 @@ class CatalogBundleService {
       final root = Directory(
         p.join(imageRootPath, 'restored', manifest.catalogIdentity),
       )..createSync(recursive: true);
+      final declared = manifest.assets
+          .map((a) => a['path'])
+          .whereType<String>()
+          .toSet();
       for (final file in archive.files.where(
-        (f) => f.name.startsWith('assets/') && f.isFile,
+        (f) => declared.contains(f.name) && f.isFile,
       )) {
         final out = File(p.join(root.path, p.basename(file.name)));
         await out.writeAsBytes(List<int>.from(file.content), flush: true);
@@ -327,6 +422,7 @@ class BundleManifest {
     required this.catalogIdentity,
     required this.databaseFilename,
     required this.databaseSha256,
+    this.assets = const [],
   });
   final int formatVersion;
   final String appVersion,
@@ -334,6 +430,7 @@ class BundleManifest {
       catalogIdentity,
       databaseFilename,
       databaseSha256;
+  final List<Map<String, dynamic>> assets;
   factory BundleManifest.fromJson(Map<String, dynamic> j) => BundleManifest(
     formatVersion: j['format_version'] as int,
     appVersion: j['app_version'] as String,
@@ -341,6 +438,9 @@ class BundleManifest {
     catalogIdentity: j['catalog_identity'] as String,
     databaseFilename: j['database_filename'] as String,
     databaseSha256: j['database_sha256'] as String,
+    assets: (j['assets'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .toList(growable: false),
   );
 }
 

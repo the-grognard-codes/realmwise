@@ -668,22 +668,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _deviceSyncSection() => _Section(
     title: 'Manual Device Sync',
-    child: Wrap(
-      spacing: 10,
-      runSpacing: 10,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        OutlinedButton.icon(
-          onPressed: _busy ? null : _exportDeviceBundle,
-          icon: const Icon(Icons.archive_outlined),
-          label: const Text('Export device bundle'),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Include uploaded images and catalog icons'),
+          subtitle: const Text(
+            'Personal files are excluded by default. Turn this on to copy them into sync backup files.',
+          ),
+          value: widget.controller.includePersonalImagesInBundles,
+          onChanged: _busy
+              ? null
+              : (value) => _run(
+                  () => widget.controller.setIncludePersonalImagesInBundles(
+                    value,
+                  ),
+                ),
         ),
-        OutlinedButton.icon(
-          onPressed: _busy ? null : _restoreDeviceBundle,
-          icon: const Icon(Icons.unarchive_outlined),
-          label: const Text('Restore device bundle'),
-        ),
-        const Text(
-          'Bundles contain catalog data only; API keys, image folders, and device preferences are excluded.',
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _exportDeviceBundle,
+              icon: const Icon(Icons.archive_outlined),
+              label: const Text('Export device bundle'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _restoreDeviceBundle,
+              icon: const Icon(Icons.unarchive_outlined),
+              label: const Text('Restore device bundle'),
+            ),
+            const Text(
+              'Bundles contain catalog data only; API keys, image folders, and device preferences are excluded.',
+            ),
+          ],
         ),
       ],
     ),
