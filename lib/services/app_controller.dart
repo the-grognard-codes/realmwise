@@ -162,8 +162,11 @@ class AppController extends ChangeNotifier {
     await openDatabase(target);
   }
 
-  Future<void> exportDeviceBundle(String outputPath) =>
-      bundles.exportBundle(database: database, outputPath: outputPath);
+  Future<void> exportDeviceBundle(String outputPath) => bundles.exportBundle(
+    database: database,
+    outputPath: outputPath,
+    imageRootPath: imageStorage.rootPath,
+  );
 
   Future<void> restoreDeviceBundle(String bundlePath) async {
     await bundles.validateBundle(bundlePath);
@@ -172,8 +175,13 @@ class AppController extends ChangeNotifier {
       documents.path,
       'restored_${DateTime.now().millisecondsSinceEpoch}.db',
     );
-    await bundles.extractDatabase(bundlePath, target);
+    await bundles.extractDatabase(
+      bundlePath,
+      target,
+      imageRootPath: imageStorage.rootPath,
+    );
     await openDatabase(target);
+    if (await catalog.rehydrateMissingImages()) notifyListeners();
   }
 
   Future<void> setImageFolder(String folder) async {

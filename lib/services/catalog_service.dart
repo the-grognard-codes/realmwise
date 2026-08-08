@@ -34,6 +34,60 @@ class CatalogService {
     return database.saveRecord(record);
   }
 
+  /// Restores local files omitted from portable bundles while retaining image
+  /// metadata and any user-owned local-only images.
+  Future<bool> rehydrateMissingImages() async {
+    var changed = false;
+    for (final record in await database.listRecords()) {
+      final restored = <BookImage>[];
+      var recordChanged = false;
+      for (final image in record.images) {
+        final localPath = image.localPath.trim();
+        final exists = localPath.isNotEmpty && await File(localPath).exists();
+        if (exists) {
+          restored.add(image);
+          continue;
+        }
+        if (image.sourceType != ImageSourceType.remoteCache) {
+          restored.add(image);
+          continue;
+        }
+        final remoteUrl = image.remoteUrl.trim().isNotEmpty
+            ? image.remoteUrl.trim()
+            : (image.isCover ? record.work.remoteCoverUrl.trim() : '');
+        if (remoteUrl.isEmpty) {
+          restored.add(image);
+          continue;
+        }
+        try {
+          final downloaded = await images.downloadRemoteCover(
+            work: record.work,
+            remoteUrl: remoteUrl,
+          );
+          restored.add(
+            downloaded.copyWith(
+              remoteUrl: image.remoteUrl.trim().isNotEmpty
+                  ? image.remoteUrl
+                  : downloaded.remoteUrl,
+              caption: image.caption,
+              isCover: image.isCover,
+              sortOrder: image.sortOrder,
+            ),
+          );
+          recordChanged = true;
+        } catch (_) {
+          // A network outage must not make restoring the catalog fail.
+          restored.add(image);
+        }
+      }
+      if (recordChanged) {
+        await database.saveRecord(record.copyWith(images: restored));
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   Future<void> delete(CatalogRecord record) async {
     for (final image in record.images) {
       await images.deleteImage(image);

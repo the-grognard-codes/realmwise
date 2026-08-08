@@ -172,6 +172,7 @@ class ImageStorageService {
         remoteUrl: remoteUrl,
         caption: 'Remote cover',
         isCover: true,
+        sourceType: ImageSourceType.remoteCache,
       );
     } catch (_) {
       rethrow;

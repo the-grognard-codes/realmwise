@@ -83,6 +83,18 @@ class _DatabaseGatewayState extends State<DatabaseGateway> {
       await _run(() => widget.controller.openDatabase(selected));
   }
 
+  Future<void> _restoreBundle() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['realmwise', 'zip'],
+      dialogTitle: 'Choose portable device bundle',
+    );
+    final selected = result?.files.singleOrNull?.path;
+    if (selected != null) {
+      await _run(() => widget.controller.restoreDeviceBundle(selected));
+    }
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     body: Center(
@@ -131,12 +143,17 @@ class _DatabaseGatewayState extends State<DatabaseGateway> {
                         FilledButton.icon(
                           onPressed: _create,
                           icon: const Icon(Icons.create_new_folder_outlined),
-                          label: const Text('Create database'),
+                          label: const Text('New database'),
                         ),
                         OutlinedButton.icon(
                           onPressed: _open,
                           icon: const Icon(Icons.folder_open),
                           label: const Text('Open database'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: _restoreBundle,
+                          icon: const Icon(Icons.restore),
+                          label: const Text('Restore sync bundle'),
                         ),
                       ],
                     ),

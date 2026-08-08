@@ -33,7 +33,7 @@ class DatabaseService {
     _databasePath = filePath;
     _database = await openDatabase(
       filePath,
-      version: 4,
+      version: 5,
       onConfigure: (database) async =>
           database.execute('PRAGMA foreign_keys = ON'),
       onCreate: _createSchema,
@@ -57,6 +57,34 @@ class DatabaseService {
               'works',
               definition.key,
               definition.value,
+            );
+          }
+        }
+        if (oldVersion < 5) {
+          await _addColumnIfMissing(
+            db,
+            'images',
+            'source_type',
+            "TEXT NOT NULL DEFAULT 'userImported'",
+          );
+          await _addColumnIfMissing(
+            db,
+            'catalog_icons',
+            'source_type',
+            "TEXT NOT NULL DEFAULT 'userImported'",
+          );
+          // Legacy remote URLs were created exclusively by the downloader; make
+          // that historical provenance explicit before future saves occur.
+          if (await _hasTable(db, 'images')) {
+            await db.execute(
+              "UPDATE images SET source_type = 'remoteCache' "
+              "WHERE remote_url != '' AND (local_path = '' OR caption = 'Remote cover')",
+            );
+          }
+          if (await _hasTable(db, 'catalog_icons')) {
+            await db.execute(
+              "UPDATE catalog_icons SET source_type = 'packagedAsset' "
+              "WHERE replace(local_path, '\\', '/') LIKE 'assets/%'",
             );
           }
         }
@@ -135,6 +163,7 @@ class DatabaseService {
         caption TEXT NOT NULL DEFAULT '',
         is_cover INTEGER NOT NULL DEFAULT 0,
         sort_order INTEGER NOT NULL DEFAULT 0
+        ,source_type TEXT NOT NULL DEFAULT 'userImported'
       )
     ''');
     await database.execute('CREATE INDEX images_work_idx ON images(work_id)');
@@ -146,7 +175,7 @@ class DatabaseService {
     ''');
     await database.execute('''CREATE TABLE catalog_icons (
       tier TEXT NOT NULL, section_name TEXT NOT NULL, local_path TEXT NOT NULL,
-      alignment_x REAL NOT NULL DEFAULT 0, alignment_y REAL NOT NULL DEFAULT 0, zoom REAL NOT NULL DEFAULT 1,
+      alignment_x REAL NOT NULL DEFAULT 0, alignment_y REAL NOT NULL DEFAULT 0, zoom REAL NOT NULL DEFAULT 1, source_type TEXT NOT NULL DEFAULT 'userImported',
       PRIMARY KEY (tier, section_name)
     )''');
   }
@@ -183,6 +212,14 @@ class DatabaseService {
     final rows = await db.rawQuery('PRAGMA table_info($table)');
     if (rows.any((row) => row['name'] == column)) return;
     await db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
+  }
+
+  static Future<bool> _hasTable(Database db, String table) async {
+    final rows = await db.rawQuery(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+      [table],
+    );
+    return rows.isNotEmpty;
   }
 
   Future<List<CatalogIconMapping>> listCatalogIcons() async {
@@ -533,9 +570,11 @@ class CatalogIconMapping {
     this.alignmentX = 0,
     this.alignmentY = 0,
     this.zoom = 1,
+    this.sourceType = ImageSourceType.userImported,
   });
   final String tier, sectionName, localPath;
   final double alignmentX, alignmentY, zoom;
+  final ImageSourceType sourceType;
   factory CatalogIconMapping.fromRow(Map<String, Object?> row) =>
       CatalogIconMapping(
         tier: row['tier'] as String,
@@ -544,6 +583,10 @@ class CatalogIconMapping {
         alignmentX: (row['alignment_x'] as num?)?.toDouble() ?? 0,
         alignmentY: (row['alignment_y'] as num?)?.toDouble() ?? 0,
         zoom: (row['zoom'] as num?)?.toDouble() ?? 1,
+        sourceType: ImageSourceType.parse(
+          row['source_type'] as String?,
+          localPath: row['local_path'] as String?,
+        ),
       );
   Map<String, Object?> toRow() => {
     'tier': tier,
@@ -552,5 +595,6 @@ class CatalogIconMapping {
     'alignment_x': alignmentX,
     'alignment_y': alignmentY,
     'zoom': zoom,
+    'source_type': sourceType.name,
   };
 }

@@ -60,6 +60,7 @@ void main() {
     await database.setSetting('catalog_identity', 'roundtrip');
     await database.setSetting('rpggeek_api_key', 'secret');
     await database.setSetting('image_folder', 'C:/device');
+    await database.setSetting('theme_seed', 'Ocean blue');
     await database.databaseHandle.insert('works', {'title': 'Roundtrip'});
     await database.databaseHandle.insert('images', {
       'work_id': 1,
@@ -88,6 +89,14 @@ void main() {
       )),
       isEmpty,
     );
+    expect(
+      (await restored.query(
+        'settings',
+        where: 'setting_key = ?',
+        whereArgs: ['theme_seed'],
+      )).single['setting_value'],
+      'Ocean blue',
+    );
     expect((await restored.query('images')).single['local_path'], '');
     expect((await restored.query('catalog_icons')).single['local_path'], '');
     await restored.close();
@@ -96,6 +105,63 @@ void main() {
   test('checksum mismatch is rejected', () async {
     final p = await makeBundle(checksum: '0000');
     expect(() => service.validateBundle(p), throwsFormatException);
+  });
+  test('packages owned image and restores it to selected root', () async {
+    final dbPath = '${dir.path}/catalog.db';
+    final owned = File('${dir.path}/owned.png')..writeAsBytesSync([1, 2, 3]);
+    final database = DatabaseService();
+    await database.open(dbPath);
+    await database.databaseHandle.insert('works', {'title': 'Owned'});
+    await database.databaseHandle.insert('images', {
+      'work_id': 1,
+      'local_path': owned.path,
+      'remote_url': '',
+      'caption': '',
+      'is_cover': 1,
+      'sort_order': 0,
+      'source_type': 'userImported',
+    });
+    final bundle = '${dir.path}/owned.realmwise';
+    await service.exportBundle(database: database, outputPath: bundle);
+    final restoredDb = '${dir.path}/restored.db';
+    final root = '${dir.path}/restored_images';
+    await service.extractDatabase(bundle, restoredDb, imageRootPath: root);
+    final restored = await databaseFactory.openDatabase(restoredDb);
+    final local =
+        (await restored.query('images')).single['local_path'] as String;
+    expect(File(local).existsSync(), isTrue);
+    await restored.close();
+    await database.close();
+  });
+  test('excludes remote cover cache bytes while retaining its URL', () async {
+    final database = DatabaseService();
+    await database.open('${dir.path}/catalog.db');
+    await database.databaseHandle.insert('works', {'title': 'Remote'});
+    final cached = File('${dir.path}/cached.png')..writeAsBytesSync([1, 2, 3]);
+    await database.databaseHandle.insert('images', {
+      'work_id': 1,
+      'local_path': cached.path,
+      'remote_url': 'https://example.com/cover.png',
+      'caption': 'Remote cover',
+      'is_cover': 1,
+      'sort_order': 0,
+      'source_type': 'remoteCache',
+    });
+    final bundle = '${dir.path}/remote.realmwise';
+    await service.exportBundle(database: database, outputPath: bundle);
+    final archive = ZipDecoder().decodeBytes(await File(bundle).readAsBytes());
+    expect(
+      archive.files.any((file) => file.name.contains('cached.png')),
+      isFalse,
+    );
+    final extracted = '${dir.path}/remote.db';
+    await service.extractDatabase(bundle, extracted);
+    final restored = await databaseFactory.openDatabase(extracted);
+    final row = (await restored.query('images')).single;
+    expect(row['local_path'], '');
+    expect(row['remote_url'], 'https://example.com/cover.png');
+    await restored.close();
+    await database.close();
   });
   test('missing manifest is rejected', () async {
     final a = Archive()..addFile(ArchiveFile('catalog.db', 3, [1, 2, 3]));
