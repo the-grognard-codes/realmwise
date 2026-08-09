@@ -710,99 +710,121 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ),
   );
 
-  Widget _databaseRecoverySection() => _Section(
-    title: 'Database and Recovery',
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Active database'),
-        const SizedBox(height: 4),
-        SelectableText(widget.controller.activeDatabasePath ?? 'None'),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            OutlinedButton.icon(
-              onPressed: _busy ? null : _newDatabase,
-              icon: const Icon(Icons.create_new_folder_outlined),
-              label: const Text('New database'),
-            ),
-            OutlinedButton.icon(
-              onPressed: _busy ? null : _openDatabase,
-              icon: const Icon(Icons.folder_open),
-              label: const Text('Open database'),
-            ),
-            OutlinedButton.icon(
-              onPressed: _busy ? null : _restore,
-              icon: const Icon(Icons.restore),
-              label: const Text('Restore backup'),
-            ),
-            OutlinedButton.icon(
-              onPressed: _busy
-                  ? null
-                  : () => _run(() async {
-                      await widget.controller.backups.createBackup(
-                        databasePath: widget.controller.database.databasePath,
-                        database: widget.controller.database.databaseHandle,
-                      );
-                    }, success: 'Backup created.'),
-              icon: const Icon(Icons.save_as_outlined),
-              label: const Text('Back up now'),
-            ),
-            OutlinedButton.icon(
-              onPressed: _busy ? null : _exportCsv,
-              icon: const Icon(Icons.table_view_outlined),
-              label: const Text('Export CSV'),
-            ),
-            OutlinedButton.icon(
-              onPressed: _busy ? null : _importCsv,
-              icon: const Icon(Icons.file_upload_outlined),
-              label: const Text('Import CSV'),
-            ),
-            TextButton.icon(
-              onPressed: _busy ? null : _close,
-              icon: const Icon(Icons.close),
-              label: const Text('Close database'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 18),
-        Text(
-          'Recent automatic backups',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        if (_backups.isEmpty)
-          const Padding(
-            padding: EdgeInsets.only(top: 8),
-            child: Text('No backup snapshot has been created yet.'),
-          ),
-        ..._backups
-            .take(6)
-            .map(
-              (backup) => ListTile(
-                dense: true,
-                leading: const Icon(Icons.history),
-                title: Text(backup.uri.pathSegments.last),
-                subtitle: Text(
-                  DateFormat.yMMMd().add_jm().format(backup.lastModifiedSync()),
-                ),
-                trailing: TextButton(
-                  onPressed: _busy
-                      ? null
-                      : () => _run(
-                          () =>
-                              widget.controller.restoreFromBackup(backup.path),
-                          success:
-                              'Backup restored into a new active database.',
-                        ),
-                  child: const Text('Restore'),
-                ),
+  Widget _databaseRecoverySection() {
+    final validBackups = _backups
+        .where((backup) => backupLastModifiedForSettings(backup) != null)
+        .toList();
+    return _Section(
+      title: 'Database and Recovery',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Active database'),
+          const SizedBox(height: 4),
+          SelectableText(widget.controller.activeDatabasePath ?? 'None'),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _newDatabase,
+                icon: const Icon(Icons.create_new_folder_outlined),
+                label: const Text('New database'),
               ),
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _openDatabase,
+                icon: const Icon(Icons.folder_open),
+                label: const Text('Open database'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _restore,
+                icon: const Icon(Icons.restore),
+                label: const Text('Restore backup'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () => _run(() async {
+                        await widget.controller.backups.createBackup(
+                          databasePath: widget.controller.database.databasePath,
+                          database: widget.controller.database.databaseHandle,
+                        );
+                      }, success: 'Backup created.'),
+                icon: const Icon(Icons.save_as_outlined),
+                label: const Text('Back up now'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _exportCsv,
+                icon: const Icon(Icons.table_view_outlined),
+                label: const Text('Export CSV'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _importCsv,
+                icon: const Icon(Icons.file_upload_outlined),
+                label: const Text('Import CSV'),
+              ),
+              TextButton.icon(
+                onPressed: _busy ? null : _close,
+                icon: const Icon(Icons.close),
+                label: const Text('Close database'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Text(
+            'Recent automatic backups',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          if (validBackups.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text('No backup snapshot has been created yet.'),
             ),
-      ],
-    ),
-  );
+          ...validBackups
+              .map(
+                (backup) => (
+                  backup: backup,
+                  modified: backupLastModifiedForSettings(backup),
+                ),
+              )
+              .where((entry) => entry.modified != null)
+              .take(6)
+              .map((entry) {
+                final backup = entry.backup;
+                final modified = entry.modified!;
+                return ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.history),
+                  title: Text(backup.uri.pathSegments.last),
+                  subtitle: Text(DateFormat.yMMMd().add_jm().format(modified)),
+                  trailing: TextButton(
+                    onPressed: _busy
+                        ? null
+                        : () => _run(
+                            () => widget.controller.restoreFromBackup(
+                              backup.path,
+                            ),
+                            success:
+                                'Backup restored into a new active database.',
+                          ),
+                    child: const Text('Restore'),
+                  ),
+                );
+              }),
+        ],
+      ),
+    );
+  }
+}
+
+DateTime? backupLastModifiedForSettings(File backup) {
+  try {
+    if (!backup.existsSync()) return null;
+    return backup.lastModifiedSync();
+  } on FileSystemException {
+    return null;
+  }
 }
 
 class _Section extends StatelessWidget {
