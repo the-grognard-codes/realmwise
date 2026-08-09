@@ -25,7 +25,7 @@ enum CatalogHierarchyOrder {
 
 /// Application session state: selected database, theme preference, and services.
 class AppController extends ChangeNotifier {
-  AppController({TokenStorage? tokenStorage})
+  AppController({TokenStorage? tokenStorage, this.imageRootPathOverride})
     : database = DatabaseService(),
       _http = http.Client(),
       backups = BackupService(),
@@ -44,6 +44,8 @@ class AppController extends ChangeNotifier {
   late final ExternalCatalogService lookup = ExternalCatalogService(_http);
   final http.Client _http;
   final TokenStorage _tokenStorage;
+  /// Test seam for avoiding platform path providers; persisted DB settings win.
+  final String? imageRootPathOverride;
 
   bool loading = true;
   String? error;
@@ -117,7 +119,7 @@ class AppController extends ChangeNotifier {
       );
     sessionNewWorkIds.clear();
     final imageFolder = await database.getSetting('image_folder');
-    await imageStorage.initialize(imageFolder);
+    await imageStorage.initialize(imageFolder ?? imageRootPathOverride);
     seedName = await database.getSetting('theme_seed') ?? 'Dragon red';
     final savedHierarchy = await database.getSetting('catalog_hierarchy_order');
     hierarchyOrder = savedHierarchy == 'gameSystemBookTypeSetting'
@@ -181,18 +183,95 @@ class AppController extends ChangeNotifier {
 
   Future<void> restoreDeviceBundle(String bundlePath) async {
     await bundles.validateBundle(bundlePath);
-    final documents = await getApplicationDocumentsDirectory();
-    final target = path.join(
-      documents.path,
-      'restored_${DateTime.now().millisecondsSinceEpoch}.db',
+    if (!database.isOpen) throw StateError('No active database to replace.');
+    final active = database.databasePath;
+    final staged = '$active.portable-import-${DateTime.now().microsecondsSinceEpoch}.tmp';
+    final backup = path.join(
+      path.dirname(active),
+      'backups',
+      '${path.basenameWithoutExtension(active)}_pre-import-${DateTime.now().microsecondsSinceEpoch}.backup.db',
     );
-    await bundles.extractDatabase(
-      bundlePath,
-      target,
-      imageRootPath: imageStorage.rootPath,
+    final importImageRoot = path.join(
+      imageStorage.rootPath,
+      'import-staging-${DateTime.now().microsecondsSinceEpoch}',
     );
-    await openDatabase(target);
-    if (await catalog.rehydrateMissingImages()) notifyListeners();
+    try {
+      await bundles.extractDatabase(
+        bundlePath,
+        staged,
+        imageRootPath: importImageRoot,
+      );
+    } catch (_) {
+      final partial = File(staged);
+      if (await partial.exists()) await partial.delete();
+      final importedAssets = Directory(importImageRoot);
+      if (await importedAssets.exists()) {
+        await importedAssets.delete(recursive: true);
+      }
+      rethrow;
+    }
+    try {
+      await _quiesceForBundleSwap();
+    } catch (_) {
+      try {
+        if (!database.isOpen) await openDatabase(active);
+      } catch (_) {}
+      final partial = File(staged);
+      if (await partial.exists()) await partial.delete();
+      final importedAssets = Directory(importImageRoot);
+      if (await importedAssets.exists()) await importedAssets.delete(recursive: true);
+      rethrow;
+    }
+    var swapped = false;
+    var committed = false;
+    var originalMoved = false;
+    try {
+      await Directory(path.dirname(backup)).create(recursive: true);
+      await File(active).copy(backup);
+      await File(active).rename(backup + '.swap');
+      originalMoved = true;
+      await File(staged).rename(active);
+      swapped = true;
+      await openDatabase(active);
+      if (await catalog.rehydrateMissingImages()) notifyListeners();
+      committed = true;
+    } catch (_) {
+      try {
+        await database.close();
+        if (originalMoved) {
+          final current = File(active);
+          if (await current.exists()) await current.delete();
+          final old = File(backup + '.swap');
+          if (await old.exists()) {
+            await old.rename(active);
+          } else if (await File(backup).exists()) {
+            await File(backup).copy(active);
+          }
+        }
+        await openDatabase(active);
+      } catch (_) {}
+      rethrow;
+    } finally {
+      final stagedFile = File(staged);
+      if (await stagedFile.exists()) await stagedFile.delete();
+      final old = File(backup + '.swap');
+      if (await old.exists() && swapped) await old.delete();
+      if (!committed) {
+        final importedAssets = Directory(importImageRoot);
+        if (await importedAssets.exists()) {
+          await importedAssets.delete(recursive: true);
+        }
+      }
+    }
+  }
+
+  /// Validates an import without mutating the active catalog.
+  Future<BundleManifest> previewDeviceBundle(String bundlePath) =>
+      bundles.validateBundle(bundlePath);
+
+  Future<void> _quiesceForBundleSwap() async {
+    await backups.stop();
+    await database.close();
   }
 
   Future<void> setImageFolder(String folder) async {

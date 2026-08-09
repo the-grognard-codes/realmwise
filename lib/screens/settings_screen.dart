@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../services/app_controller.dart';
+import '../services/catalog_bundle_service.dart';
 import '../theme/app_theme.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -273,8 +274,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     final source = picked?.files.singleOrNull?.path;
     if (source == null || !mounted) return;
+    late final BundleManifest manifest;
     try {
-      await widget.controller.bundles.validateBundle(source);
+      manifest = await widget.controller.previewDeviceBundle(source);
     } catch (error) {
       if (mounted)
         ScaffoldMessenger.of(
@@ -286,8 +288,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Restore portable bundle?'),
-        content: const Text(
-          'This will open the catalog from the bundle as a new active database. Your current database remains unchanged.',
+        content: Text(
+          'Identity: ${manifest.catalogIdentity}\n'
+          'Bundle date: ${manifest.createdAt}\n'
+          'Database version: ${manifest.appVersion}\n'
+          'Assets: ${manifest.assets.length}\n\n'
+          'This will replace the active catalog. A recoverable pre-import backup will be created.',
         ),
         actions: [
           TextButton(
@@ -301,10 +307,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
-    if (confirmed == true) {
+    if (confirmed == true && mounted) {
       await _run(
         () => widget.controller.restoreDeviceBundle(source),
-        success: 'Portable device bundle restored into a new active database.',
+        success: 'Portable device bundle imported; active catalog replaced.',
       );
     }
   }
