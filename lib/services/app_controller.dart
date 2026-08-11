@@ -195,15 +195,22 @@ class AppController extends ChangeNotifier {
     }
     if (!database.isOpen) throw StateError('Open a catalog first.');
     final identity = await database.ensureCatalogIdentity();
-    syncMetadata = await syncCoordinator.connect(provider, identity);
-    if (syncMetadata!.state == SyncState.connectedUnconfigured &&
-        provider is GoogleDriveProvider &&
-        syncCoordinator.session != null) {
-      final target = await provider.ensureBundleTarget(
-        syncCoordinator.session!,
-      );
-      await syncCoordinator.configureTarget(target);
+    try {
+      syncMetadata = await syncCoordinator.connect(provider, identity);
+      if (syncMetadata!.state == SyncState.connectedUnconfigured &&
+          provider is GoogleDriveProvider &&
+          syncCoordinator.session != null) {
+        final target = await provider.ensureBundleTarget(
+          syncCoordinator.session!,
+        );
+        await syncCoordinator.configureTarget(target);
+        syncMetadata = syncCoordinator.metadata;
+      }
+    } catch (error) {
+      await syncCoordinator.failConnection(error);
       syncMetadata = syncCoordinator.metadata;
+      notifyListeners();
+      rethrow;
     }
     notifyListeners();
   }
