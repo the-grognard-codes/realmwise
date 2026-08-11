@@ -8,6 +8,8 @@ import 'package:http/testing.dart';
 import 'package:realmwise/services/google_drive_sync.dart';
 import 'package:realmwise/services/secure_storage_service.dart';
 import 'package:realmwise/services/sync_contract.dart';
+import 'package:realmwise/services/sync_coordinator.dart';
+import 'package:realmwise/services/sync_metadata.dart';
 
 class MemTokens implements TokenStorage {
   final Map<String, String> values = {};
@@ -62,7 +64,79 @@ class DynamicErrorCallback implements OAuthCallback {
   }
 }
 
+class MemSyncMetadata implements SyncMetadataStorage {
+  SyncMetadata? value;
+  @override
+  Future<SyncMetadata?> read(String _) async => value;
+  @override
+  Future<void> write(SyncMetadata metadata) async => value = metadata;
+  @override
+  Future<void> remove(String _) async => value = null;
+}
+
+class FailingProvider implements SyncProvider {
+  @override
+  String get provider => 'test';
+  @override
+  Future<SyncAuthSession> authenticate() async => throw Exception('offline');
+  @override
+  Future<List<SyncRemoteTarget>> listRemoteTargets(SyncAuthSession _) async =>
+      const [];
+  @override
+  Future<SyncRemoteMetadata?> metadata(
+    SyncAuthSession _,
+    SyncRemoteTarget __,
+  ) async => null;
+  @override
+  Future<SyncUploadResult> upload(
+    SyncAuthSession _,
+    SyncRemoteTarget __,
+    Uint8List ___, {
+    SyncPrecondition? precondition,
+  }) async => throw UnimplementedError();
+  @override
+  Future<SyncDownloadResult> download(
+    SyncAuthSession _,
+    SyncRemoteTarget __, {
+    SyncPrecondition? precondition,
+  }) async => throw UnimplementedError();
+}
+
+class EmptyProvider extends FailingProvider {
+  @override
+  Future<SyncAuthSession> authenticate() async =>
+      const SyncAuthSession(accountId: 'account');
+}
+
 void main() {
+  test(
+    'failed connect persists recoverable error and clears live connection',
+    () async {
+      final storage = MemSyncMetadata();
+      final coordinator = SyncCoordinator(metadataStorage: storage);
+      await expectLater(
+        coordinator.connect(FailingProvider(), 'catalog'),
+        throwsException,
+      );
+      expect(coordinator.provider, isNull);
+      expect(coordinator.session, isNull);
+      expect(coordinator.metadata?.state, SyncState.error);
+      expect(storage.value?.error, 'sync_error');
+    },
+  );
+
+  test('target setup failure rollback clears connected session', () async {
+    final storage = MemSyncMetadata();
+    final coordinator = SyncCoordinator(metadataStorage: storage);
+    await coordinator.connect(EmptyProvider(), 'catalog');
+    expect(coordinator.isConnected, isTrue);
+    await coordinator.failConnection(Exception('target setup failed'));
+    expect(coordinator.isConnected, isFalse);
+    expect(coordinator.target, isNull);
+    expect(storage.value?.state, SyncState.error);
+    expect(storage.value?.error, 'sync_error');
+  });
+
   test(
     'token exchange errors expose Google diagnostics without secrets',
     () async {
@@ -137,6 +211,55 @@ void main() {
       httpClient: client,
     );
     expect(auth.authenticate(), throwsA(isA<GoogleDriveAuthException>()));
+  });
+
+  test('oauth fetches and persists Drive account profile', () async {
+    final browser = B();
+    final tokens = MemTokens();
+    final client = MockClient((request) async {
+      if (request.url.host == 'oauth2.googleapis.com') {
+        return http.Response(
+          jsonEncode({
+            'access_token': 'a',
+            'refresh_token': 'r',
+            'expires_in': 3600,
+          }),
+          200,
+        );
+      }
+      expect(request.url.path, '/drive/v3/about');
+      expect(
+        request.url.queryParameters['fields'],
+        'user(displayName,emailAddress)',
+      );
+      return http.Response(
+        jsonEncode({
+          'user': {
+            'displayName': 'Ada Lovelace',
+            'emailAddress': 'ada@example.com',
+          },
+        }),
+        200,
+      );
+    });
+    final auth = GoogleDriveOAuthAuthenticator(
+      clientId: 'id',
+      redirectUri: Uri.parse('http://localhost/cb'),
+      browser: browser,
+      callback: DynamicCallback(browser),
+      tokenStore: GoogleDriveTokenStore(tokens),
+      httpClient: client,
+    );
+    final session = await auth.authenticate();
+    expect(session.accountId, 'ada@example.com');
+    expect(session.displayName, 'ada@example.com');
+    final restored = await GoogleDriveProvider(
+      authenticator: auth,
+      tokenStore: GoogleDriveTokenStore(tokens),
+      httpClient: client,
+    ).restoreSession();
+    expect(restored?.accountId, 'ada@example.com');
+    expect(restored?.displayName, 'ada@example.com');
   });
   test('uses appdata OAuth scope', () async {
     final b = B();

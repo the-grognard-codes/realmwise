@@ -23,6 +23,7 @@ class SyncCoordinator {
       catalogIdentity: current.catalogIdentity,
       provider: current.provider,
       accountId: current.accountId,
+      accountDisplayName: current.accountDisplayName,
       remoteTargetId: selected.id,
       remoteTargetName: selected.name,
       revision: current.revision,
@@ -49,6 +50,7 @@ class SyncCoordinator {
       catalogIdentity: saved.catalogIdentity,
       provider: saved.provider,
       accountId: saved.accountId,
+      accountDisplayName: restored.displayName ?? saved.accountDisplayName,
       remoteTargetId: saved.remoteTargetId,
       remoteTargetName: saved.remoteTargetName,
       revision: saved.revision,
@@ -80,6 +82,7 @@ class SyncCoordinator {
         catalogIdentity: catalogIdentity,
         provider: value.provider,
         accountId: authenticated.accountId,
+        accountDisplayName: authenticated.displayName,
         remoteTargetId: target?.id,
         remoteTargetName: target?.name,
         state: target == null
@@ -90,11 +93,49 @@ class SyncCoordinator {
       );
       await metadataStorage.write(metadata!);
       return metadata!;
-    } catch (_) {
+    } catch (error) {
+      final previous = await metadataStorage.read(catalogIdentity);
+      metadata = SyncMetadata(
+        catalogIdentity: catalogIdentity,
+        provider: value.provider,
+        accountId: previous?.accountId,
+        accountDisplayName: previous?.accountDisplayName,
+        remoteTargetId: previous?.remoteTargetId,
+        remoteTargetName: previous?.remoteTargetName,
+        createdAt: previous?.createdAt ?? DateTime.now().toUtc(),
+        updatedAt: DateTime.now().toUtc(),
+        state: SyncState.error,
+        error: sanitizeSyncError(error),
+      );
+      await metadataStorage.write(metadata!);
       provider = null;
       session = null;
       rethrow;
     }
+  }
+
+  /// Rolls back a partially completed connection (for example, target setup)
+  /// and leaves a recoverable, sanitized error state persisted for the UI.
+  Future<void> failConnection(Object error) async {
+    final current = metadata;
+    if (current != null) {
+      metadata = SyncMetadata(
+        catalogIdentity: current.catalogIdentity,
+        provider: current.provider,
+        accountId: current.accountId,
+        accountDisplayName: current.accountDisplayName,
+        remoteTargetId: current.remoteTargetId,
+        remoteTargetName: current.remoteTargetName,
+        createdAt: current.createdAt,
+        updatedAt: DateTime.now().toUtc(),
+        state: SyncState.error,
+        error: sanitizeSyncError(error),
+      );
+      await metadataStorage.write(metadata!);
+    }
+    provider = null;
+    session = null;
+    target = null;
   }
 
   Future<SyncMetadata> sync(Uint8List payload) async {
@@ -117,6 +158,7 @@ class SyncCoordinator {
         catalogIdentity: current.catalogIdentity,
         provider: current.provider,
         accountId: current.accountId,
+        accountDisplayName: current.accountDisplayName,
         remoteTargetId: current.remoteTargetId,
         remoteTargetName: current.remoteTargetName,
         revision: current.revision,
@@ -133,6 +175,7 @@ class SyncCoordinator {
       catalogIdentity: current.catalogIdentity,
       provider: current.provider,
       accountId: current.accountId,
+      accountDisplayName: current.accountDisplayName,
       remoteTargetId: t.id,
       remoteTargetName: t.name,
       revision: result.metadata.revision.value,
@@ -162,6 +205,7 @@ class SyncCoordinator {
         catalogIdentity: current.catalogIdentity,
         provider: current.provider,
         accountId: current.accountId,
+        accountDisplayName: current.accountDisplayName,
         remoteTargetId: t.id,
         remoteTargetName: t.name,
         revision: result.metadata.revision.value,
@@ -176,6 +220,7 @@ class SyncCoordinator {
         catalogIdentity: current.catalogIdentity,
         provider: current.provider,
         accountId: current.accountId,
+        accountDisplayName: current.accountDisplayName,
         remoteTargetId: current.remoteTargetId,
         remoteTargetName: current.remoteTargetName,
         revision: current.revision,
@@ -197,6 +242,7 @@ class SyncCoordinator {
       catalogIdentity: current.catalogIdentity,
       provider: current.provider,
       accountId: current.accountId,
+      accountDisplayName: current.accountDisplayName,
       remoteTargetId: current.remoteTargetId,
       remoteTargetName: current.remoteTargetName,
       revision: remote.revision.value,

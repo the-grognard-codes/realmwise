@@ -161,15 +161,44 @@ class GoogleDriveOAuthAuthenticator implements SyncAuthenticator {
     final json = jsonDecode(response.body) as Map;
     final access = json['access_token'] as String?;
     if (access == null) throw GoogleDriveAuthException('Missing access token');
-    await tokenStore.write(_key, {
+    final token = <String, Object?>{
       'access_token': access,
       'refresh_token': json['refresh_token'],
       'expires_at': DateTime.now()
           .add(Duration(seconds: (json['expires_in'] as num?)?.toInt() ?? 3600))
           .toIso8601String(),
       'account_id': 'google-drive',
-    });
-    return const SyncAuthSession(accountId: 'google-drive');
+    };
+    // Best-effort profile lookup using the existing appdata scope. Failure
+    // must not prevent connecting; no token details are persisted or exposed.
+    try {
+      final profile = await _http.get(
+        Uri.parse(
+          'https://www.googleapis.com/drive/v3/about?fields=user(displayName,emailAddress)',
+        ),
+        headers: {'Authorization': 'Bearer $access'},
+      );
+      if (profile.statusCode == 200) {
+        final user = (jsonDecode(profile.body) as Map?)?['user'];
+        if (user is Map) {
+          final email = user['emailAddress'] as String?;
+          final name = user['displayName'] as String?;
+          if (email != null && email.trim().isNotEmpty)
+            token['account_id'] = email.trim();
+          // Use the stable email address as the account label when available;
+          // displayName is only a fallback for profiles without an email.
+          final label = email != null && email.trim().isNotEmpty
+              ? email.trim()
+              : name?.trim();
+          if (label != null && label.isNotEmpty) token['account_name'] = label;
+        }
+      }
+    } catch (_) {}
+    await tokenStore.write(_key, token);
+    return SyncAuthSession(
+      accountId: token['account_id'] as String,
+      displayName: token['account_name'] as String?,
+    );
   }
 
   static String _random(int n) {
@@ -197,7 +226,10 @@ class GoogleDriveProvider implements SyncProvider {
     final token = await tokenStore.read(authenticator._key);
     final access = token['access_token'] as String?;
     if (access == null && token['refresh_token'] == null) return null;
-    return const SyncAuthSession(accountId: 'google-drive');
+    return SyncAuthSession(
+      accountId: token['account_id'] as String? ?? 'google-drive',
+      displayName: token['account_name'] as String?,
+    );
   }
 
   @override

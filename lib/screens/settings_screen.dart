@@ -697,9 +697,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     ),
-    _databaseRecoverySection(),
-    _deviceSyncSection(),
     _cloudSyncSection(),
+    _deviceSyncSection(),
+    _databaseRecoverySection(),
   ];
 
   Widget _cloudSyncSection() {
@@ -712,7 +712,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final status = !available
         ? 'Google Drive sync is not configured on this build.'
         : connected
-        ? 'Connected account: ${metadata.accountId ?? 'Google Drive'}'
+        ? 'Connected account: ${metadata.accountDisplayName ?? metadata.accountId ?? 'Google Drive'}'
         : 'Not connected';
     return _Section(
       title: 'Google Drive Sync',
