@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 
 import '../services/app_controller.dart';
 import '../services/catalog_bundle_service.dart';
+import '../services/sync_metadata.dart';
 import '../theme/app_theme.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -374,6 +375,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _downloadRemote() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Download remote catalog?'),
+        content: const Text(
+          'This replaces the active catalog. A recoverable pre-import backup will be created first.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Download'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await _run(
+        widget.controller.downloadRemoteBundle,
+        success: 'Remote catalog downloaded.',
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
@@ -670,7 +699,82 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ),
     _databaseRecoverySection(),
     _deviceSyncSection(),
+    _cloudSyncSection(),
   ];
+
+  Widget _cloudSyncSection() {
+    final metadata = widget.controller.syncMetadata;
+    final available = widget.controller.syncProvider != null;
+    final connected =
+        widget.controller.syncCoordinator.isConnected &&
+        metadata != null &&
+        metadata.state != SyncState.notConnected;
+    final status = !available
+        ? 'Google Drive sync is not configured on this build.'
+        : connected
+        ? 'Connected account: ${metadata.accountId ?? 'Google Drive'}'
+        : 'Not connected';
+    return _Section(
+      title: 'Google Drive Sync',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(status),
+          if (metadata?.error != null)
+            Text(
+              'Last sync failed. You can try again.',
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _busy || !available || connected
+                    ? null
+                    : () => _run(
+                        widget.controller.connectGoogleDrive,
+                        success: 'Google Drive connected.',
+                      ),
+                icon: const Icon(Icons.login),
+                label: const Text('Connect Google Drive'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy || !connected
+                    ? null
+                    : () => _run(
+                        widget.controller.disconnectGoogleDrive,
+                        success: 'Google Drive disconnected.',
+                      ),
+                icon: const Icon(Icons.logout),
+                label: const Text('Disconnect'),
+              ),
+              FilledButton.icon(
+                onPressed: _busy || !connected
+                    ? null
+                    : () => _run(
+                        widget.controller.syncNow,
+                        success: 'Catalog synced to Google Drive.',
+                      ),
+                icon: const Icon(Icons.sync),
+                label: const Text('Sync now'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy || !connected ? null : _downloadRemote,
+                icon: const Icon(Icons.cloud_download_outlined),
+                label: const Text('Download remote'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Sync uploads a portable catalog bundle. Disconnect removes local credentials and settings only; remote files are not deleted.',
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _deviceSyncSection() => _Section(
     title: 'Manual Device Sync',
