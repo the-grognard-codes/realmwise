@@ -7,6 +7,7 @@ import 'screens/database_gateway.dart';
 import 'screens/search_add_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/app_controller.dart';
+import 'services/google_drive_runtime.dart';
 import 'theme/app_theme.dart';
 
 class RealmwiseBootstrap extends StatefulWidget {
@@ -17,7 +18,9 @@ class RealmwiseBootstrap extends StatefulWidget {
 }
 
 class _RealmwiseBootstrapState extends State<RealmwiseBootstrap> {
-  final AppController _controller = AppController();
+  late final AppController _controller = AppController(
+    syncProvider: createConfiguredGoogleDriveProvider(),
+  );
   ApiDebugHarness? _debugHarness;
   Future<ApiDebugHarness>? _debugStart;
   bool _disposed = false;
@@ -26,6 +29,7 @@ class _RealmwiseBootstrapState extends State<RealmwiseBootstrap> {
   @override
   void initState() {
     super.initState();
+    logGoogleDriveConfiguration();
     final readiness = _controller.initialize();
     if (apiDebugHarnessEnabled()) {
       _debugStart = ApiDebugHarness.start(_controller, readiness: readiness);
@@ -84,7 +88,7 @@ class _RealmwiseBootstrapState extends State<RealmwiseBootstrap> {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-      title: 'Realmwise RPG Tracker',
+    title: 'Realmwise RPG Tracker',
     debugShowCheckedModeBanner: false,
     theme: buildRpgTheme(_controller.seedName, Brightness.light),
     darkTheme: buildRpgTheme(_controller.seedName, Brightness.dark),

@@ -34,6 +34,22 @@ flutter build apk --release
 
 The generated Windows executable is under `build/windows/.../runner/Release`, Linux under `build/linux/.../release/bundle`, and the Android package under `build/app/outputs/flutter-apk`.
 
+## Google Drive manual sync
+
+Google Drive sync is enabled only in builds configured with an OAuth client ID. In the Google Cloud project, enable the Google Drive API, configure the OAuth consent screen (including test users while the app is in testing), and create a **Desktop app** OAuth client. Realmwise's Windows/Linux flow listens on a loopback address; the default is `http://127.0.0.1:8765/oauth2callback`. Desktop OAuth clients support loopback redirects and do not require you to add that URI in the Cloud Console. If you override `GOOGLE_DRIVE_REDIRECT_URI`, use a loopback URI that Realmwise can bind locally (including its port and path).
+
+```sh
+flutter run -d windows --dart-define=GOOGLE_DRIVE_CLIENT_ID=your-client-id --dart-define=GOOGLE_DRIVE_REDIRECT_URI=http://127.0.0.1:8765/oauth2callback
+```
+
+`GOOGLE_DRIVE_CLIENT_SECRET` may optionally be supplied with `--dart-define` for OAuth clients that require a secret. Desktop OAuth with PKCE normally works without one; a value embedded in a desktop build is not a security boundary.
+
+The app requests the `drive.appdata` scope and stores its sync bundle in Drive's hidden `appDataFolder`; it does not create or use a visible Realmwise folder. This private app-data area is only available to this app, so the same OAuth client/account and app configuration must be used on every device that should share a catalog. Disconnecting removes local credentials and sync settings but does not delete the remote app-data bundle.
+
+For an External consent screen in **Testing**, add every tester explicitly. Google test-user authorizations for this Drive scope—including offline refresh tokens—expire after seven days, so testers will need to reconnect periodically. Use a published production configuration for durable refresh tokens.
+
+Drive sync is a manual copy/recovery mechanism, not a replacement for local backups. Keep the local database and image backups, and use **Settings → Database** export/restore when moving to a different account, OAuth client, or device configuration. Before restoring or switching devices, make sure the target device can authenticate with the same Google account and matching client/redirect settings; otherwise its hidden app-data bundle will not be discoverable.
+
 ## Project map
 
 - `lib/models/` — immutable database and API models.

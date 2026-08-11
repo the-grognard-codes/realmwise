@@ -16,7 +16,11 @@ import 'external_catalog_service.dart';
 import 'export_service.dart';
 import 'image_storage_service.dart';
 import 'import_service.dart';
+import 'google_drive_sync.dart';
 import 'secure_storage_service.dart';
+import 'sync_contract.dart';
+import 'sync_coordinator.dart';
+import 'sync_metadata.dart';
 
 enum CatalogHierarchyOrder {
   gameSystemSettingBookType,
@@ -25,11 +29,14 @@ enum CatalogHierarchyOrder {
 
 /// Application session state: selected database, theme preference, and services.
 class AppController extends ChangeNotifier {
-  AppController({TokenStorage? tokenStorage, this.imageRootPathOverride})
-    : database = DatabaseService(),
-      _http = http.Client(),
-      backups = BackupService(),
-      _tokenStorage = tokenStorage ?? SecureStorageService();
+  AppController({
+    TokenStorage? tokenStorage,
+    this.imageRootPathOverride,
+    this.syncProvider,
+  }) : database = DatabaseService(),
+       _http = http.Client(),
+       backups = BackupService(),
+       _tokenStorage = tokenStorage ?? SecureStorageService();
 
   final DatabaseService database;
   final BackupService backups;
@@ -44,8 +51,12 @@ class AppController extends ChangeNotifier {
   late final ExternalCatalogService lookup = ExternalCatalogService(_http);
   final http.Client _http;
   final TokenStorage _tokenStorage;
+
   /// Test seam for avoiding platform path providers; persisted DB settings win.
   final String? imageRootPathOverride;
+  final SyncProvider? syncProvider;
+  late SyncCoordinator syncCoordinator;
+  SyncMetadata? syncMetadata;
 
   bool loading = true;
   String? error;
@@ -65,6 +76,9 @@ class AppController extends ChangeNotifier {
   Future<void> initialize() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      syncCoordinator = SyncCoordinator(
+        metadataStorage: SharedPreferencesSyncMetadataStorage(prefs),
+      );
       includePersonalImagesInBundles =
           prefs.getBool('include_personal_images_in_bundles') ?? false;
       final saved = prefs.getString('last_database_path');
@@ -109,6 +123,21 @@ class AppController extends ChangeNotifier {
     await backups.stop();
     await database.open(databasePath);
     final catalogIdentity = await database.ensureCatalogIdentity();
+    syncMetadata = await syncCoordinator.metadataStorage.read(catalogIdentity);
+    syncCoordinator.metadata = syncMetadata;
+    final savedSync = syncMetadata;
+    final provider = syncProvider;
+    if (savedSync != null && provider is GoogleDriveProvider) {
+      final restored = await provider.restoreSession();
+      if (restored != null) {
+        try {
+          await syncCoordinator.restore(provider, restored, savedSync);
+          syncMetadata = syncCoordinator.metadata;
+        } catch (_) {
+          syncMetadata = savedSync;
+        }
+      }
+    }
     await _migrateRpgGeekToken(catalogIdentity);
     _sessionBaselineWorkIds
       ..clear()
@@ -159,6 +188,76 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> connectGoogleDrive() async {
+    final provider = syncProvider;
+    if (provider == null) {
+      throw StateError('Google Drive sync is not configured on this device.');
+    }
+    if (!database.isOpen) throw StateError('Open a catalog first.');
+    final identity = await database.ensureCatalogIdentity();
+    syncMetadata = await syncCoordinator.connect(provider, identity);
+    if (syncMetadata!.state == SyncState.connectedUnconfigured &&
+        provider is GoogleDriveProvider &&
+        syncCoordinator.session != null) {
+      final target = await provider.ensureBundleTarget(
+        syncCoordinator.session!,
+      );
+      await syncCoordinator.configureTarget(target);
+      syncMetadata = syncCoordinator.metadata;
+    }
+    notifyListeners();
+  }
+
+  Future<void> syncNow() async {
+    if (!database.isOpen) throw StateError('Open a catalog first.');
+    final identity = await database.ensureCatalogIdentity();
+    final temporary = await getTemporaryDirectory();
+    final bundlePath = path.join(
+      temporary.path,
+      'realmwise-sync-${DateTime.now().microsecondsSinceEpoch}.realmwise',
+    );
+    try {
+      await exportDeviceBundle(bundlePath);
+      syncMetadata = await syncCoordinator.sync(
+        Uint8List.fromList(await File(bundlePath).readAsBytes()),
+      );
+      assert(syncMetadata?.catalogIdentity == identity);
+      notifyListeners();
+    } finally {
+      final file = File(bundlePath);
+      if (await file.exists()) await file.delete();
+    }
+  }
+
+  Future<void> downloadRemoteBundle() async {
+    if (!database.isOpen) throw StateError('Open a catalog first.');
+    final temporary = await getTemporaryDirectory();
+    final bundlePath = path.join(
+      temporary.path,
+      'realmwise-remote-${DateTime.now().microsecondsSinceEpoch}.realmwise',
+    );
+    try {
+      final result = await syncCoordinator.download();
+      await File(bundlePath).writeAsBytes(result.payload, flush: true);
+      await previewDeviceBundle(bundlePath);
+      await restoreDeviceBundle(bundlePath);
+      await syncCoordinator.commitDownload(result.metadata);
+      syncMetadata = syncCoordinator.metadata;
+      notifyListeners();
+    } finally {
+      final file = File(bundlePath);
+      if (await file.exists()) await file.delete();
+    }
+  }
+
+  Future<void> disconnectGoogleDrive() async {
+    final provider = syncProvider;
+    if (provider is GoogleDriveProvider) await provider.clearCredentials();
+    await syncCoordinator.disconnect();
+    syncMetadata = null;
+    notifyListeners();
+  }
+
   Future<void> restoreFromBackup(String backupFile) async {
     final documents = await getApplicationDocumentsDirectory();
     final name = 'restored_${DateTime.now().millisecondsSinceEpoch}.db';
@@ -185,7 +284,8 @@ class AppController extends ChangeNotifier {
     await bundles.validateBundle(bundlePath);
     if (!database.isOpen) throw StateError('No active database to replace.');
     final active = database.databasePath;
-    final staged = '$active.portable-import-${DateTime.now().microsecondsSinceEpoch}.tmp';
+    final staged =
+        '$active.portable-import-${DateTime.now().microsecondsSinceEpoch}.tmp';
     final backup = path.join(
       path.dirname(active),
       'backups',
@@ -219,7 +319,8 @@ class AppController extends ChangeNotifier {
       final partial = File(staged);
       if (await partial.exists()) await partial.delete();
       final importedAssets = Directory(importImageRoot);
-      if (await importedAssets.exists()) await importedAssets.delete(recursive: true);
+      if (await importedAssets.exists())
+        await importedAssets.delete(recursive: true);
       rethrow;
     }
     var swapped = false;
