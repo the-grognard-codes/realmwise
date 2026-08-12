@@ -108,6 +108,51 @@ class EmptyProvider extends FailingProvider {
       const SyncAuthSession(accountId: 'account');
 }
 
+class TargetProvider extends FailingProvider {
+  int uploads = 0;
+  SyncRemoteMetadata? remoteMetadata;
+  SyncPrecondition? lastPrecondition;
+  String providerName = 'test';
+  String accountId = 'account';
+
+  @override
+  String get provider => providerName;
+
+  @override
+  Future<SyncAuthSession> authenticate() async =>
+      SyncAuthSession(accountId: accountId);
+
+  @override
+  Future<List<SyncRemoteTarget>> listRemoteTargets(SyncAuthSession _) async =>
+      const [
+        SyncRemoteTarget(id: 'target-a', name: 'A'),
+        SyncRemoteTarget(id: 'target-b', name: 'B'),
+      ];
+
+  @override
+  Future<SyncUploadResult> upload(
+    SyncAuthSession _,
+    SyncRemoteTarget __,
+    Uint8List ___, {
+    SyncPrecondition? precondition,
+  }) async {
+    uploads++;
+    lastPrecondition = precondition;
+    return const SyncUploadResult(
+      metadata: SyncRemoteMetadata(
+        revision: SyncRevision('2'),
+        contentHash: 'remote-hash',
+      ),
+    );
+  }
+
+  @override
+  Future<SyncRemoteMetadata?> metadata(
+    SyncAuthSession _,
+    SyncRemoteTarget __,
+  ) async => remoteMetadata;
+}
+
 void main() {
   test(
     'failed connect persists recoverable error and clears live connection',
@@ -533,6 +578,610 @@ void main() {
       bytes,
     );
   });
+  test('upload retries stale revision/hash then succeeds', () async {
+    final t = MemTokens();
+    await t.write(
+      'google_drive_oauth:id',
+      jsonEncode({'access_token': 'a', 'expires_at': '2999-01-01T00:00:00Z'}),
+    );
+    final payload = Uint8List.fromList([1]);
+    final hash = sha256.convert(payload).toString();
+    var reads = 0;
+    var patches = 0;
+    final delays = <Duration>[];
+    final client = MockClient((r) async {
+      if (r.method == 'PATCH') {
+        patches++;
+        return http.Response(jsonEncode({'version': '4'}), 200);
+      }
+      reads++;
+      final expected = reads > 1;
+      return http.Response(
+        jsonEncode({
+          'version': expected ? '3' : '2',
+          'appProperties': {'realmwiseSha256': expected ? hash : 'stale'},
+        }),
+        200,
+      );
+    });
+    final auth = GoogleDriveOAuthAuthenticator(
+      clientId: 'id',
+      redirectUri: Uri.parse('http://localhost'),
+      browser: B(),
+      callback: C(Uri.parse('http://localhost')),
+      tokenStore: GoogleDriveTokenStore(t),
+      httpClient: client,
+    );
+    final p = GoogleDriveProvider(
+      authenticator: auth,
+      tokenStore: GoogleDriveTokenStore(t),
+      httpClient: client,
+      delay: (duration) async => delays.add(duration),
+    );
+    await p.upload(
+      const SyncAuthSession(accountId: 'x'),
+      const SyncRemoteTarget(id: 'f', name: 'f'),
+      payload,
+      precondition: SyncPrecondition(
+        revision: const SyncRevision('3'),
+        contentHash: hash,
+      ),
+    );
+    expect(patches, greaterThan(0));
+    expect(delays, [const Duration(milliseconds: 100)]);
+  });
+
+  test(
+    'switching target clears local fingerprint and prevents no-op sync',
+    () async {
+      final storage = MemSyncMetadata();
+      final provider = TargetProvider();
+      final coordinator = SyncCoordinator(metadataStorage: storage);
+      await coordinator.connect(provider, 'catalog');
+      await coordinator.sync(Uint8List.fromList([1]), localFingerprint: 'same');
+      expect(coordinator.metadata?.lastSuccessfulLocalFingerprint, 'same');
+
+      await coordinator.configureTarget(
+        const SyncRemoteTarget(id: 'target-b', name: 'B'),
+      );
+      expect(coordinator.metadata?.lastSuccessfulLocalFingerprint, isNull);
+      await coordinator.sync(Uint8List.fromList([1]), localFingerprint: 'same');
+      expect(provider.uploads, 2);
+    },
+  );
+
+  test(
+    'matching local fingerprint with divergent remote metadata uploads',
+    () async {
+      final storage = MemSyncMetadata();
+      final provider = TargetProvider()
+        ..remoteMetadata = const SyncRemoteMetadata(
+          revision: SyncRevision('99'),
+          contentHash: 'different-hash',
+        );
+      final coordinator = SyncCoordinator(metadataStorage: storage);
+      await coordinator.connect(provider, 'catalog');
+      await coordinator.sync(Uint8List.fromList([1]), localFingerprint: 'same');
+      expect(coordinator.metadata?.lastSuccessfulLocalFingerprint, 'same');
+
+      provider.remoteMetadata = const SyncRemoteMetadata(
+        revision: SyncRevision('3'),
+        contentHash: 'different-hash',
+      );
+      await coordinator.sync(Uint8List.fromList([1]), localFingerprint: 'same');
+
+      expect(coordinator.lastOutcome, SyncOutcome.uploaded);
+      expect(provider.uploads, 2);
+      expect(provider.lastPrecondition?.revision, const SyncRevision('2'));
+      expect(provider.lastPrecondition?.contentHash, 'remote-hash');
+    },
+  );
+
+  test(
+    'matching tuple and remote metadata skips upload as already synced',
+    () async {
+      final storage = MemSyncMetadata();
+      final provider = TargetProvider()
+        ..remoteMetadata = const SyncRemoteMetadata(
+          revision: SyncRevision('2'),
+          contentHash: 'remote-hash',
+        );
+      final coordinator = SyncCoordinator(metadataStorage: storage);
+      await coordinator.connect(provider, 'catalog');
+      await coordinator.sync(Uint8List.fromList([1]), localFingerprint: 'same');
+      final uploads = provider.uploads;
+
+      await coordinator.sync(Uint8List.fromList([1]), localFingerprint: 'same');
+
+      expect(coordinator.lastOutcome, SyncOutcome.alreadySynced);
+      expect(provider.uploads, uploads);
+    },
+  );
+
+  test(
+    'matching remote hash reconciles Drive revision without uploading',
+    () async {
+      final storage = MemSyncMetadata();
+      final provider = TargetProvider()
+        ..remoteMetadata = const SyncRemoteMetadata(
+          revision: SyncRevision('21'),
+          contentHash: 'remote-hash',
+        );
+      final coordinator = SyncCoordinator(metadataStorage: storage);
+      await coordinator.connect(provider, 'catalog');
+      await coordinator.sync(Uint8List.fromList([1]), localFingerprint: 'same');
+      final uploads = provider.uploads;
+
+      provider.remoteMetadata = const SyncRemoteMetadata(
+        revision: SyncRevision('22'),
+        contentHash: 'remote-hash',
+      );
+      await coordinator.sync(Uint8List.fromList([1]), localFingerprint: 'same');
+
+      expect(coordinator.lastOutcome, SyncOutcome.alreadySynced);
+      expect(provider.uploads, uploads);
+      expect(coordinator.metadata?.revision, '22');
+      expect(storage.value?.revision, '22');
+    },
+  );
+
+  test('legacy metadata without local fingerprint uploads', () async {
+    final storage = MemSyncMetadata()
+      ..value = const SyncMetadata(
+        catalogIdentity: 'catalog',
+        provider: 'test',
+        accountId: 'account',
+        remoteTargetId: 'target-a',
+        remoteTargetName: 'A',
+        revision: '2',
+        contentHash: 'remote-hash',
+        state: SyncState.ready,
+      );
+    final provider = TargetProvider()
+      ..remoteMetadata = const SyncRemoteMetadata(
+        revision: SyncRevision('2'),
+        contentHash: 'remote-hash',
+      );
+    final coordinator = SyncCoordinator(metadataStorage: storage);
+    await coordinator.connect(provider, 'catalog');
+    await coordinator.sync(Uint8List.fromList([1]), localFingerprint: 'same');
+
+    expect(coordinator.lastOutcome, SyncOutcome.uploaded);
+    expect(provider.uploads, 1);
+  });
+
+  test('provider or account metadata mismatch prevents no-op', () async {
+    for (final mismatch in ['provider', 'account']) {
+      final storage = MemSyncMetadata()
+        ..value = const SyncMetadata(
+          catalogIdentity: 'catalog',
+          provider: 'test',
+          accountId: 'account',
+          remoteTargetId: 'target-a',
+          remoteTargetName: 'A',
+          revision: '2',
+          contentHash: 'remote-hash',
+          lastSuccessfulLocalFingerprint: 'same',
+          state: SyncState.ready,
+        );
+      final provider = TargetProvider()
+        ..remoteMetadata = const SyncRemoteMetadata(
+          revision: SyncRevision('2'),
+          contentHash: 'remote-hash',
+        );
+      if (mismatch == 'provider') {
+        provider.providerName = 'other';
+      } else {
+        provider.accountId = 'other-account';
+      }
+      final coordinator = SyncCoordinator(metadataStorage: storage);
+      await coordinator.connect(provider, 'catalog');
+      await coordinator.sync(Uint8List.fromList([1]), localFingerprint: 'same');
+      expect(provider.uploads, 1, reason: mismatch);
+    }
+  });
+
+  test(
+    'commitDownload with null fingerprint clears prior fingerprint',
+    () async {
+      final storage = MemSyncMetadata();
+      final coordinator = SyncCoordinator(metadataStorage: storage);
+      await coordinator.connect(TargetProvider(), 'catalog');
+      await coordinator.sync(
+        Uint8List.fromList([1]),
+        localFingerprint: 'prior',
+      );
+
+      await coordinator.commitDownload(
+        const SyncRemoteMetadata(
+          revision: SyncRevision('3'),
+          contentHash: 'downloaded',
+        ),
+      );
+      expect(coordinator.metadata?.lastSuccessfulLocalFingerprint, isNull);
+    },
+  );
+
+  test(
+    'upload retries media PATCH after stale ETag when metadata still matches',
+    () async {
+      final t = MemTokens();
+      await t.write(
+        'google_drive_oauth:id',
+        jsonEncode({'access_token': 'a', 'expires_at': '2999-01-01T00:00:00Z'}),
+      );
+      final payload = Uint8List.fromList([2]);
+      final hash = sha256.convert(payload).toString();
+      var metadataReads = 0;
+      var mediaPatches = 0;
+      final client = MockClient((r) async {
+        if (r.url.queryParameters['uploadType'] == 'media') {
+          mediaPatches++;
+          if (mediaPatches == 1) return http.Response('{}', 412);
+          return http.Response('{}', 200, headers: {'etag': 'etag-new'});
+        }
+        if (r.method == 'PATCH')
+          return http.Response(jsonEncode({'version': '3'}), 200);
+        metadataReads++;
+        return http.Response(
+          jsonEncode({
+            'version': '2',
+            'appProperties': {'realmwiseSha256': hash},
+          }),
+          200,
+          headers: {'etag': metadataReads == 1 ? 'etag-old' : 'etag-new'},
+        );
+      });
+      final auth = GoogleDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost'),
+        browser: B(),
+        callback: C(Uri.parse('http://localhost')),
+        tokenStore: GoogleDriveTokenStore(t),
+        httpClient: client,
+      );
+      final p = GoogleDriveProvider(
+        authenticator: auth,
+        tokenStore: GoogleDriveTokenStore(t),
+        httpClient: client,
+      );
+      await p.upload(
+        const SyncAuthSession(accountId: 'x'),
+        const SyncRemoteTarget(id: 'f', name: 'f'),
+        payload,
+        precondition: SyncPrecondition(
+          revision: const SyncRevision('2'),
+          contentHash: hash,
+        ),
+      );
+      expect(mediaPatches, 2);
+    },
+  );
+
+  test('upload conflicts on media 412 without logical precondition', () async {
+    final t = MemTokens();
+    await t.write(
+      'google_drive_oauth:id',
+      jsonEncode({'access_token': 'a', 'expires_at': '2999-01-01T00:00:00Z'}),
+    );
+    var mediaPatches = 0;
+    final client = MockClient((r) async {
+      if (r.url.queryParameters['uploadType'] == 'media') {
+        mediaPatches++;
+        return http.Response('{}', 412);
+      }
+      return http.Response(
+        jsonEncode({
+          'version': '1',
+          'appProperties': {'realmwiseSha256': 'old'},
+        }),
+        200,
+      );
+    });
+    final auth = GoogleDriveOAuthAuthenticator(
+      clientId: 'id',
+      redirectUri: Uri.parse('http://localhost'),
+      browser: B(),
+      callback: C(Uri.parse('http://localhost')),
+      tokenStore: GoogleDriveTokenStore(t),
+      httpClient: client,
+    );
+    final p = GoogleDriveProvider(
+      authenticator: auth,
+      tokenStore: GoogleDriveTokenStore(t),
+      httpClient: client,
+    );
+    await expectLater(
+      p.upload(
+        const SyncAuthSession(accountId: 'x'),
+        const SyncRemoteTarget(id: 'f', name: 'f'),
+        Uint8List.fromList([2]),
+      ),
+      throwsA(isA<SyncConflictException>()),
+    );
+    expect(mediaPatches, 1);
+  });
+
+  test(
+    'upload does not retry media PATCH after 412 when metadata diverged',
+    () async {
+      final t = MemTokens();
+      await t.write(
+        'google_drive_oauth:id',
+        jsonEncode({'access_token': 'a', 'expires_at': '2999-01-01T00:00:00Z'}),
+      );
+      var mediaPatches = 0;
+      var metadataReads = 0;
+      final client = MockClient((r) async {
+        if (r.url.queryParameters['uploadType'] == 'media') {
+          mediaPatches++;
+          return http.Response('{}', 412);
+        }
+        if (r.method == 'PATCH') return http.Response('{}', 200);
+        metadataReads++;
+        return http.Response(
+          jsonEncode({
+            'version': metadataReads == 1 ? '2' : '3',
+            'appProperties': {
+              'realmwiseSha256': metadataReads == 1 ? 'expected' : 'newer',
+            },
+          }),
+          200,
+          headers: {'etag': 'etag'},
+        );
+      });
+      final auth = GoogleDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost'),
+        browser: B(),
+        callback: C(Uri.parse('http://localhost')),
+        tokenStore: GoogleDriveTokenStore(t),
+        httpClient: client,
+      );
+      final p = GoogleDriveProvider(
+        authenticator: auth,
+        tokenStore: GoogleDriveTokenStore(t),
+        httpClient: client,
+      );
+      await expectLater(
+        p.upload(
+          const SyncAuthSession(accountId: 'x'),
+          const SyncRemoteTarget(id: 'f', name: 'f'),
+          Uint8List.fromList([2]),
+          precondition: const SyncPrecondition(
+            revision: SyncRevision('2'),
+            contentHash: 'expected',
+          ),
+        ),
+        throwsA(isA<SyncConflictException>()),
+      );
+      expect(mediaPatches, 1);
+    },
+  );
+
+  test(
+    'repeated upload refreshes stale ETag cached from prior properties write',
+    () async {
+      final t = MemTokens();
+      await t.write(
+        'google_drive_oauth:id',
+        jsonEncode({'access_token': 'a', 'expires_at': '2999-01-01T00:00:00Z'}),
+      );
+      final payload = Uint8List.fromList([3]);
+      final hash = sha256.convert(payload).toString();
+      var metadataReads = 0;
+      var mediaPatches = 0;
+      var propertiesPatches = 0;
+      final client = MockClient((r) async {
+        if (r.url.queryParameters['uploadType'] == 'media') {
+          mediaPatches++;
+          if (mediaPatches == 2) return http.Response('{}', 412);
+          return http.Response('{}', 200);
+        }
+        if (r.method == 'PATCH') {
+          propertiesPatches++;
+          return http.Response(
+            jsonEncode({'version': propertiesPatches == 1 ? '2' : '3'}),
+            200,
+            headers: {'etag': 'etag-cached'},
+          );
+        }
+        metadataReads++;
+        final refreshed = metadataReads == 4;
+        return http.Response(
+          jsonEncode({
+            'version': metadataReads == 1 ? '1' : '2',
+            'appProperties': {'realmwiseSha256': hash},
+          }),
+          200,
+          headers: refreshed ? {'etag': 'etag-fresh'} : {},
+        );
+      });
+      final auth = GoogleDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost'),
+        browser: B(),
+        callback: C(Uri.parse('http://localhost')),
+        tokenStore: GoogleDriveTokenStore(t),
+        httpClient: client,
+      );
+      final p = GoogleDriveProvider(
+        authenticator: auth,
+        tokenStore: GoogleDriveTokenStore(t),
+        httpClient: client,
+      );
+      const session = SyncAuthSession(accountId: 'x');
+      const target = SyncRemoteTarget(id: 'f', name: 'f');
+      await p.upload(session, target, payload);
+      await p.upload(
+        session,
+        target,
+        payload,
+        precondition: SyncPrecondition(
+          revision: const SyncRevision('2'),
+          contentHash: hash,
+        ),
+      );
+      expect(mediaPatches, 3);
+    },
+  );
+
+  test('upload conflicts on refreshed divergent hash without PATCH', () async {
+    final t = MemTokens();
+    await t.write(
+      'google_drive_oauth:id',
+      jsonEncode({'access_token': 'a', 'expires_at': '2999-01-01T00:00:00Z'}),
+    );
+    var patches = 0;
+    var reads = 0;
+    final client = MockClient((r) async {
+      if (r.method == 'PATCH') {
+        patches++;
+        return http.Response('{}', 200);
+      }
+      reads++;
+      return http.Response(
+        jsonEncode({
+          'version': reads == 1 ? '2' : '3',
+          'appProperties': {'realmwiseSha256': reads == 1 ? 'stale' : 'other'},
+        }),
+        200,
+      );
+    });
+    final auth = GoogleDriveOAuthAuthenticator(
+      clientId: 'id',
+      redirectUri: Uri.parse('http://localhost'),
+      browser: B(),
+      callback: C(Uri.parse('http://localhost')),
+      tokenStore: GoogleDriveTokenStore(t),
+      httpClient: client,
+    );
+    final p = GoogleDriveProvider(
+      authenticator: auth,
+      tokenStore: GoogleDriveTokenStore(t),
+      httpClient: client,
+    );
+    await expectLater(
+      p.upload(
+        const SyncAuthSession(accountId: 'x'),
+        const SyncRemoteTarget(id: 'f', name: 'f'),
+        Uint8List.fromList([1]),
+        precondition: const SyncPrecondition(
+          revision: SyncRevision('3'),
+          contentHash: 'expected',
+        ),
+      ),
+      throwsA(isA<SyncConflictException>()),
+    );
+    expect(reads, 2);
+    expect(patches, 0);
+  });
+
+  test(
+    'upload rejects newer revision immediately without retry or PATCH',
+    () async {
+      final t = MemTokens();
+      await t.write(
+        'google_drive_oauth:id',
+        jsonEncode({'access_token': 'a', 'expires_at': '2999-01-01T00:00:00Z'}),
+      );
+      var reads = 0;
+      var patches = 0;
+      final client = MockClient((r) async {
+        if (r.method == 'PATCH') {
+          patches++;
+          return http.Response('{}', 200);
+        }
+        reads++;
+        return http.Response(
+          jsonEncode({
+            'version': '4',
+            'appProperties': {'realmwiseSha256': 'other'},
+          }),
+          200,
+        );
+      });
+      final auth = GoogleDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost'),
+        browser: B(),
+        callback: C(Uri.parse('http://localhost')),
+        tokenStore: GoogleDriveTokenStore(t),
+        httpClient: client,
+      );
+      final p = GoogleDriveProvider(
+        authenticator: auth,
+        tokenStore: GoogleDriveTokenStore(t),
+        httpClient: client,
+      );
+      await expectLater(
+        p.upload(
+          const SyncAuthSession(accountId: 'x'),
+          const SyncRemoteTarget(id: 'f', name: 'f'),
+          Uint8List.fromList([1]),
+          precondition: const SyncPrecondition(
+            revision: SyncRevision('3'),
+            contentHash: 'expected',
+          ),
+        ),
+        throwsA(isA<SyncConflictException>()),
+      );
+      expect(reads, 1);
+      expect(patches, 0);
+    },
+  );
+
+  test(
+    'upload nonnumeric revision mismatch conflicts without retry or PATCH',
+    () async {
+      final t = MemTokens();
+      await t.write(
+        'google_drive_oauth:id',
+        jsonEncode({'access_token': 'a', 'expires_at': '2999-01-01T00:00:00Z'}),
+      );
+      var reads = 0;
+      var patches = 0;
+      final client = MockClient((r) async {
+        if (r.method == 'PATCH') {
+          patches++;
+          return http.Response('{}', 200);
+        }
+        reads++;
+        return http.Response(
+          jsonEncode({
+            'version': 'abc',
+            'appProperties': {'realmwiseSha256': 'h'},
+          }),
+          200,
+        );
+      });
+      final auth = GoogleDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost'),
+        browser: B(),
+        callback: C(Uri.parse('http://localhost')),
+        tokenStore: GoogleDriveTokenStore(t),
+        httpClient: client,
+      );
+      final p = GoogleDriveProvider(
+        authenticator: auth,
+        tokenStore: GoogleDriveTokenStore(t),
+        httpClient: client,
+      );
+      await expectLater(
+        p.upload(
+          const SyncAuthSession(accountId: 'x'),
+          const SyncRemoteTarget(id: 'f', name: 'f'),
+          Uint8List.fromList([1]),
+          precondition: const SyncPrecondition(revision: SyncRevision('3')),
+        ),
+        throwsA(isA<SyncConflictException>()),
+      );
+      expect(reads, 1);
+      expect(patches, 0);
+    },
+  );
+
   test('download retries stale revision metadata before conflicting', () async {
     final t = MemTokens();
     await t.write(
@@ -541,6 +1190,7 @@ void main() {
     );
     final bytes = Uint8List.fromList([7]);
     var reads = 0;
+    final delays = <Duration>[];
     final client = MockClient((r) async {
       if (r.url.queryParameters['alt'] == 'media')
         return http.Response.bytes(bytes, 200);
@@ -562,6 +1212,7 @@ void main() {
       authenticator: auth,
       tokenStore: GoogleDriveTokenStore(t),
       httpClient: client,
+      delay: (duration) async => delays.add(duration),
     );
     final result = await provider.download(
       const SyncAuthSession(accountId: 'x'),
@@ -570,6 +1221,7 @@ void main() {
     );
     expect(result.payload, bytes);
     expect(reads, 2);
+    expect(delays, [const Duration(milliseconds: 100)]);
   });
 
   test('download conflicts after bounded stale revision retries', () async {

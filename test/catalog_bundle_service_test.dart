@@ -34,6 +34,7 @@ void main() {
           'catalog_identity': 'test',
           'database_filename': 'catalog.db',
           'database_sha256': checksum ?? sha256.convert(database).toString(),
+          'content_fingerprint': 'fixture-fingerprint',
         });
     final archive = Archive()
       ..addFile(

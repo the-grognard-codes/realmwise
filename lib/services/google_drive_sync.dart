@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import 'secure_storage_service.dart';
 import 'sync_contract.dart';
+import 'sync_debug.dart';
 
 abstract interface class OAuthBrowser {
   Future<void> open(Uri uri);
@@ -214,10 +215,13 @@ class GoogleDriveProvider implements SyncProvider {
     required this.authenticator,
     required this.tokenStore,
     http.Client? httpClient,
-  }) : _http = httpClient ?? http.Client();
+    Future<void> Function(Duration duration)? delay,
+  }) : _http = httpClient ?? http.Client(),
+       _delay = delay ?? Future<void>.delayed;
   final GoogleDriveOAuthAuthenticator authenticator;
   final GoogleDriveTokenStore tokenStore;
   final http.Client _http;
+  final Future<void> Function(Duration duration) _delay;
   final Map<String, String> _etags = {};
   @override
   String get provider => 'google_drive';
@@ -337,14 +341,28 @@ class GoogleDriveProvider implements SyncProvider {
       ),
       headers: {'Authorization': 'Bearer ${await _access(s)}'},
     );
-    if (r.statusCode == 404) return null;
-    if (r.statusCode != 200) throw Exception('Drive metadata failed');
+    if (r.statusCode == 404) {
+      SyncDebug.trace('provider.metadata', {'status': 404});
+      _etags.remove(t.id);
+      return null;
+    }
+    if (r.statusCode != 200) {
+      SyncDebug.trace('provider.metadata.error', {'status': r.statusCode});
+      throw Exception('Drive metadata failed');
+    }
     final j = jsonDecode(r.body);
     final etag = r.headers['etag'];
+    SyncDebug.trace('provider.metadata', {
+      'status': r.statusCode,
+      'revision': '${j['version']}',
+      'etagPresent': etag != null || j['etag'] is String,
+    });
     if (etag != null) {
       _etags[t.id] = etag;
     } else if (j['etag'] is String) {
       _etags[t.id] = j['etag'] as String;
+    } else {
+      _etags.remove(t.id);
     }
     return SyncRemoteMetadata(
       revision: SyncRevision('${j['version']}'),
@@ -364,15 +382,82 @@ class GoogleDriveProvider implements SyncProvider {
     SyncPrecondition? precondition,
   }) async {
     final hash = sha256.convert(payload).toString();
-    final old = await metadata(s, t);
-    if (precondition != null &&
-        old != null &&
-        ((precondition.revision != null &&
-                precondition.revision!.value != old.revision.value) ||
-            (precondition.contentHash != null &&
-                precondition.contentHash != old.contentHash)))
-      throw SyncConflictException(old);
-    final r = await _http.patch(
+    SyncDebug.trace('provider.upload.start', {
+      'revision': precondition?.revision?.value ?? 'none',
+      'hash': SyncDebug.hashPrefix(hash),
+    });
+    var old = await metadata(s, t);
+    if (precondition != null && old != null) {
+      final expectedRevision = precondition.revision?.value;
+      final expectedNumber = expectedRevision == null
+          ? null
+          : int.tryParse(expectedRevision);
+      var revisionMismatch =
+          expectedRevision != null && expectedRevision != old.revision.value;
+      var hashMismatch =
+          precondition.contentHash != null &&
+          precondition.contentHash != old.contentHash;
+      // A Drive file version can advance for metadata-only processing after
+      // Realmwise uploaded the same bundle.  A matching Realmwise SHA-256
+      // proves the portable payload has not diverged, so adopt the newer
+      // revision for this upload rather than reporting a false conflict.
+      if (revisionMismatch &&
+          !hashMismatch &&
+          precondition.contentHash != null) {
+        SyncDebug.trace('provider.upload.revision_reconciled', {
+          'revision': old.revision.value,
+          'hash': SyncDebug.hashPrefix(old.contentHash),
+        });
+        revisionMismatch = false;
+      }
+      var canRetry = revisionMismatch && expectedNumber != null;
+      final observedNumber = int.tryParse(old.revision.value);
+      final expected = expectedNumber;
+      if (observedNumber == null ||
+          (expected != null && observedNumber > expected)) {
+        canRetry = false;
+      }
+      for (
+        var attempt = 0;
+        canRetry && revisionMismatch && attempt < 3;
+        attempt++
+      ) {
+        SyncDebug.trace('provider.upload.retry', {
+          'attempt': attempt + 1,
+          'backoffMs': 100 * (1 << attempt),
+        });
+        await _delay(Duration(milliseconds: 100 * (1 << attempt)));
+        final refreshed = await metadata(s, t);
+        if (refreshed == null) break;
+        old = refreshed;
+        revisionMismatch = expectedRevision != refreshed.revision.value;
+        hashMismatch =
+            precondition.contentHash != null &&
+            precondition.contentHash != refreshed.contentHash;
+        if (revisionMismatch &&
+            !hashMismatch &&
+            precondition.contentHash != null) {
+          SyncDebug.trace('provider.upload.revision_reconciled', {
+            'revision': refreshed.revision.value,
+            'hash': SyncDebug.hashPrefix(refreshed.contentHash),
+          });
+          revisionMismatch = false;
+        }
+        final refreshedNumber = int.tryParse(refreshed.revision.value);
+        if (refreshedNumber == null ||
+            (expected != null && refreshedNumber > expected)) {
+          canRetry = false;
+        }
+      }
+      if (hashMismatch || revisionMismatch) {
+        SyncDebug.trace('provider.upload.conflict', {
+          'revisionMismatch': revisionMismatch,
+          'hashMismatch': hashMismatch,
+        });
+        throw SyncConflictException(old!);
+      }
+    }
+    Future<http.Response> mediaPatch() async => _http.patch(
       Uri.parse(
         'https://www.googleapis.com/upload/drive/v3/files/${t.id}?uploadType=media',
       ),
@@ -385,8 +470,34 @@ class GoogleDriveProvider implements SyncProvider {
       },
       body: payload,
     );
-    if (r.statusCode == 412 && old != null) throw SyncConflictException(old);
+    var r = await mediaPatch();
+    SyncDebug.trace('provider.upload.media', {
+      'status': r.statusCode,
+      'etagPresent': r.headers['etag'] != null,
+    });
+    if (r.statusCode == 412) {
+      // A cached ETag may be stale even when the logical precondition still
+      // holds (for example after an earlier successful sync). Refresh
+      // metadata/ETag and retry exactly once; never overwrite a divergent
+      // remote revision or hash.
+      if (precondition == null) throw SyncConflictException(old!);
+      final refreshed = await metadata(s, t);
+      final matches =
+          refreshed != null &&
+          ((precondition.contentHash != null &&
+                  precondition.contentHash == refreshed.contentHash) ||
+              (precondition.contentHash == null &&
+                  (precondition.revision == null ||
+                      precondition.revision == refreshed.revision)));
+      if (!matches) throw SyncConflictException(refreshed ?? old!);
+      SyncDebug.trace('provider.upload.412.retry', {'status': 412});
+      old = refreshed;
+      r = await mediaPatch();
+      if (r.statusCode == 412) throw SyncConflictException(refreshed);
+    }
     if (r.statusCode ~/ 100 != 2) throw Exception('Drive upload failed');
+    final mediaEtag = r.headers['etag'];
+    if (mediaEtag != null) _etags[t.id] = mediaEtag;
     final properties = await _http.patch(
       Uri.parse(
         'https://www.googleapis.com/drive/v3/files/${t.id}'
@@ -400,12 +511,18 @@ class GoogleDriveProvider implements SyncProvider {
         'appProperties': {'realmwiseSha256': hash},
       }),
     );
+    SyncDebug.trace('provider.upload.properties', {
+      'status': properties.statusCode,
+      'etagPresent': properties.headers['etag'] != null,
+    });
     if (properties.statusCode == 412 && old != null) {
       throw SyncConflictException(old);
     }
     if (properties.statusCode ~/ 100 != 2) {
       throw Exception('Drive metadata update failed');
     }
+    final propertiesEtag = properties.headers['etag'];
+    if (propertiesEtag != null) _etags[t.id] = propertiesEtag;
 
     // The metadata update is a second Drive write and therefore advances the
     // file version. Prefer the resource returned by that write when available
@@ -450,7 +567,7 @@ class GoogleDriveProvider implements SyncProvider {
     if (precondition != null && precondition.revision != null) {
       // Drive metadata can briefly lag the just-completed upload. Re-read a
       // small bounded number of times before treating a revision mismatch as
-      // a real conflict; no delay keeps this deterministic for callers/tests.
+      // a real conflict; bounded backoff avoids racing eventual consistency.
       final expectedRevision = precondition.revision!.value;
       final expectedNumber = int.tryParse(expectedRevision);
       final expected = expectedNumber ?? -1;
@@ -464,6 +581,7 @@ class GoogleDriveProvider implements SyncProvider {
         canRetry && attempt < 3 && expectedRevision != m.revision.value;
         attempt++
       ) {
+        await _delay(Duration(milliseconds: 100 * (1 << attempt)));
         final refreshed = await metadata(s, t);
         if (refreshed == null) break;
         m = refreshed;

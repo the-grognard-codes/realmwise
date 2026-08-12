@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../services/app_controller.dart';
 import '../services/catalog_bundle_service.dart';
 import '../services/sync_metadata.dart';
+import '../services/sync_coordinator.dart';
 import '../theme/app_theme.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -79,6 +80,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     () => widget.controller.setRpgGeekKey(_key.text),
     success: 'RPGGeek key saved in this local database.',
   );
+
+  Future<void> _syncNow() async {
+    await widget.controller.syncNow();
+    if (!mounted) return;
+    final message = widget.controller.syncCoordinator.lastOutcome ==
+            SyncOutcome.alreadySynced
+        ? 'Already synced—no local changes.'
+        : 'Catalog synced to Google Drive.';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
 
   Future<void> _chooseImageFolder() async {
     final chosen = await FilePicker.getDirectoryPath(
@@ -754,8 +765,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onPressed: _busy || !connected
                     ? null
                     : () => _run(
-                        widget.controller.syncNow,
-                        success: 'Catalog synced to Google Drive.',
+                        _syncNow,
                       ),
                 icon: const Icon(Icons.sync),
                 label: const Text('Sync now'),
