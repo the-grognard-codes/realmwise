@@ -38,6 +38,7 @@ class SyncMetadata {
     this.remoteTargetName,
     this.revision,
     this.contentHash,
+    this.lastSuccessfulLocalFingerprint,
     this.createdAt,
     this.updatedAt,
     this.state = SyncState.notConnected,
@@ -51,7 +52,8 @@ class SyncMetadata {
       remoteTargetId,
       remoteTargetName,
       revision,
-      contentHash;
+      contentHash,
+      lastSuccessfulLocalFingerprint;
   final DateTime? createdAt, updatedAt;
   final SyncState state;
   final String? error;
@@ -66,6 +68,7 @@ class SyncMetadata {
     'remoteTargetName': remoteTargetName,
     'revision': revision,
     'contentHash': contentHash,
+    'lastSuccessfulLocalFingerprint': lastSuccessfulLocalFingerprint,
     'createdAt': createdAt?.toIso8601String(),
     'updatedAt': updatedAt?.toIso8601String(),
     'state': state.name,
@@ -81,6 +84,7 @@ class SyncMetadata {
     remoteTargetName: json['remoteTargetName'] as String?,
     revision: json['revision'] as String?,
     contentHash: json['contentHash'] as String?,
+    lastSuccessfulLocalFingerprint: json['lastSuccessfulLocalFingerprint'] as String?,
     createdAt: _date(json['createdAt']),
     updatedAt: _date(json['updatedAt']),
     state: SyncState.values.firstWhere(

@@ -1,3 +1,5 @@
+Fix multiple sync requests in a row failing with sync exceptions.
+
 Add default and debug level logging feature.
     Any logging built in by default?
     Toggle in the UI

@@ -225,8 +225,10 @@ class AppController extends ChangeNotifier {
     );
     try {
       await exportDeviceBundle(bundlePath);
+      final manifest = await bundles.validateBundle(bundlePath);
       syncMetadata = await syncCoordinator.sync(
         Uint8List.fromList(await File(bundlePath).readAsBytes()),
+        localFingerprint: manifest.contentFingerprint,
       );
       assert(syncMetadata?.catalogIdentity == identity);
       notifyListeners();
@@ -246,9 +248,12 @@ class AppController extends ChangeNotifier {
     try {
       final result = await syncCoordinator.download();
       await File(bundlePath).writeAsBytes(result.payload, flush: true);
-      await previewDeviceBundle(bundlePath);
+      final manifest = await previewDeviceBundle(bundlePath);
       await restoreDeviceBundle(bundlePath);
-      await syncCoordinator.commitDownload(result.metadata);
+      await syncCoordinator.commitDownload(
+        result.metadata,
+        localFingerprint: manifest.contentFingerprint,
+      );
       syncMetadata = syncCoordinator.metadata;
       notifyListeners();
     } finally {

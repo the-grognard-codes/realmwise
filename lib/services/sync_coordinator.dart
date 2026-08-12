@@ -2,6 +2,9 @@ import 'dart:typed_data';
 
 import 'sync_contract.dart';
 import 'sync_metadata.dart';
+import 'sync_debug.dart';
+
+enum SyncOutcome { uploaded, alreadySynced }
 
 /// Small provider-neutral orchestration layer used by the settings UI.
 class SyncCoordinator {
@@ -12,6 +15,7 @@ class SyncCoordinator {
   SyncAuthSession? session;
   SyncRemoteTarget? target;
   SyncMetadata? metadata;
+  SyncOutcome lastOutcome = SyncOutcome.uploaded;
 
   bool get isConnected => provider != null && session != null;
 
@@ -19,6 +23,7 @@ class SyncCoordinator {
     final current = metadata;
     if (current == null) throw StateError('Connect a provider first.');
     target = selected;
+    final sameTarget = current.remoteTargetId == selected.id;
     metadata = SyncMetadata(
       catalogIdentity: current.catalogIdentity,
       provider: current.provider,
@@ -26,8 +31,11 @@ class SyncCoordinator {
       accountDisplayName: current.accountDisplayName,
       remoteTargetId: selected.id,
       remoteTargetName: selected.name,
-      revision: current.revision,
-      contentHash: current.contentHash,
+      revision: sameTarget ? current.revision : null,
+      contentHash: sameTarget ? current.contentHash : null,
+      lastSuccessfulLocalFingerprint: sameTarget
+          ? current.lastSuccessfulLocalFingerprint
+          : null,
       createdAt: current.createdAt,
       updatedAt: DateTime.now().toUtc(),
       state: SyncState.ready,
@@ -41,6 +49,9 @@ class SyncCoordinator {
     SyncMetadata saved,
   ) async {
     final targets = await value.listRemoteTargets(restored);
+    final sameAccount =
+        saved.provider == value.provider &&
+        saved.accountId == restored.accountId;
     provider = value;
     session = restored;
     target = targets
@@ -53,8 +64,11 @@ class SyncCoordinator {
       accountDisplayName: restored.displayName ?? saved.accountDisplayName,
       remoteTargetId: saved.remoteTargetId,
       remoteTargetName: saved.remoteTargetName,
-      revision: saved.revision,
-      contentHash: saved.contentHash,
+      revision: sameAccount ? saved.revision : null,
+      contentHash: sameAccount ? saved.contentHash : null,
+      lastSuccessfulLocalFingerprint: sameAccount
+          ? saved.lastSuccessfulLocalFingerprint
+          : null,
       createdAt: saved.createdAt,
       updatedAt: DateTime.now().toUtc(),
       state: target == null ? SyncState.connectedUnconfigured : SyncState.ready,
@@ -78,6 +92,11 @@ class SyncCoordinator {
               .where((item) => item.id == previous?.remoteTargetId)
               .firstOrNull ??
           (targets.isEmpty ? null : targets.first);
+      final sameTuple =
+          previous != null &&
+          previous.provider == value.provider &&
+          previous.accountId == authenticated.accountId &&
+          previous.remoteTargetId == target?.id;
       metadata = SyncMetadata(
         catalogIdentity: catalogIdentity,
         provider: value.provider,
@@ -85,6 +104,11 @@ class SyncCoordinator {
         accountDisplayName: authenticated.displayName,
         remoteTargetId: target?.id,
         remoteTargetName: target?.name,
+        revision: sameTuple ? previous.revision : null,
+        contentHash: sameTuple ? previous.contentHash : null,
+        lastSuccessfulLocalFingerprint: sameTuple
+            ? previous.lastSuccessfulLocalFingerprint
+            : null,
         state: target == null
             ? SyncState.connectedUnconfigured
             : SyncState.ready,
@@ -138,10 +162,63 @@ class SyncCoordinator {
     target = null;
   }
 
-  Future<SyncMetadata> sync(Uint8List payload) async {
+  Future<SyncMetadata> sync(
+    Uint8List payload, {
+    String? localFingerprint,
+  }) async {
     final p = provider, s = session, t = target, current = metadata;
     if (p == null || s == null || t == null || current == null) {
       throw StateError('Connect Google Drive before syncing.');
+    }
+    SyncDebug.trace('coordinator.sync.start', {
+      'hasFingerprint': localFingerprint != null,
+      'hasRevision': current.revision != null,
+    });
+    if (localFingerprint != null &&
+        current.state == SyncState.ready &&
+        current.provider == p.provider &&
+        current.accountId == s.accountId &&
+        current.remoteTargetId == t.id &&
+        current.lastSuccessfulLocalFingerprint == localFingerprint &&
+        current.revision != null &&
+        current.contentHash != null) {
+      try {
+        final remote = await p.metadata(s, t);
+        if (remote != null && remote.contentHash == current.contentHash) {
+          // Drive can advance a file revision for its own metadata processing
+          // after a successful Realmwise upload.  Its Realmwise-managed
+          // payload hash is the authoritative indication that the portable
+          // bundle itself is unchanged, so reconcile that benign revision
+          // churn before reporting a no-op sync.
+          if (remote.revision.value != current.revision) {
+            metadata = SyncMetadata(
+              catalogIdentity: current.catalogIdentity,
+              provider: current.provider,
+              accountId: current.accountId,
+              accountDisplayName: current.accountDisplayName,
+              remoteTargetId: current.remoteTargetId,
+              remoteTargetName: current.remoteTargetName,
+              revision: remote.revision.value,
+              contentHash: remote.contentHash,
+              lastSuccessfulLocalFingerprint:
+                  current.lastSuccessfulLocalFingerprint,
+              createdAt: current.createdAt,
+              updatedAt: DateTime.now().toUtc(),
+              state: SyncState.ready,
+            );
+            await metadataStorage.write(metadata!);
+            SyncDebug.trace('coordinator.sync.noop_reconciled_revision', {
+              'revision': remote.revision.value,
+            });
+          }
+          lastOutcome = SyncOutcome.alreadySynced;
+          SyncDebug.trace('coordinator.sync.noop', {'decision': true});
+          return metadata!;
+        }
+      } catch (_) {
+        SyncDebug.trace('coordinator.sync.remote_check_error');
+        // Metadata lookup failure must not suppress an upload attempt.
+      }
     }
     late final SyncUploadResult result;
     try {
@@ -151,9 +228,15 @@ class SyncCoordinator {
         payload,
         precondition: current.revision == null
             ? null
-            : SyncPrecondition(revision: SyncRevision(current.revision!)),
+            : SyncPrecondition(
+                revision: SyncRevision(current.revision!),
+                contentHash: current.contentHash,
+              ),
       );
     } catch (error) {
+      SyncDebug.trace('coordinator.sync.upload_error', {
+        'type': error.runtimeType.toString(),
+      });
       metadata = SyncMetadata(
         catalogIdentity: current.catalogIdentity,
         provider: current.provider,
@@ -180,11 +263,16 @@ class SyncCoordinator {
       remoteTargetName: t.name,
       revision: result.metadata.revision.value,
       contentHash: result.metadata.contentHash,
+      lastSuccessfulLocalFingerprint: localFingerprint,
       createdAt: current.createdAt,
       updatedAt: DateTime.now().toUtc(),
       state: SyncState.ready,
     );
     await metadataStorage.write(metadata!);
+    lastOutcome = SyncOutcome.uploaded;
+    SyncDebug.trace('coordinator.sync.uploaded', {
+      'revision': result.metadata.revision.value,
+    });
     return metadata!;
   }
 
@@ -235,7 +323,10 @@ class SyncCoordinator {
     }
   }
 
-  Future<void> commitDownload(SyncRemoteMetadata remote) async {
+  Future<void> commitDownload(
+    SyncRemoteMetadata remote, {
+    String? localFingerprint,
+  }) async {
     final current = metadata;
     if (current == null) return;
     metadata = SyncMetadata(
@@ -247,6 +338,7 @@ class SyncCoordinator {
       remoteTargetName: current.remoteTargetName,
       revision: remote.revision.value,
       contentHash: remote.contentHash,
+      lastSuccessfulLocalFingerprint: localFingerprint,
       createdAt: current.createdAt,
       updatedAt: DateTime.now().toUtc(),
       state: SyncState.ready,

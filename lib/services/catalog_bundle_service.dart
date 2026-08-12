@@ -29,6 +29,7 @@ class CatalogBundleService {
     MissingAssetPolicy missingAssetPolicy = MissingAssetPolicy.continueExport,
   }) async {
     if (!database.isOpen) throw StateError('No database is currently open.');
+    final identity = await database.ensureCatalogIdentity();
     await database.databaseHandle.execute('PRAGMA wal_checkpoint(TRUNCATE)');
     final source = File(database.databasePath);
     if (!await source.exists())
@@ -168,14 +169,15 @@ class CatalogBundleService {
         await db.close();
       }
       final bytes = await temp.readAsBytes();
-      final identity = database.ensureCatalogIdentity();
+      final fingerprint = await _computeLogicalFingerprint(temp.path, assetFiles);
       final manifest = <String, Object?>{
         'format_version': formatVersion,
         'app_version': appVersion,
         'created_at': DateTime.now().toUtc().toIso8601String(),
-        'catalog_identity': await identity,
+        'catalog_identity': identity,
         'database_filename': databaseEntry,
         'database_sha256': sha256.convert(bytes).toString(),
+        'content_fingerprint': fingerprint,
         'assets': <Map<String, Object?>>[],
       };
       final archive = Archive()
@@ -412,6 +414,50 @@ class CatalogBundleService {
         .substring(0, 16);
     return 'assets/icons/${identity}_${p.basename(localPath)}';
   }
+
+  Future<String> _computeLogicalFingerprint(
+    String databasePath,
+    Map<String, File> assets,
+  ) async {
+    final db = await databaseFactory.openDatabase(databasePath);
+    try {
+      final tables = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+      );
+      final state = <String, Object?>{};
+      for (final tableRow in tables) {
+        final table = tableRow['name'] as String;
+        final info = await db.rawQuery('PRAGMA table_info("$table")');
+        final columns = info
+            .map((r) => r['name'] as String)
+            .where((name) => name != 'created_at' && name != 'updated_at')
+            .toList();
+        final rows = await db.query(table, columns: columns);
+        final normalized = rows
+            .map((row) => <String, Object?>{
+                  for (final c in columns) c: row[c],
+                })
+            .map(jsonEncode)
+            .toList()
+          ..sort();
+        state[table] = normalized;
+      }
+      final assetTuples = <Map<String, Object?>>[];
+      for (final entry in assets.entries) {
+        final data = await entry.value.readAsBytes();
+        assetTuples.add({
+          'path': entry.key,
+          'size': data.length,
+          'sha256': sha256.convert(data).toString(),
+        });
+      }
+      assetTuples.sort((a, b) => (a['path'] as String).compareTo(b['path'] as String));
+      final canonical = jsonEncode({'database': state, 'assets': assetTuples});
+      return sha256.convert(utf8.encode(canonical)).toString();
+    } finally {
+      await db.close();
+    }
+  }
 }
 
 class BundleManifest {
@@ -422,6 +468,7 @@ class BundleManifest {
     required this.catalogIdentity,
     required this.databaseFilename,
     required this.databaseSha256,
+    this.contentFingerprint,
     this.assets = const [],
   });
   final int formatVersion;
@@ -430,6 +477,7 @@ class BundleManifest {
       catalogIdentity,
       databaseFilename,
       databaseSha256;
+  final String? contentFingerprint;
   final List<Map<String, dynamic>> assets;
   factory BundleManifest.fromJson(Map<String, dynamic> j) => BundleManifest(
     formatVersion: j['format_version'] as int,
@@ -438,6 +486,7 @@ class BundleManifest {
     catalogIdentity: j['catalog_identity'] as String,
     databaseFilename: j['database_filename'] as String,
     databaseSha256: j['database_sha256'] as String,
+    contentFingerprint: j['content_fingerprint'] as String?,
     assets: (j['assets'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>()
         .toList(growable: false),
