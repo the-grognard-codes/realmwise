@@ -84,11 +84,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _syncNow() async {
     await widget.controller.syncNow();
     if (!mounted) return;
-    final message = widget.controller.syncCoordinator.lastOutcome ==
+    final message =
+        widget.controller.syncCoordinator.lastOutcome ==
             SyncOutcome.alreadySynced
         ? 'Already synced—no local changes.'
         : 'Catalog synced to Google Drive.';
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _chooseImageFolder() async {
@@ -725,12 +728,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
         : connected
         ? 'Connected account: ${metadata.accountDisplayName ?? metadata.accountId ?? 'Google Drive'}'
         : 'Not connected';
+    final providerLabel = widget.controller.syncProviderName == 'onedrive'
+        ? 'Microsoft OneDrive'
+        : 'Google Drive';
     return _Section(
-      title: 'Google Drive Sync',
+      title: '$providerLabel Sync',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(status),
+          Text(status.replaceFirst('Google Drive', providerLabel)),
           if (metadata?.error != null)
             Text(
               'Last sync failed. You can try again.',
@@ -762,11 +768,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 label: const Text('Disconnect'),
               ),
               FilledButton.icon(
-                onPressed: _busy || !connected
-                    ? null
-                    : () => _run(
-                        _syncNow,
-                      ),
+                onPressed: _busy || !connected ? null : () => _run(_syncNow),
                 icon: const Icon(Icons.sync),
                 label: const Text('Sync now'),
               ),

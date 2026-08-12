@@ -40,6 +40,11 @@ abstract interface class SyncProvider
   String get provider;
 }
 
+class SyncConflictException implements Exception {
+  SyncConflictException(this.remote);
+  final SyncRemoteMetadata remote;
+}
+
 class SyncAuthSession {
   const SyncAuthSession({required this.accountId, this.displayName});
   final String accountId;

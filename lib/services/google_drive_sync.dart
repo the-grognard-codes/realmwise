@@ -24,13 +24,6 @@ class GoogleDriveAuthException implements Exception {
   String toString() => 'GoogleDriveAuthException: $message';
 }
 
-class SyncConflictException implements Exception {
-  SyncConflictException(this.remote);
-  final SyncRemoteMetadata remote;
-  @override
-  String toString() => 'SyncConflictException';
-}
-
 class GoogleDriveException implements Exception {
   GoogleDriveException(this.message, {this.statusCode});
   final String message;

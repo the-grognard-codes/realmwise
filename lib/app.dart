@@ -8,6 +8,7 @@ import 'screens/search_add_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/app_controller.dart';
 import 'services/google_drive_runtime.dart';
+import 'services/onedrive_runtime.dart';
 import 'theme/app_theme.dart';
 
 class RealmwiseBootstrap extends StatefulWidget {
@@ -18,8 +19,16 @@ class RealmwiseBootstrap extends StatefulWidget {
 }
 
 class _RealmwiseBootstrapState extends State<RealmwiseBootstrap> {
+  // Keep the existing Google default when both OAuth apps are configured. A
+  // Microsoft-enabled build opts in explicitly, so Google-only users never
+  // need Microsoft account support.
+  static const _syncProvider = String.fromEnvironment('SYNC_PROVIDER');
   late final AppController _controller = AppController(
-    syncProvider: createConfiguredGoogleDriveProvider(),
+    syncProvider: _syncProvider == 'onedrive'
+        ? createConfiguredOneDriveProvider() ??
+              createConfiguredGoogleDriveProvider()
+        : createConfiguredGoogleDriveProvider() ??
+              createConfiguredOneDriveProvider(),
   );
   ApiDebugHarness? _debugHarness;
   Future<ApiDebugHarness>? _debugStart;
@@ -30,6 +39,7 @@ class _RealmwiseBootstrapState extends State<RealmwiseBootstrap> {
   void initState() {
     super.initState();
     logGoogleDriveConfiguration();
+    logOneDriveConfiguration();
     final readiness = _controller.initialize();
     if (apiDebugHarnessEnabled()) {
       _debugStart = ApiDebugHarness.start(_controller, readiness: readiness);

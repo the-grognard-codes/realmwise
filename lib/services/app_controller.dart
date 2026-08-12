@@ -17,6 +17,7 @@ import 'export_service.dart';
 import 'image_storage_service.dart';
 import 'import_service.dart';
 import 'google_drive_sync.dart';
+import 'onedrive_sync.dart';
 import 'secure_storage_service.dart';
 import 'sync_contract.dart';
 import 'sync_coordinator.dart';
@@ -55,6 +56,7 @@ class AppController extends ChangeNotifier {
   /// Test seam for avoiding platform path providers; persisted DB settings win.
   final String? imageRootPathOverride;
   final SyncProvider? syncProvider;
+  String get syncProviderName => syncProvider?.provider ?? 'none';
   late SyncCoordinator syncCoordinator;
   SyncMetadata? syncMetadata;
 
@@ -127,11 +129,14 @@ class AppController extends ChangeNotifier {
     syncCoordinator.metadata = syncMetadata;
     final savedSync = syncMetadata;
     final provider = syncProvider;
-    if (savedSync != null && provider is GoogleDriveProvider) {
-      final restored = await provider.restoreSession();
+    if (savedSync != null &&
+        (provider is GoogleDriveProvider || provider is OneDriveProvider)) {
+      final restored = provider is GoogleDriveProvider
+          ? await provider.restoreSession()
+          : await (provider as OneDriveProvider).restoreSession();
       if (restored != null) {
         try {
-          await syncCoordinator.restore(provider, restored, savedSync);
+          await syncCoordinator.restore(provider!, restored, savedSync);
           syncMetadata = syncCoordinator.metadata;
         } catch (_) {
           syncMetadata = savedSync;
@@ -198,11 +203,13 @@ class AppController extends ChangeNotifier {
     try {
       syncMetadata = await syncCoordinator.connect(provider, identity);
       if (syncMetadata!.state == SyncState.connectedUnconfigured &&
-          provider is GoogleDriveProvider &&
-          syncCoordinator.session != null) {
-        final target = await provider.ensureBundleTarget(
-          syncCoordinator.session!,
-        );
+          syncCoordinator.session != null &&
+          (provider is GoogleDriveProvider || provider is OneDriveProvider)) {
+        final target = provider is GoogleDriveProvider
+            ? await provider.ensureBundleTarget(syncCoordinator.session!)
+            : await (provider as OneDriveProvider).ensureBundleTarget(
+                syncCoordinator.session!,
+              );
         await syncCoordinator.configureTarget(target);
         syncMetadata = syncCoordinator.metadata;
       }
@@ -214,6 +221,9 @@ class AppController extends ChangeNotifier {
     }
     notifyListeners();
   }
+
+  Future<void> connectOneDrive() => connectGoogleDrive();
+  Future<void> disconnectOneDrive() => disconnectGoogleDrive();
 
   Future<void> syncNow() async {
     if (!database.isOpen) throw StateError('Open a catalog first.');
@@ -265,6 +275,7 @@ class AppController extends ChangeNotifier {
   Future<void> disconnectGoogleDrive() async {
     final provider = syncProvider;
     if (provider is GoogleDriveProvider) await provider.clearCredentials();
+    if (provider is OneDriveProvider) await provider.clearCredentials();
     await syncCoordinator.disconnect();
     syncMetadata = null;
     notifyListeners();
