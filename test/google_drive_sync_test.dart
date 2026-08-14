@@ -183,6 +183,23 @@ void main() {
   });
 
   test(
+    'runtime reset unlocks provider selection without deleting metadata',
+    () async {
+      final storage = MemSyncMetadata();
+      final coordinator = SyncCoordinator(metadataStorage: storage);
+      await coordinator.connect(TargetProvider(), 'catalog');
+      final persisted = storage.value;
+      expect(coordinator.isConnected, isTrue);
+
+      coordinator.resetRuntime();
+
+      expect(coordinator.isConnected, isFalse);
+      expect(coordinator.metadata, isNull);
+      expect(storage.value, same(persisted));
+    },
+  );
+
+  test(
     'token exchange errors expose Google diagnostics without secrets',
     () async {
       final browser = B();

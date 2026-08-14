@@ -354,6 +354,15 @@ class SyncCoordinator {
     metadata = null;
     if (identity != null) await metadataStorage.remove(identity);
   }
+
+  /// Clears the live connection when changing catalogs without deleting the
+  /// previous catalog's persisted sync setup or provider credentials.
+  void resetRuntime() {
+    provider = null;
+    session = null;
+    target = null;
+    metadata = null;
+  }
 }
 
 extension<T> on Iterable<T> {

@@ -8,6 +8,7 @@ import '../services/app_controller.dart';
 import '../services/catalog_bundle_service.dart';
 import '../services/sync_metadata.dart';
 import '../services/sync_coordinator.dart';
+import '../services/sync_contract.dart';
 import '../theme/app_theme.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -84,11 +85,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _syncNow() async {
     await widget.controller.syncNow();
     if (!mounted) return;
+    final providerLabel =
+        widget.controller.selectedProvider?.provider == 'onedrive'
+        ? 'Microsoft OneDrive'
+        : 'Google Drive';
     final message =
         widget.controller.syncCoordinator.lastOutcome ==
             SyncOutcome.alreadySynced
         ? 'Already synced—no local changes.'
-        : 'Catalog synced to Google Drive.';
+        : 'Catalog synced to $providerLabel.';
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
@@ -718,25 +723,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _cloudSyncSection() {
     final metadata = widget.controller.syncMetadata;
-    final available = widget.controller.syncProvider != null;
+    final providers = widget.controller.availableProviders;
     final connected =
         widget.controller.syncCoordinator.isConnected &&
         metadata != null &&
         metadata.state != SyncState.notConnected;
-    final status = !available
-        ? 'Google Drive sync is not configured on this build.'
+    final status = providers.isEmpty
+        ? 'Cloud sync is not configured on this build.'
         : connected
         ? 'Connected account: ${metadata.accountDisplayName ?? metadata.accountId ?? 'Google Drive'}'
         : 'Not connected';
-    final providerLabel = widget.controller.syncProviderName == 'onedrive'
-        ? 'Microsoft OneDrive'
-        : 'Google Drive';
+    final selected = widget.controller.selectedProvider;
+    String label(SyncProvider p) =>
+        p.provider == 'onedrive' ? 'Microsoft OneDrive' : 'Google Drive';
     return _Section(
-      title: '$providerLabel Sync',
+      title: 'Cloud Sync',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(status.replaceFirst('Google Drive', providerLabel)),
+          Text(status),
+          if (providers.isNotEmpty)
+            Wrap(
+              spacing: 8,
+              children: providers
+                  .map(
+                    (provider) => ChoiceChip(
+                      label: Text(label(provider)),
+                      selected: selected?.provider == provider.provider,
+                      onSelected: connected || _busy
+                          ? null
+                          : (_) => _run(
+                              () => widget.controller.selectProvider(provider),
+                            ),
+                    ),
+                  )
+                  .toList(),
+            ),
           if (metadata?.error != null)
             Text(
               'Last sync failed. You can try again.',
@@ -748,21 +770,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
             runSpacing: 10,
             children: [
               OutlinedButton.icon(
-                onPressed: _busy || !available || connected
+                onPressed: _busy || selected == null || connected
                     ? null
                     : () => _run(
-                        widget.controller.connectGoogleDrive,
-                        success: 'Google Drive connected.',
+                        selected.provider == 'onedrive'
+                            ? widget.controller.connectOneDrive
+                            : widget.controller.connectGoogleDrive,
+                        success: '${label(selected)} connected.',
                       ),
                 icon: const Icon(Icons.login),
-                label: const Text('Connect Google Drive'),
+                label: Text(
+                  selected == null ? 'Connect' : 'Connect ${label(selected)}',
+                ),
               ),
               OutlinedButton.icon(
                 onPressed: _busy || !connected
                     ? null
                     : () => _run(
                         widget.controller.disconnectGoogleDrive,
-                        success: 'Google Drive disconnected.',
+                        success: 'Disconnected.',
                       ),
                 icon: const Icon(Icons.logout),
                 label: const Text('Disconnect'),

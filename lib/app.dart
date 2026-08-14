@@ -19,16 +19,9 @@ class RealmwiseBootstrap extends StatefulWidget {
 }
 
 class _RealmwiseBootstrapState extends State<RealmwiseBootstrap> {
-  // Keep the existing Google default when both OAuth apps are configured. A
-  // Microsoft-enabled build opts in explicitly, so Google-only users never
-  // need Microsoft account support.
-  static const _syncProvider = String.fromEnvironment('SYNC_PROVIDER');
   late final AppController _controller = AppController(
-    syncProvider: _syncProvider == 'onedrive'
-        ? createConfiguredOneDriveProvider() ??
-              createConfiguredGoogleDriveProvider()
-        : createConfiguredGoogleDriveProvider() ??
-              createConfiguredOneDriveProvider(),
+    googleDriveProvider: createConfiguredGoogleDriveProvider(),
+    oneDriveProvider: createConfiguredOneDriveProvider(),
   );
   ApiDebugHarness? _debugHarness;
   Future<ApiDebugHarness>? _debugStart;

@@ -33,11 +33,18 @@ class AppController extends ChangeNotifier {
   AppController({
     TokenStorage? tokenStorage,
     this.imageRootPathOverride,
-    this.syncProvider,
+    SyncProvider? syncProvider,
+    SyncProvider? googleDriveProvider,
+    SyncProvider? oneDriveProvider,
   }) : database = DatabaseService(),
        _http = http.Client(),
        backups = BackupService(),
-       _tokenStorage = tokenStorage ?? SecureStorageService();
+       _tokenStorage = tokenStorage ?? SecureStorageService(),
+       _providers = {
+         if (googleDriveProvider != null) 'google_drive': googleDriveProvider,
+         if (oneDriveProvider != null) 'onedrive': oneDriveProvider,
+         if (syncProvider != null) syncProvider.provider: syncProvider,
+       };
 
   final DatabaseService database;
   final BackupService backups;
@@ -55,8 +62,25 @@ class AppController extends ChangeNotifier {
 
   /// Test seam for avoiding platform path providers; persisted DB settings win.
   final String? imageRootPathOverride;
-  final SyncProvider? syncProvider;
-  String get syncProviderName => syncProvider?.provider ?? 'none';
+  final Map<String, SyncProvider> _providers;
+  SyncProvider? _selectedProvider;
+  SyncProvider? get syncProvider => _selectedProvider;
+  String get syncProviderName => _selectedProvider?.provider ?? 'none';
+  List<SyncProvider> get availableProviders =>
+      _providers.values.toList(growable: false);
+  SyncProvider? get selectedProvider => _selectedProvider;
+  bool get providerSelectionLocked => syncCoordinator.isConnected;
+
+  Future<void> selectProvider(SyncProvider? provider) async {
+    if (syncCoordinator.isConnected)
+      throw StateError('Disconnect before changing sync provider.');
+    if (provider != null && !_providers.values.contains(provider)) {
+      throw StateError('Sync provider is not available.');
+    }
+    _selectedProvider = provider;
+    notifyListeners();
+  }
+
   late SyncCoordinator syncCoordinator;
   SyncMetadata? syncMetadata;
 
@@ -81,6 +105,7 @@ class AppController extends ChangeNotifier {
       syncCoordinator = SyncCoordinator(
         metadataStorage: SharedPreferencesSyncMetadataStorage(prefs),
       );
+      _selectedProvider ??= _providers.isEmpty ? null : _providers.values.first;
       includePersonalImagesInBundles =
           prefs.getBool('include_personal_images_in_bundles') ?? false;
       final saved = prefs.getString('last_database_path');
@@ -121,6 +146,14 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> openDatabase(String databasePath, {bool remember = true}) async {
+    // A connection belongs to one catalog identity. Do not carry a live
+    // provider/session into a different database, but retain its saved setup
+    // so reopening it can restore normally.
+    if (database.isOpen && database.databasePath != databasePath) {
+      syncCoordinator.resetRuntime();
+      syncMetadata = null;
+      _selectedProvider = null;
+    }
     error = null;
     await backups.stop();
     await database.open(databasePath);
@@ -128,15 +161,19 @@ class AppController extends ChangeNotifier {
     syncMetadata = await syncCoordinator.metadataStorage.read(catalogIdentity);
     syncCoordinator.metadata = syncMetadata;
     final savedSync = syncMetadata;
-    final provider = syncProvider;
+    final provider = savedSync?.provider == null
+        ? null
+        : _providers[savedSync!.provider!];
+    _selectedProvider = provider;
     if (savedSync != null &&
+        provider != null &&
         (provider is GoogleDriveProvider || provider is OneDriveProvider)) {
       final restored = provider is GoogleDriveProvider
           ? await provider.restoreSession()
           : await (provider as OneDriveProvider).restoreSession();
       if (restored != null) {
         try {
-          await syncCoordinator.restore(provider!, restored, savedSync);
+          await syncCoordinator.restore(provider, restored, savedSync);
           syncMetadata = syncCoordinator.metadata;
         } catch (_) {
           syncMetadata = savedSync;
@@ -186,6 +223,9 @@ class AppController extends ChangeNotifier {
   Future<void> closeDatabase() async {
     await backups.stop();
     await database.close();
+    syncCoordinator.resetRuntime();
+    syncMetadata = null;
+    _selectedProvider = null;
     _sessionBaselineWorkIds.clear();
     sessionNewWorkIds.clear();
     final prefs = await SharedPreferences.getInstance();
@@ -193,10 +233,11 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> connectGoogleDrive() async {
-    final provider = syncProvider;
+  Future<void> _connect(SyncProvider? provider) async {
     if (provider == null) {
-      throw StateError('Google Drive sync is not configured on this device.');
+      throw StateError(
+        'Selected sync provider is not configured on this device.',
+      );
     }
     if (!database.isOpen) throw StateError('Open a catalog first.');
     final identity = await database.ensureCatalogIdentity();
@@ -219,10 +260,13 @@ class AppController extends ChangeNotifier {
       notifyListeners();
       rethrow;
     }
+    _selectedProvider = provider;
     notifyListeners();
   }
 
-  Future<void> connectOneDrive() => connectGoogleDrive();
+  Future<void> connectGoogleDrive() => _connect(_providers['google_drive']);
+  Future<void> connectOneDrive() => _connect(_providers['onedrive']);
+
   Future<void> disconnectOneDrive() => disconnectGoogleDrive();
 
   Future<void> syncNow() async {
@@ -273,11 +317,12 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> disconnectGoogleDrive() async {
-    final provider = syncProvider;
+    final provider = _selectedProvider;
     if (provider is GoogleDriveProvider) await provider.clearCredentials();
     if (provider is OneDriveProvider) await provider.clearCredentials();
     await syncCoordinator.disconnect();
     syncMetadata = null;
+    _selectedProvider = null;
     notifyListeners();
   }
 

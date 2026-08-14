@@ -6,6 +6,7 @@ import 'package:http/testing.dart';
 import 'package:realmwise/services/onedrive_sync.dart';
 import 'package:realmwise/services/secure_storage_service.dart';
 import 'package:realmwise/services/sync_contract.dart';
+import 'package:realmwise/services/sync_debug.dart';
 
 class _Store implements TokenStorage {
   final m = <String, String>{};
@@ -78,6 +79,40 @@ void main() {
     expect(m!.revision.value, 'tag');
     expect(m.contentHash, 'h');
   });
+  test('debug metadata tracing is redacted and records safe taxonomy', () async {
+    final store = _Store();
+    await store.write('onedrive_oauth:id', '{"access_token":"secret-token"}');
+    final logs = <String>[];
+    SyncDebug.logger = logs.add;
+    try {
+      final p = OneDriveProvider(
+        authenticator: OneDriveOAuthAuthenticator(
+          clientId: 'id',
+          redirectUri: Uri.parse('http://localhost/cb'),
+          browser: _Browser(),
+          callback: _Callback(),
+          tokenStore: OneDriveTokenStore(store),
+        ),
+        tokenStore: OneDriveTokenStore(store),
+        httpClient: MockClient(
+          (_) async => http.Response(
+            '{"eTag":"very-long-etag-secret","file":{"hashes":{"sha256Hash":"hash"}}}',
+            200,
+          ),
+        ),
+      );
+      await p.metadata(
+        const SyncAuthSession(accountId: 'x'),
+        const SyncRemoteTarget(id: 'item-id', name: 'Realmwise.realmwise'),
+      );
+      expect(logs.single, contains('provider.metadata'));
+      expect(logs.single, contains('etagPresent=true'));
+      expect(logs.single, isNot(contains('very-long-etag-secret')));
+      expect(logs.single, isNot(contains('secret-token')));
+    } finally {
+      SyncDebug.logger = null;
+    }
+  });
   test('OAuth binds the session to the verified Microsoft account', () async {
     final store = _Store();
     final browser = _CapturingBrowser();
@@ -103,6 +138,31 @@ void main() {
     expect(session.accountId, 'account-1');
     expect(session.displayName, 'a@example.com');
     expect(browser.uri!.queryParameters['scope'], contains('User.Read'));
+  });
+  test('OAuth account verification retries Graph 503', () async {
+    final store = _Store();
+    final browser = _CapturingBrowser();
+    var meCalls = 0;
+    final auth = OneDriveOAuthAuthenticator(
+      clientId: 'id',
+      redirectUri: Uri.parse('http://localhost/cb'),
+      browser: browser,
+      callback: _DynamicCallback(browser),
+      tokenStore: OneDriveTokenStore(store),
+      delay: (_) async {},
+      httpClient: MockClient((request) async {
+        if (request.method == 'POST') {
+          return http.Response('{"access_token":"token"}', 200);
+        }
+        meCalls++;
+        return meCalls == 1
+            ? http.Response('', 503)
+            : http.Response('{"id":"account-1"}', 200);
+      }),
+    );
+    final session = await auth.authenticate();
+    expect(session.accountId, 'account-1');
+    expect(meCalls, 2);
   });
   test(
     'creates Realmwise folder and empty bundle with Graph content API',
@@ -150,6 +210,70 @@ void main() {
       expect(requests.last.url.path, contains('Realmwise.realmwise'));
     },
   );
+  test('retries transient Graph 503 and succeeds', () async {
+    final store = _Store();
+    await store.write(
+      'onedrive_oauth:id',
+      '{"access_token":"a","account_id":"x"}',
+    );
+    var rootCalls = 0;
+    final waits = <Duration>[];
+    final client = MockClient((request) async {
+      if (request.url.path.endsWith('/approot')) {
+        rootCalls++;
+        if (rootCalls == 1)
+          return http.Response('', 503, headers: {'retry-after': '1'});
+        return http.Response('{"id":"root"}', 200);
+      }
+      return http.Response('{"value":[]}', 200);
+    });
+    final auth = OneDriveOAuthAuthenticator(
+      clientId: 'id',
+      redirectUri: Uri.parse('http://localhost/cb'),
+      browser: _Browser(),
+      callback: _Callback(),
+      tokenStore: OneDriveTokenStore(store),
+    );
+    final p = OneDriveProvider(
+      authenticator: auth,
+      tokenStore: OneDriveTokenStore(store),
+      httpClient: client,
+      delay: (d) async => waits.add(d),
+    );
+    await p.listRemoteTargets(const SyncAuthSession(accountId: 'x'));
+    expect(rootCalls, 2);
+    expect(waits.single, const Duration(seconds: 1));
+  });
+
+  test('exhausted Graph 503 is actionable and preserves status', () async {
+    final store = _Store();
+    await store.write(
+      'onedrive_oauth:id',
+      '{"access_token":"a","account_id":"x"}',
+    );
+    final auth = OneDriveOAuthAuthenticator(
+      clientId: 'id',
+      redirectUri: Uri.parse('http://localhost/cb'),
+      browser: _Browser(),
+      callback: _Callback(),
+      tokenStore: OneDriveTokenStore(store),
+    );
+    final p = OneDriveProvider(
+      authenticator: auth,
+      tokenStore: OneDriveTokenStore(store),
+      httpClient: MockClient((_) async => http.Response('', 503)),
+      delay: (_) async {},
+      maxTransientRetries: 2,
+    );
+    await expectLater(
+      p.listRemoteTargets(const SyncAuthSession(accountId: 'x')),
+      throwsA(
+        isA<OneDriveException>()
+            .having((e) => e.statusCode, 'status', 503)
+            .having((e) => e.message, 'message', contains('preparing storage')),
+      ),
+    );
+  });
   test('upload maps Graph 412 to the shared conflict exception', () async {
     final store = _Store();
     await store.write(
