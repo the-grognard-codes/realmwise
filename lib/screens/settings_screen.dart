@@ -6,7 +6,6 @@ import 'package:intl/intl.dart';
 
 import '../services/app_controller.dart';
 import '../services/catalog_bundle_service.dart';
-import '../services/sync_metadata.dart';
 import '../services/sync_coordinator.dart';
 import '../services/sync_contract.dart';
 import '../theme/app_theme.dart';

@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +9,7 @@ import 'package:realmwise/services/app_controller.dart';
 import 'package:realmwise/services/secure_storage_service.dart';
 import 'package:realmwise/services/sync_contract.dart';
 import 'package:realmwise/services/sync_coordinator.dart';
+import 'package:realmwise/services/sync_metadata.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -60,7 +60,10 @@ void main() {
     await controller.database.databaseHandle.insert('works', {'title': 'Keep'});
     final invalid = p.join(dir.path, 'invalid.realmwise');
     await File(invalid).writeAsString('not zip');
-    expect(() => controller.restoreDeviceBundle(invalid), throwsFormatException);
+    await expectLater(
+      controller.restoreDeviceBundle(invalid),
+      throwsA(isA<FormatException>()),
+    );
     expect((await controller.database.databaseHandle.query('works')).single['title'], 'Keep');
     controller.dispose();
   });

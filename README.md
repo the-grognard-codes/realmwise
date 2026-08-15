@@ -10,6 +10,7 @@ Realmwise is a local-first Flutter application for cataloging tabletop RPG books
 - OpenLibrary searching and optional RPGGeek enrichment. RPGGeek values take precedence when returned.
 - Works when offline: all catalog, edit, search-field suggestions, image, backup, and database features stay available; remote lookups report a useful offline error.
 - Periodic crash-recovery database snapshots (every 10 minutes while open).
+- Manual, conflict-aware catalog bundle sync through Google Drive, Microsoft OneDrive, or Dropbox (with secure token storage and account-scoped metadata).
 - Adaptive Material UI for narrow phones and resizable desktop windows.
 
 ## Run locally
@@ -50,6 +51,30 @@ For an External consent screen in **Testing**, add every tester explicitly. Goog
 
 Drive sync is a manual copy/recovery mechanism, not a replacement for local backups. Keep the local database and image backups, and use **Settings → Database** export/restore when moving to a different account, OAuth client, or device configuration. Before restoring or switching devices, make sure the target device can authenticate with the same Google account and matching client/redirect settings; otherwise its hidden app-data bundle will not be discoverable.
 
+## Manual cloud sync
+
+Cloud sync is an optional manual copy/recovery mechanism. In **Settings → Sync**, choose one configured provider, connect an account, then use **Sync now** or **Download**. Provider selection is locked while connected; disconnect before switching providers. Sync bundles contain the catalog database and, when enabled in settings, owned images. Keep local database and image backups as well.
+
+### Microsoft OneDrive
+
+Register an application in Microsoft Entra ID with delegated Microsoft Graph app-folder permissions (`Files.ReadWrite.AppFolder`) and configure a loopback redirect URI. Realmwise defaults to `http://127.0.0.1:8765/oauth2callback`; pass `MICROSOFT_ONEDRIVE_CLIENT_ID`, and optionally `MICROSOFT_ONEDRIVE_TENANT` (defaults to `common`) or `MICROSOFT_ONEDRIVE_REDIRECT_URI`:
+
+```sh
+flutter run -d windows --dart-define=MICROSOFT_ONEDRIVE_CLIENT_ID=your-client-id
+```
+
+The bundle is stored in OneDrive's app-root area as `Realmwise.realmwise`.
+
+### Dropbox
+
+Create a Dropbox app with offline access and add the loopback redirect URI `http://127.0.0.1:8766/oauth2callback` (or your chosen loopback URI). Supply the app key with `DROPBOX_CLIENT_ID` and, if needed, override `DROPBOX_REDIRECT_URI`:
+
+```sh
+flutter run -d windows --dart-define=DROPBOX_CLIENT_ID=your-app-key
+```
+
+Dropbox stores the bundle as `/Realmwise.realmwise` in the connected account. OAuth credentials for all providers are kept in platform secure storage; disconnecting removes local credentials but does not delete the remote bundle.
+
 ## Project map
 
 - `lib/models/` — immutable database and API models.
@@ -62,3 +87,5 @@ Drive sync is a manual copy/recovery mechanism, not a replacement for local back
 ## Data and privacy
 
 The primary catalog data and images remain on the device. A supplied RPGGeek API key is stored in the currently open local database and is only sent to RPGGeek requests. OpenLibrary and RPGGeek requests occur only when the user starts a remote search or enrichment.
+
+See the [Privacy Policy](PRIVACY.md), [MIT License](LICENSE), and [Third-party notices](THIRD_PARTY_NOTICES.md) for legal and attribution information.
