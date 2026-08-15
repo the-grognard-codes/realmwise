@@ -111,8 +111,46 @@ class _LoadingScreen extends StatelessWidget {
   const _LoadingScreen();
 
   @override
-  Widget build(BuildContext context) =>
-      const Scaffold(body: Center(child: CircularProgressIndicator()));
+  Widget build(BuildContext context) => Scaffold(
+    body: SafeArea(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final imageWidth =
+              (constraints.maxWidth * 0.8).clamp(1.0, 520.0).toDouble();
+          return Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Image.asset(
+                      'assets/branding/publication/realmwise-splash.png',
+                      width: imageWidth,
+                      fit: BoxFit.contain,
+                      semanticLabel: 'Realmwise',
+                    ),
+                    const SizedBox(height: 28),
+                    Text(
+                      'Preparing your catalog…',
+                      style: Theme.of(context).textTheme.titleMedium,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 20),
+                    Semantics(
+                      label: 'Loading catalog',
+                      child: CircularProgressIndicator(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    ),
+  );
 }
 
 class CatalogShell extends StatefulWidget {
@@ -143,7 +181,7 @@ class _CatalogShellState extends State<CatalogShell> {
     ),
   ];
 
-  String get _title => ['Realmwise', 'Add to catalog', 'Settings'][_page];
+  String get _title => ['Catalog', 'Add to catalog', 'Settings'][_page];
 
   @override
   Widget build(BuildContext context) {
