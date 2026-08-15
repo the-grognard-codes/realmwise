@@ -18,6 +18,7 @@ import 'image_storage_service.dart';
 import 'import_service.dart';
 import 'google_drive_sync.dart';
 import 'onedrive_sync.dart';
+import 'dropbox_sync.dart';
 import 'secure_storage_service.dart';
 import 'sync_contract.dart';
 import 'sync_coordinator.dart';
@@ -36,6 +37,7 @@ class AppController extends ChangeNotifier {
     SyncProvider? syncProvider,
     SyncProvider? googleDriveProvider,
     SyncProvider? oneDriveProvider,
+    SyncProvider? dropboxProvider,
   }) : database = DatabaseService(),
        _http = http.Client(),
        backups = BackupService(),
@@ -43,6 +45,7 @@ class AppController extends ChangeNotifier {
        _providers = {
          if (googleDriveProvider != null) 'google_drive': googleDriveProvider,
          if (oneDriveProvider != null) 'onedrive': oneDriveProvider,
+         if (dropboxProvider != null) 'dropbox': dropboxProvider,
          if (syncProvider != null) syncProvider.provider: syncProvider,
        };
 
@@ -167,10 +170,10 @@ class AppController extends ChangeNotifier {
     _selectedProvider = provider;
     if (savedSync != null &&
         provider != null &&
-        (provider is GoogleDriveProvider || provider is OneDriveProvider)) {
+        (provider is GoogleDriveProvider || provider is OneDriveProvider || provider is DropboxProvider)) {
       final restored = provider is GoogleDriveProvider
           ? await provider.restoreSession()
-          : await (provider as OneDriveProvider).restoreSession();
+          : provider is OneDriveProvider ? await provider.restoreSession() : await (provider as DropboxProvider).restoreSession();
       if (restored != null) {
         try {
           await syncCoordinator.restore(provider, restored, savedSync);
@@ -245,12 +248,10 @@ class AppController extends ChangeNotifier {
       syncMetadata = await syncCoordinator.connect(provider, identity);
       if (syncMetadata!.state == SyncState.connectedUnconfigured &&
           syncCoordinator.session != null &&
-          (provider is GoogleDriveProvider || provider is OneDriveProvider)) {
+          (provider is GoogleDriveProvider || provider is OneDriveProvider || provider is DropboxProvider)) {
         final target = provider is GoogleDriveProvider
             ? await provider.ensureBundleTarget(syncCoordinator.session!)
-            : await (provider as OneDriveProvider).ensureBundleTarget(
-                syncCoordinator.session!,
-              );
+            : provider is OneDriveProvider ? await provider.ensureBundleTarget(syncCoordinator.session!) : await (provider as DropboxProvider).ensureBundleTarget(syncCoordinator.session!);
         await syncCoordinator.configureTarget(target);
         syncMetadata = syncCoordinator.metadata;
       }
@@ -266,6 +267,7 @@ class AppController extends ChangeNotifier {
 
   Future<void> connectGoogleDrive() => _connect(_providers['google_drive']);
   Future<void> connectOneDrive() => _connect(_providers['onedrive']);
+  Future<void> connectDropbox() => _connect(_providers['dropbox']);
 
   Future<void> disconnectOneDrive() => disconnectGoogleDrive();
 
@@ -320,6 +322,7 @@ class AppController extends ChangeNotifier {
     final provider = _selectedProvider;
     if (provider is GoogleDriveProvider) await provider.clearCredentials();
     if (provider is OneDriveProvider) await provider.clearCredentials();
+    if (provider is DropboxProvider) await provider.clearCredentials();
     await syncCoordinator.disconnect();
     syncMetadata = null;
     _selectedProvider = null;

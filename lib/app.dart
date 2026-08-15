@@ -9,6 +9,7 @@ import 'screens/settings_screen.dart';
 import 'services/app_controller.dart';
 import 'services/google_drive_runtime.dart';
 import 'services/onedrive_runtime.dart';
+import 'services/dropbox_runtime.dart';
 import 'theme/app_theme.dart';
 
 class RealmwiseBootstrap extends StatefulWidget {
@@ -22,6 +23,7 @@ class _RealmwiseBootstrapState extends State<RealmwiseBootstrap> {
   late final AppController _controller = AppController(
     googleDriveProvider: createConfiguredGoogleDriveProvider(),
     oneDriveProvider: createConfiguredOneDriveProvider(),
+    dropboxProvider: createConfiguredDropboxProvider(),
   );
   ApiDebugHarness? _debugHarness;
   Future<ApiDebugHarness>? _debugStart;
@@ -33,6 +35,7 @@ class _RealmwiseBootstrapState extends State<RealmwiseBootstrap> {
     super.initState();
     logGoogleDriveConfiguration();
     logOneDriveConfiguration();
+    logDropboxConfiguration();
     final readiness = _controller.initialize();
     if (apiDebugHarnessEnabled()) {
       _debugStart = ApiDebugHarness.start(_controller, readiness: readiness);

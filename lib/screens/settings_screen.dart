@@ -88,7 +88,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final providerLabel =
         widget.controller.selectedProvider?.provider == 'onedrive'
         ? 'Microsoft OneDrive'
-        : 'Google Drive';
+        : widget.controller.selectedProvider?.provider == 'dropbox' ? 'Dropbox' : 'Google Drive';
     final message =
         widget.controller.syncCoordinator.lastOutcome ==
             SyncOutcome.alreadySynced
@@ -735,7 +735,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         : 'Not connected';
     final selected = widget.controller.selectedProvider;
     String label(SyncProvider p) =>
-        p.provider == 'onedrive' ? 'Microsoft OneDrive' : 'Google Drive';
+        p.provider == 'onedrive' ? 'Microsoft OneDrive' : p.provider == 'dropbox' ? 'Dropbox' : 'Google Drive';
     return _Section(
       title: 'Cloud Sync',
       child: Column(
@@ -773,9 +773,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onPressed: _busy || selected == null || connected
                     ? null
                     : () => _run(
-                        selected.provider == 'onedrive'
-                            ? widget.controller.connectOneDrive
-                            : widget.controller.connectGoogleDrive,
+                        selected.provider == 'onedrive' ? widget.controller.connectOneDrive : selected.provider == 'dropbox' ? widget.controller.connectDropbox : widget.controller.connectGoogleDrive,
                         success: '${label(selected)} connected.',
                       ),
                 icon: const Icon(Icons.login),
