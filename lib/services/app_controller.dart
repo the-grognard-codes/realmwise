@@ -284,6 +284,14 @@ class AppController extends ChangeNotifier {
     try {
       await exportDeviceBundle(bundlePath);
       final manifest = await bundles.validateBundle(bundlePath);
+      final classification = await syncCoordinator.classify(
+        manifest.contentFingerprint,
+      );
+      if (classification.classification == SyncClassification.divergent ||
+          classification.classification == SyncClassification.remoteOnly ||
+          classification.classification == SyncClassification.unknownError) {
+        throw SyncDecisionRequired(classification, localFingerprint: manifest.contentFingerprint);
+      }
       syncMetadata = await syncCoordinator.sync(
         Uint8List.fromList(await File(bundlePath).readAsBytes()),
         localFingerprint: manifest.contentFingerprint,
@@ -296,17 +304,117 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<void> downloadRemoteBundle() async {
+  /// Applies a choice made in the conflict dialog. Every replacement creates
+  /// a recoverable local snapshot before transfer or database swap.
+  Future<void> resolveSyncDecision(SyncConflictChoice choice, {
+    required SyncClassificationResult decision,
+    required String localFingerprint,
+  }) async {
+    if (choice == SyncConflictChoice.cancel) return;
     if (!database.isOpen) throw StateError('Open a catalog first.');
     final temporary = await getTemporaryDirectory();
+    final bundlePath = path.join(temporary.path,
+        'realmwise-conflict-${DateTime.now().microsecondsSinceEpoch}.realmwise');
+    try {
+      final localBackup = () => backups.createBackup(
+        databasePath: database.databasePath,
+        database: database.databaseHandle,
+      );
+      if (choice == SyncConflictChoice.downloadReplaceLocal) {
+        if (decision.remote == null) throw StateError('Remote metadata unavailable.');
+        await exportDeviceBundle(bundlePath);
+        final now = await bundles.validateBundle(bundlePath);
+        if (now.contentFingerprint != localFingerprint) {
+          throw StateError('The local catalog changed; review the conflict again.');
+        }
+        await downloadRemoteBundle(expectedRemote: decision.remote, expectedLocalFingerprint: localFingerprint, backup: localBackup);
+      } else {
+        await exportDeviceBundle(bundlePath);
+        final manifest = await bundles.validateBundle(bundlePath);
+        if (decision.remote == null || manifest.contentFingerprint != localFingerprint) {
+          throw StateError('The local catalog changed; review the conflict again.');
+        }
+        // Preserve the observed remote bytes locally before allowing a remote
+        // overwrite. A DB backup alone cannot recover the remote catalog.
+        final remote = await syncCoordinator.download(expectedRemote: decision.remote);
+        final remotePath = path.join(
+          path.dirname(database.databasePath), 'backups',
+          '${path.basenameWithoutExtension(database.databasePath)}_pre-remote-overwrite-${DateTime.now().microsecondsSinceEpoch}.realmwise',
+        );
+        final remoteTemp = '$remotePath.tmp';
+        await Directory(path.dirname(remotePath)).create(recursive: true);
+        await File(remoteTemp).writeAsBytes(remote.payload, flush: true);
+        try {
+          await bundles.validateBundle(remoteTemp);
+          await File(remoteTemp).rename(remotePath);
+        } catch (_) {
+          final f = File(remoteTemp);
+          if (await f.exists()) await f.delete();
+          rethrow;
+        }
+        await syncCoordinator.resolveConflict(
+          choice,
+          currentLocalFingerprint: manifest.contentFingerprint,
+          expectedLocalFingerprint: localFingerprint,
+          observedRemote: decision.remote!,
+          payload: Uint8List.fromList(await File(bundlePath).readAsBytes()),
+          payloadFingerprint: manifest.contentFingerprint,
+          backup: localBackup,
+        );
+        syncMetadata = syncCoordinator.metadata;
+        notifyListeners();
+      }
+    } finally {
+      final file = File(bundlePath);
+      if (await file.exists()) await file.delete();
+    }
+  }
+
+  Future<void> downloadRemoteBundle({SyncRemoteMetadata? expectedRemote, String? expectedLocalFingerprint, Future<void> Function()? backup}) async {
+    if (!database.isOpen) throw StateError('Open a catalog first.');
+    final temporary = await getTemporaryDirectory();
+    SyncRemoteMetadata? discoveredRemote = expectedRemote;
+    if (expectedRemote == null) {
+      final checkPath = path.join(temporary.path,
+          'realmwise-check-${DateTime.now().microsecondsSinceEpoch}.realmwise');
+      try {
+        await exportDeviceBundle(checkPath);
+        final local = await bundles.validateBundle(checkPath);
+        final decision = await syncCoordinator.classify(local.contentFingerprint);
+        if (decision.classification == SyncClassification.localOnly ||
+            decision.classification == SyncClassification.divergent ||
+            decision.classification == SyncClassification.unknownError) {
+          throw SyncDecisionRequired(decision);
+        }
+        discoveredRemote = decision.remote;
+      } finally {
+        final f = File(checkPath);
+        if (await f.exists()) await f.delete();
+      }
+    }
     final bundlePath = path.join(
       temporary.path,
       'realmwise-remote-${DateTime.now().microsecondsSinceEpoch}.realmwise',
     );
     try {
-      final result = await syncCoordinator.download();
+      final result = await syncCoordinator.download(expectedRemote: discoveredRemote);
       await File(bundlePath).writeAsBytes(result.payload, flush: true);
       final manifest = await previewDeviceBundle(bundlePath);
+      if (expectedLocalFingerprint != null) {
+        final checkPath = path.join(temporary.path,
+            'realmwise-final-check-${DateTime.now().microsecondsSinceEpoch}.realmwise');
+        try {
+          await exportDeviceBundle(checkPath);
+          final current = await bundles.validateBundle(checkPath);
+          if (current.contentFingerprint != expectedLocalFingerprint) {
+            throw StateError('The local catalog changed; review the conflict again.');
+          }
+        } finally {
+          final check = File(checkPath);
+          if (await check.exists()) await check.delete();
+        }
+      }
+      if (backup != null) await backup();
       await restoreDeviceBundle(bundlePath);
       await syncCoordinator.commitDownload(
         result.metadata,

@@ -82,7 +82,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
   );
 
   Future<void> _syncNow() async {
-    await widget.controller.syncNow();
+    try {
+      await widget.controller.syncNow();
+    } on SyncDecisionRequired catch (decision) {
+      if (!mounted) return;
+      if (decision.result.classification == SyncClassification.unknownError) {
+        throw StateError('Sync status could not be checked. Retry without changing either catalog.');
+      }
+      final localFingerprint = decision.localFingerprint ?? '';
+      final choice = await showDialog<SyncConflictChoice>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Catalogs differ'),
+          content: const Text('Choose which catalog to keep. Download replaces this device with the remote catalog. Upload replaces the remote catalog with this device. Cancel leaves both unchanged.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, SyncConflictChoice.cancel), child: const Text('Cancel')),
+            OutlinedButton(onPressed: () => Navigator.pop(context, SyncConflictChoice.downloadReplaceLocal), child: const Text('Download and replace local')),
+            FilledButton(onPressed: () => Navigator.pop(context, SyncConflictChoice.uploadReplaceRemote), child: const Text('Upload and replace remote')),
+          ],
+        ),
+      );
+      if (choice == null || choice == SyncConflictChoice.cancel) return;
+      await widget.controller.resolveSyncDecision(choice,
+          decision: decision.result, localFingerprint: localFingerprint);
+    }
     if (!mounted) return;
     final providerLabel =
         widget.controller.selectedProvider?.provider == 'onedrive'
@@ -394,6 +417,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _downloadRemote() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await _downloadRemoteConfirmed();
+    } on SyncDecisionRequired catch (decision) {
+      if (!mounted) return;
+      if (decision.result.classification == SyncClassification.unknownError) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sync status unavailable. Retry; nothing was changed.')));
+        return;
+      }
+      final choice = await showDialog<SyncConflictChoice>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Catalogs differ'),
+          content: const Text('Downloading replaces this device with the remote catalog. Upload replaces the remote catalog with this device. Cancel leaves both unchanged.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, SyncConflictChoice.cancel), child: const Text('Cancel')),
+            OutlinedButton(onPressed: () => Navigator.pop(context, SyncConflictChoice.downloadReplaceLocal), child: const Text('Download and replace local')),
+            FilledButton(onPressed: () => Navigator.pop(context, SyncConflictChoice.uploadReplaceRemote), child: const Text('Upload and replace remote')),
+          ],
+        ),
+      );
+      if (choice != null && choice != SyncConflictChoice.cancel) {
+        await widget.controller.resolveSyncDecision(choice,
+            decision: decision.result, localFingerprint: decision.localFingerprint ?? '');
+      }
+      return;
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not download remote catalog: $error')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _downloadRemoteConfirmed() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -414,10 +472,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     if (confirmed == true && mounted) {
-      await _run(
-        widget.controller.downloadRemoteBundle,
-        success: 'Remote catalog downloaded.',
-      );
+      await widget.controller.downloadRemoteBundle();
     }
   }
 

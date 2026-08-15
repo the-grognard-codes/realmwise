@@ -1,5 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:realmwise/services/sync_metadata.dart';
+import 'dart:typed_data';
+import 'package:realmwise/services/sync_contract.dart';
+import 'package:realmwise/services/sync_coordinator.dart';
 
 void main() {
   test('metadata serializes without credentials and round trips', () {
@@ -105,4 +108,121 @@ void main() {
       'catalog-a',
     );
   });
+
+  test('sync classification compares saved local and remote pair', () async {
+    final storage = _MemorySyncStorage();
+    final coordinator = SyncCoordinator(metadataStorage: storage);
+    final provider = _PolicyProvider();
+    await coordinator.connect(provider, 'catalog');
+    coordinator.metadata = SyncMetadata(
+      catalogIdentity: 'catalog', provider: 'fake', accountId: 'a',
+      remoteTargetId: 'target', revision: 'r1', contentHash: 'h1',
+      lastSuccessfulLocalFingerprint: 'l1', state: SyncState.ready,
+    );
+    expect((await coordinator.classify('l1')).classification,
+        SyncClassification.noChanges);
+    provider.remote = const SyncRemoteMetadata(
+      revision: SyncRevision('r2'), contentHash: 'h2');
+    expect((await coordinator.classify('l1')).classification,
+        SyncClassification.remoteOnly);
+    provider.remote = const SyncRemoteMetadata(
+      revision: SyncRevision('r1'), contentHash: 'h1');
+    expect((await coordinator.classify('l2')).classification,
+        SyncClassification.localOnly);
+    provider.remote = const SyncRemoteMetadata(
+      revision: SyncRevision('r2'), contentHash: 'h2');
+    expect((await coordinator.classify('l2')).classification,
+        SyncClassification.divergent);
+  });
+
+  test('metadata lookup failure is unknown and preserves known pair on upload error', () async {
+    final storage = _MemorySyncStorage();
+    final coordinator = SyncCoordinator(metadataStorage: storage);
+    final provider = _PolicyProvider()..metadataFails = true;
+    await coordinator.connect(provider, 'catalog');
+    expect((await coordinator.classify('l1')).classification,
+        SyncClassification.unknownError);
+    provider.metadataFails = false;
+    provider.uploadFails = true;
+    coordinator.metadata = SyncMetadata(
+      catalogIdentity: 'catalog', provider: 'fake', accountId: 'a',
+      remoteTargetId: 'target', revision: 'r1', contentHash: 'h1',
+      lastSuccessfulLocalFingerprint: 'l1', state: SyncState.ready,
+    );
+    await expectLater(
+      coordinator.sync(Uint8List.fromList([1]), localFingerprint: 'l2'),
+      throwsA(isA<Object>()),
+    );
+    expect(coordinator.metadata?.lastSuccessfulLocalFingerprint, 'l1');
+    expect(coordinator.metadata?.revision, 'r1');
+  });
+
+  test('stale remote rejects explicit replacement before backup', () async {
+    final coordinator = SyncCoordinator(metadataStorage: _MemorySyncStorage());
+    final provider = _PolicyProvider();
+    await coordinator.connect(provider, 'catalog');
+    coordinator.metadata = SyncMetadata(
+      catalogIdentity: 'catalog', provider: 'fake', accountId: 'a',
+      remoteTargetId: 'target', revision: 'r1', contentHash: 'h1',
+      lastSuccessfulLocalFingerprint: 'l1', state: SyncState.ready,
+    );
+    var backup = false;
+    provider.remote = const SyncRemoteMetadata(
+      revision: SyncRevision('r2'), contentHash: 'h2');
+    await expectLater(
+      coordinator.resolveConflict(SyncConflictChoice.uploadReplaceRemote,
+        currentLocalFingerprint: 'l2', expectedLocalFingerprint: 'l2',
+        observedRemote: const SyncRemoteMetadata(
+          revision: SyncRevision('r1'), contentHash: 'h1'),
+        payload: Uint8List.fromList([1]), payloadFingerprint: 'l2',
+        backup: () async => backup = true),
+      throwsA(isA<SyncConflictException>()),
+    );
+    expect(backup, isFalse);
+  });
+
+  test('conflict cancellation does not transfer or backup', () async {
+    final coordinator = SyncCoordinator(metadataStorage: _MemorySyncStorage());
+    final provider = _PolicyProvider();
+    await coordinator.connect(provider, 'catalog');
+    var backedUp = false;
+    expect(await coordinator.resolveConflict(SyncConflictChoice.cancel,
+        currentLocalFingerprint: 'l2', observedRemote: provider.remote,
+        backup: () async => backedUp = true), isNull);
+    expect(backedUp, isFalse);
+    expect(provider.uploads, 0);
+  });
+}
+
+class _MemorySyncStorage implements SyncMetadataStorage {
+  SyncMetadata? value;
+  @override Future<SyncMetadata?> read(String _) async => value;
+  @override Future<void> write(SyncMetadata metadata) async => value = metadata;
+  @override Future<void> remove(String _) async => value = null;
+}
+
+class _PolicyProvider implements SyncProvider {
+  SyncRemoteMetadata remote = const SyncRemoteMetadata(
+      revision: SyncRevision('r1'), contentHash: 'h1');
+  int uploads = 0;
+  bool metadataFails = false;
+  bool uploadFails = false;
+  @override String get provider => 'fake';
+  @override Future<SyncAuthSession> authenticate() async =>
+      const SyncAuthSession(accountId: 'a');
+  @override Future<List<SyncRemoteTarget>> listRemoteTargets(SyncAuthSession _) async =>
+      const [SyncRemoteTarget(id: 'target', name: 'Target')];
+  @override Future<SyncRemoteMetadata?> metadata(SyncAuthSession _, SyncRemoteTarget __) async {
+    if (metadataFails) throw StateError('metadata unavailable');
+    return remote;
+  }
+  @override Future<SyncUploadResult> upload(SyncAuthSession _, SyncRemoteTarget __, Uint8List ___,
+    {SyncPrecondition? precondition}) async {
+    if (uploadFails) throw StateError('upload interrupted');
+    uploads++;
+    return SyncUploadResult(metadata: remote);
+  }
+  @override Future<SyncDownloadResult> download(SyncAuthSession _, SyncRemoteTarget __,
+      {SyncPrecondition? precondition}) async =>
+      SyncDownloadResult(payload: Uint8List.fromList([1]), metadata: remote);
 }

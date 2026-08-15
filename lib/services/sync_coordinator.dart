@@ -19,6 +19,75 @@ class SyncCoordinator {
 
   bool get isConnected => provider != null && session != null;
 
+  /// Compares both sides with the last committed pair.  A metadata lookup
+  /// failure is deliberately distinguishable from an empty remote file.
+  Future<SyncClassificationResult> classify(String? currentLocalFingerprint) async {
+    final p = provider, s = session, t = target, saved = metadata;
+    if (p == null || s == null || t == null || saved == null) {
+      return const SyncClassificationResult(SyncClassification.unknownError);
+    }
+    try {
+      if (currentLocalFingerprint == null) {
+        return const SyncClassificationResult(SyncClassification.unknownError);
+      }
+      final remote = await p.metadata(s, t);
+      if (remote == null) {
+        return const SyncClassificationResult(SyncClassification.unknownError);
+      }
+      final localChanged = currentLocalFingerprint == null ||
+          currentLocalFingerprint != saved.lastSuccessfulLocalFingerprint;
+      final remoteChanged = saved.revision == null || saved.contentHash == null ||
+          remote.revision.value != saved.revision ||
+          remote.contentHash != saved.contentHash;
+      final kind = switch ((localChanged, remoteChanged)) {
+        (false, false) => SyncClassification.noChanges,
+        (true, false) => SyncClassification.localOnly,
+        (false, true) => SyncClassification.remoteOnly,
+        (true, true) => SyncClassification.divergent,
+      };
+      return SyncClassificationResult(kind, remote: remote);
+    } on Object catch (error) {
+      return SyncClassificationResult(SyncClassification.unknownError, error: error);
+    }
+  }
+
+  /// Applies an explicit conflict choice. [backup] must create a recoverable
+  /// local snapshot before either replacement; it is awaited before transfer.
+  Future<SyncDownloadResult?> resolveConflict(
+    SyncConflictChoice choice, {
+    required String currentLocalFingerprint,
+    String? expectedLocalFingerprint,
+    required SyncRemoteMetadata observedRemote,
+    Uint8List? payload,
+    String? payloadFingerprint,
+    Future<void> Function()? backup,
+  }) async {
+    if (choice == SyncConflictChoice.cancel) return null;
+    final p = provider, s = session, t = target, saved = metadata;
+    if (p == null || s == null || t == null || saved == null) {
+      throw StateError('Connect a provider before resolving sync conflict.');
+    }
+    // The local side must still be the side the user saw when choosing.
+    if (expectedLocalFingerprint != null &&
+        currentLocalFingerprint != expectedLocalFingerprint) {
+      throw StateError('The local catalog changed; review the conflict again.');
+    }
+    final latest = await p.metadata(s, t);
+    if (latest == null || latest.revision != observedRemote.revision ||
+        latest.contentHash != observedRemote.contentHash) {
+      throw SyncConflictException(latest ?? observedRemote);
+    }
+    if (backup != null) await backup();
+    if (choice == SyncConflictChoice.downloadReplaceLocal) {
+      return download(expectedRemote: observedRemote);
+    }
+    if (payload == null || payloadFingerprint == null) {
+      throw ArgumentError('Upload replacement requires payload and fingerprint.');
+    }
+    await sync(payload, localFingerprint: payloadFingerprint, expectedRemote: observedRemote);
+    return null;
+  }
+
   Future<void> configureTarget(SyncRemoteTarget selected) async {
     final current = metadata;
     if (current == null) throw StateError('Connect a provider first.');
@@ -165,6 +234,7 @@ class SyncCoordinator {
   Future<SyncMetadata> sync(
     Uint8List payload, {
     String? localFingerprint,
+    SyncRemoteMetadata? expectedRemote,
   }) async {
     final p = provider, s = session, t = target, current = metadata;
     if (p == null || s == null || t == null || current == null) {
@@ -226,7 +296,9 @@ class SyncCoordinator {
         s,
         t,
         payload,
-        precondition: current.revision == null
+        precondition: expectedRemote != null
+            ? SyncPrecondition(revision: expectedRemote.revision, contentHash: expectedRemote.contentHash)
+            : current.revision == null
             ? null
             : SyncPrecondition(
                 revision: SyncRevision(current.revision!),
@@ -246,6 +318,7 @@ class SyncCoordinator {
         remoteTargetName: current.remoteTargetName,
         revision: current.revision,
         contentHash: current.contentHash,
+        lastSuccessfulLocalFingerprint: current.lastSuccessfulLocalFingerprint,
         createdAt: current.createdAt,
         updatedAt: DateTime.now().toUtc(),
         state: SyncState.error,
@@ -276,7 +349,7 @@ class SyncCoordinator {
     return metadata!;
   }
 
-  Future<SyncDownloadResult> download() async {
+  Future<SyncDownloadResult> download({SyncRemoteMetadata? expectedRemote}) async {
     final p = provider, s = session, t = target, current = metadata;
     if (p == null || s == null || t == null || current == null) {
       throw StateError('Connect Google Drive before restoring.');
@@ -285,7 +358,12 @@ class SyncCoordinator {
       final result = await p.download(
         s,
         t,
-        precondition: current.revision == null
+        precondition: expectedRemote != null
+            ? SyncPrecondition(
+                revision: expectedRemote.revision,
+                contentHash: expectedRemote.contentHash,
+              )
+            : current.revision == null
             ? null
             : SyncPrecondition(revision: SyncRevision(current.revision!)),
       );
@@ -313,6 +391,7 @@ class SyncCoordinator {
         remoteTargetName: current.remoteTargetName,
         revision: current.revision,
         contentHash: current.contentHash,
+        lastSuccessfulLocalFingerprint: current.lastSuccessfulLocalFingerprint,
         createdAt: current.createdAt,
         updatedAt: DateTime.now().toUtc(),
         state: SyncState.error,
