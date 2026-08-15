@@ -152,11 +152,13 @@ class AppController extends ChangeNotifier {
     // A connection belongs to one catalog identity. Do not carry a live
     // provider/session into a different database, but retain its saved setup
     // so reopening it can restore normally.
-    if (database.isOpen && database.databasePath != databasePath) {
-      syncCoordinator.resetRuntime();
-      syncMetadata = null;
-      _selectedProvider = null;
-    }
+    // Reopening can replace the catalog contents at the same path (for
+    // example, portable bundle restore). A live coordinator session must not
+    // outlive that catalog swap; persisted metadata below may restore it when
+    // the imported catalog has the same identity.
+    syncCoordinator.resetRuntime();
+    syncMetadata = null;
+    _selectedProvider = null;
     error = null;
     await backups.stop();
     await database.open(databasePath);

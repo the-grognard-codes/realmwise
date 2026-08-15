@@ -724,18 +724,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _cloudSyncSection() {
     final metadata = widget.controller.syncMetadata;
     final providers = widget.controller.availableProviders;
-    final connected =
-        widget.controller.syncCoordinator.isConnected &&
-        metadata != null &&
-        metadata.state != SyncState.notConnected;
+    final selected = widget.controller.selectedProvider;
+    final connected = widget.controller.providerSelectionLocked;
+    String label(SyncProvider p) =>
+        p.provider == 'onedrive' ? 'Microsoft OneDrive' : p.provider == 'dropbox' ? 'Dropbox' : 'Google Drive';
     final status = providers.isEmpty
         ? 'Cloud sync is not configured on this build.'
         : connected
-        ? 'Connected account: ${metadata.accountDisplayName ?? metadata.accountId ?? 'Google Drive'}'
+        ? 'Connected provider: ${selected == null ? 'Unknown' : label(selected)}'
         : 'Not connected';
-    final selected = widget.controller.selectedProvider;
-    String label(SyncProvider p) =>
-        p.provider == 'onedrive' ? 'Microsoft OneDrive' : p.provider == 'dropbox' ? 'Dropbox' : 'Google Drive';
     return _Section(
       title: 'Cloud Sync',
       child: Column(
