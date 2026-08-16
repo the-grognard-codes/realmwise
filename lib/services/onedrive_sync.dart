@@ -105,10 +105,9 @@ class OneDriveOAuthAuthenticator implements SyncAuthenticator {
     required this.tokenStore,
     this.tenant = 'common',
     http.Client? httpClient,
-    Future<void> Function(Duration)? delay,
+    this._delay,
     this.maxTransientRetries = 3,
-  }) : _http = httpClient ?? http.Client(),
-       _delay = delay;
+  }) : _http = httpClient ?? http.Client();
   final String clientId, tenant;
   final Uri redirectUri;
   final OneDriveOAuthBrowser browser;
@@ -256,10 +255,9 @@ class OneDriveProvider implements SyncProvider {
     required this.authenticator,
     required this.tokenStore,
     http.Client? httpClient,
-    Future<void> Function(Duration)? delay,
+    this._delay,
     this.maxTransientRetries = 3,
-  }) : _http = httpClient ?? http.Client(),
-       _delay = delay;
+  }) : _http = httpClient ?? http.Client();
   final OneDriveOAuthAuthenticator authenticator;
   final OneDriveTokenStore tokenStore;
   final http.Client _http;
@@ -636,7 +634,7 @@ class OneDriveProvider implements SyncProvider {
         final stableRead =
             unsettledPayload != null &&
             unsettledRevision == latest.revision &&
-            _sameBytes(unsettledPayload!, b);
+            _sameBytes(unsettledPayload, b);
         if (hashlessConfirmationPending && !stableRead) {
           throw OneDriveException('Unable to verify downloaded content');
         }

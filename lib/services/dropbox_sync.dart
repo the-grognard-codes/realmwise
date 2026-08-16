@@ -18,6 +18,7 @@ abstract interface class DropboxOAuthCallback {
 class DropboxAuthException implements Exception {
   DropboxAuthException(this.message);
   final String message;
+  @override
   String toString() => 'DropboxAuthException: $message';
 }
 
@@ -25,6 +26,7 @@ class DropboxException implements Exception {
   DropboxException(this.message, {this.statusCode});
   final String message;
   final int? statusCode;
+  @override
   String toString() => 'DropboxException($statusCode): $message';
 }
 
@@ -139,10 +141,9 @@ class DropboxProvider implements SyncProvider {
     required this.authenticator,
     required this.tokenStore,
     http.Client? httpClient,
-    Future<void> Function(Duration)? delay,
+    this._delay,
     this.maxTransientRetries = 3,
-  }) : _http = httpClient ?? http.Client(),
-       _delay = delay;
+  }) : _http = httpClient ?? http.Client();
   final DropboxOAuthAuthenticator authenticator;
   final DropboxTokenStore tokenStore;
   final http.Client _http;
@@ -163,6 +164,7 @@ class DropboxProvider implements SyncProvider {
     return sha256.convert(Uint8List.fromList(blockHashes)).toString();
   }
 
+  @override
   String get provider => 'dropbox';
   Future<void> clearCredentials() => tokenStore.delete(authenticator._key);
   Future<SyncAuthSession?> restoreSession() async {
@@ -419,9 +421,10 @@ class DropboxProvider implements SyncProvider {
       if (precondition?.revision != null &&
           precondition!.revision!.value != before.revision.value)
         throw SyncConflictException(before);
-      if (precondition?.contentHash != null &&
-          precondition!.contentHash!.isNotEmpty &&
-          precondition!.contentHash != before.contentHash)
+      final contentHash = precondition?.contentHash;
+      if (contentHash != null &&
+          contentHash.isNotEmpty &&
+          contentHash != before.contentHash)
         throw SyncConflictException(before);
       final r = await _retry(
         () async => _http.post(

@@ -204,7 +204,6 @@ class _BookEditorScreenState extends State<BookEditorScreen>
       setState(() => _record = _record.copyWith(images: [downloaded]));
     } catch (_) {
       // Network images are optional; retain the URL for the save-time retry.
-      // TODO: Add normal structured download diagnostics with the planned logging feature.
     }
   }
 
