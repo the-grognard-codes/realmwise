@@ -297,6 +297,19 @@ class OneDriveProvider implements SyncProvider {
     }
   }
 
+  Future<void> _waitForConsistency(int attempt) async {
+    final wait = Duration(seconds: (1 << attempt).clamp(1, 30).toInt());
+    SyncDebug.trace('provider.download.retry', {
+      'attempt': attempt + 1,
+      'backoffMs': wait.inMilliseconds,
+    });
+    if (_delay != null) {
+      await _delay(wait);
+    } else {
+      await Future<void>.delayed(wait);
+    }
+  }
+
   @override
   String get provider => 'onedrive';
   Future<void> clearCredentials() => tokenStore.delete(authenticator._key);
@@ -469,9 +482,11 @@ class OneDriveProvider implements SyncProvider {
     SyncAuthSession s,
     SyncRemoteTarget t,
   ) async {
-    final r = await _http.get(
-      Uri.parse('https://graph.microsoft.com/v1.0/me/drive/items/${t.id}'),
-      headers: {'Authorization': 'Bearer ${await _access(s)}'},
+    final r = await _retryTransient(
+      () async => _http.get(
+        Uri.parse('https://graph.microsoft.com/v1.0/me/drive/items/${t.id}'),
+        headers: {'Authorization': 'Bearer ${await _access(s)}'},
+      ),
     );
     if (r.statusCode == 404) {
       SyncDebug.trace('provider.metadata', {'status': 404});
@@ -567,22 +582,93 @@ class OneDriveProvider implements SyncProvider {
     SyncRemoteTarget t, {
     SyncPrecondition? precondition,
   }) async {
-    final m = await metadata(s, t);
-    if (m == null) throw OneDriveException('Remote target missing');
-    if (precondition?.revision != null &&
-        precondition!.revision!.value != m.revision.value)
-      throw SyncConflictException(m);
-    final r = await _http.get(
-      Uri.parse(
-        'https://graph.microsoft.com/v1.0/me/drive/items/${t.id}/content',
-      ),
-      headers: {'Authorization': 'Bearer ${await _access(s)}'},
-    );
-    if (r.statusCode != 200) _fail(r, 'OneDrive download failed');
-    final b = Uint8List.fromList(r.bodyBytes);
-    if (m.contentHash.isNotEmpty &&
-        sha256.convert(b).toString() != m.contentHash)
-      throw OneDriveException('Content hash mismatch');
-    return SyncDownloadResult(payload: b, metadata: m);
+    Uint8List? unsettledPayload;
+    SyncRevision? unsettledRevision;
+    var hashlessWaits = 0;
+    var hashlessConfirmationPending = false;
+    for (var attempt = 0; ; attempt++) {
+      final m = await metadata(s, t);
+      if (m == null) throw OneDriveException('Remote target missing');
+      final expectedHash = precondition?.contentHash;
+      if (precondition?.revision != null &&
+          precondition!.revision!.value != m.revision.value) {
+        throw SyncConflictException(m);
+      }
+      if (expectedHash != null &&
+          expectedHash.isNotEmpty &&
+          expectedHash != m.contentHash) {
+        throw SyncConflictException(m);
+      }
+      final r = await _retryTransient(
+        () async => _http.get(
+          Uri.parse(
+            'https://graph.microsoft.com/v1.0/me/drive/items/${t.id}/content',
+          ),
+          headers: {'Authorization': 'Bearer ${await _access(s)}'},
+        ),
+      );
+      if (r.statusCode != 200) _fail(r, 'OneDrive download failed');
+      final b = Uint8List.fromList(r.bodyBytes);
+      final latest = await metadata(s, t);
+      if (latest == null) throw OneDriveException('Remote target missing');
+      final hash = sha256.convert(b).toString();
+      if (precondition?.revision != null &&
+          precondition!.revision!.value != latest.revision.value) {
+        throw SyncConflictException(latest);
+      }
+      if (expectedHash != null &&
+          expectedHash.isNotEmpty &&
+          expectedHash != latest.contentHash) {
+        throw SyncConflictException(latest);
+      }
+      final hashesAvailable =
+          m.contentHash.isNotEmpty && latest.contentHash.isNotEmpty;
+      final coherent =
+          latest.revision == m.revision &&
+          hashesAvailable &&
+          hash == m.contentHash &&
+          hash == latest.contentHash;
+      if (coherent) return SyncDownloadResult(payload: b, metadata: latest);
+      // Some OneDrive responses omit the identity hash briefly after a write.
+      // Give metadata/content a bounded settling window before accepting a
+      // stable-revision payload whose hash cannot be checked.
+      if (!hashesAvailable && latest.revision == m.revision) {
+        final stableRead =
+            unsettledPayload != null &&
+            unsettledRevision == latest.revision &&
+            _sameBytes(unsettledPayload!, b);
+        if (hashlessConfirmationPending && !stableRead) {
+          throw OneDriveException('Unable to verify downloaded content');
+        }
+        if (stableRead && hashlessWaits >= maxTransientRetries) {
+          return SyncDownloadResult(payload: b, metadata: latest);
+        }
+        unsettledPayload = Uint8List.fromList(b);
+        unsettledRevision = latest.revision;
+        if (hashlessWaits < maxTransientRetries) {
+          await _waitForConsistency(hashlessWaits);
+          hashlessWaits++;
+        } else {
+          hashlessConfirmationPending = true;
+        }
+        continue;
+      }
+      unsettledPayload = null;
+      unsettledRevision = null;
+      hashlessWaits = 0;
+      hashlessConfirmationPending = false;
+      if (attempt >= maxTransientRetries) {
+        throw OneDriveException('Content changed while downloading');
+      }
+      await _waitForConsistency(attempt);
+    }
+  }
+
+  static bool _sameBytes(Uint8List a, Uint8List b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 }

@@ -362,7 +362,11 @@ class GoogleDriveProvider implements SyncProvider {
       contentHash:
           ((j['appProperties'] as Map?)?['realmwiseSha256'] as String?) ??
           (j['description'] as String?) ??
-          (j['md5Checksum'] as String? ?? ''),
+          // Drive's md5Checksum is a different digest algorithm from the
+          // SHA-256 identity used by Realmwise.  Do not expose it as the
+          // Realmwise content hash: doing so makes an unchanged payload look
+          // divergent during precondition and download validation.
+          '',
       updatedAt: DateTime.tryParse(j['modifiedTime'] ?? ''),
     );
   }
@@ -557,6 +561,30 @@ class GoogleDriveProvider implements SyncProvider {
     final initial = await metadata(s, t);
     if (initial == null) throw Exception('Remote target missing');
     var m = initial;
+    final expectedHash = precondition?.contentHash;
+    if (expectedHash != null && expectedHash.isNotEmpty) {
+      // appProperties can briefly lag the file revision.  Never restore
+      // bytes without confirming the expected Realmwise identity.
+      for (var attempt = 0;
+          attempt < 3 && m.contentHash.isEmpty;
+          attempt++) {
+        await _delay(Duration(milliseconds: 100 * (1 << attempt)));
+        final refreshed = await metadata(s, t);
+        if (refreshed == null) break;
+        m = refreshed;
+      }
+      if (m.contentHash.isEmpty) {
+        throw SyncConflictException(m);
+      }
+    }
+    if (expectedHash != null &&
+        expectedHash.isNotEmpty &&
+        m.contentHash.isNotEmpty &&
+        expectedHash != m.contentHash) {
+      // A matching revision is not sufficient when the caller supplied a
+      // content identity. Reject the remote before downloading its bytes.
+      throw SyncConflictException(m);
+    }
     if (precondition != null && precondition.revision != null) {
       // Drive metadata can briefly lag the just-completed upload. Re-read a
       // small bounded number of times before treating a revision mismatch as
@@ -587,12 +615,58 @@ class GoogleDriveProvider implements SyncProvider {
         throw SyncConflictException(m);
       }
     }
-    final r = await _http.get(
-      Uri.parse('https://www.googleapis.com/drive/v3/files/${t.id}?alt=media'),
-      headers: {'Authorization': 'Bearer ${await _access(s)}'},
-    );
-    if (r.statusCode != 200) throw Exception('Drive download failed');
-    final bytes = Uint8List.fromList(r.bodyBytes);
+    Future<Uint8List> fetchBytes() async {
+      final r = await _http.get(
+        Uri.parse('https://www.googleapis.com/drive/v3/files/${t.id}?alt=media'),
+        headers: {'Authorization': 'Bearer ${await _access(s)}'},
+      );
+      if (r.statusCode != 200) throw Exception('Drive download failed');
+      return Uint8List.fromList(r.bodyBytes);
+    }
+
+    var bytes = await fetchBytes();
+    if (expectedHash == null || expectedHash.isEmpty) {
+      // Without a Realmwise hash, require a full confirmation window: each
+      // media response is bracketed by metadata reads, and both consecutive
+      // byte responses and revisions must agree before accepting the bundle.
+      var confirmed = false;
+      for (var attempt = 0; attempt < 3 && !confirmed; attempt++) {
+        await _delay(Duration(milliseconds: 100 * (1 << attempt)));
+        final after = await metadata(s, t);
+        if (after == null) throw Exception('Remote target missing');
+        if (precondition?.revision != null &&
+            after.revision != precondition!.revision) {
+          throw SyncConflictException(after);
+        }
+        if (after.revision != m.revision) {
+          m = after;
+          if (attempt == 2) throw SyncConflictException(m);
+          await _delay(Duration(milliseconds: 100 * (1 << attempt)));
+          bytes = await fetchBytes();
+          continue;
+        }
+        final confirmationBytes = await fetchBytes();
+        final confirmation = await metadata(s, t);
+        if (confirmation == null) throw Exception('Remote target missing');
+        if (precondition?.revision != null &&
+            confirmation.revision != precondition!.revision) {
+          throw SyncConflictException(confirmation);
+        }
+        final bytesMatch = bytes.length == confirmationBytes.length &&
+            bytes.asMap().keys.every((i) => bytes[i] == confirmationBytes[i]);
+        // Do not accept an early stable pair: the complete bounded backoff
+        // window must elapse before the final consecutive confirmation.
+        if (attempt == 2 && confirmation.revision == m.revision && bytesMatch) {
+          confirmed = true;
+        } else {
+          m = confirmation;
+          if (attempt == 2) throw SyncConflictException(m);
+          await _delay(Duration(milliseconds: 100 * (1 << attempt)));
+          bytes = confirmationBytes;
+        }
+      }
+      if (!confirmed) throw SyncConflictException(m);
+    }
     if (sha256.convert(bytes).toString() != m.contentHash &&
         m.contentHash.isNotEmpty)
       throw Exception('Content hash mismatch');

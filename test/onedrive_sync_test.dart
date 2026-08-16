@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -307,6 +308,179 @@ void main() {
       ),
       throwsA(isA<SyncConflictException>()),
     );
+  });
+  test('download retries an incoherent read-after-write window', () async {
+    final store = _Store();
+    await store.write(
+      'onedrive_oauth:id',
+      '{"access_token":"a","account_id":"x"}',
+    );
+    final payload = Uint8List.fromList([1, 2, 3]);
+    final hash = sha256.convert(payload).toString();
+    var metadataCalls = 0;
+    final waits = <Duration>[];
+    final client = MockClient((request) async {
+      if (request.url.path.endsWith('/content')) {
+        return http.Response.bytes(payload, 200);
+      }
+      metadataCalls++;
+      final tag = metadataCalls == 1 ? 'tag-1' : 'tag-2';
+      return http.Response(
+        '{"eTag":"$tag","file":{"hashes":{"sha256Hash":"$hash"}}}',
+        200,
+      );
+    });
+    final provider = OneDriveProvider(
+      authenticator: OneDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost/cb'),
+        browser: _Browser(),
+        callback: _Callback(),
+        tokenStore: OneDriveTokenStore(store),
+      ),
+      tokenStore: OneDriveTokenStore(store),
+      httpClient: client,
+      delay: (d) async => waits.add(d),
+    );
+    final result = await provider.download(
+      const SyncAuthSession(accountId: 'x'),
+      const SyncRemoteTarget(id: '1', name: 'b'),
+    );
+    expect(result.payload, payload);
+    expect(result.metadata.revision.value, 'tag-2');
+    expect(metadataCalls, 4);
+    expect(waits, [const Duration(seconds: 1)]);
+  });
+  test('download rejects a precondition content hash conflict', () async {
+    final store = _Store();
+    await store.write(
+      'onedrive_oauth:id',
+      '{"access_token":"a","account_id":"x"}',
+    );
+    var contentCalls = 0;
+    final provider = OneDriveProvider(
+      authenticator: OneDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost/cb'),
+        browser: _Browser(),
+        callback: _Callback(),
+        tokenStore: OneDriveTokenStore(store),
+      ),
+      tokenStore: OneDriveTokenStore(store),
+      httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/content')) {
+          contentCalls++;
+          return http.Response.bytes([1], 200);
+        }
+        return http.Response(
+          '{"eTag":"tag","file":{"hashes":{"sha256Hash":"remote"}}}',
+          200,
+        );
+      }),
+    );
+
+    await expectLater(
+      provider.download(
+        const SyncAuthSession(accountId: 'x'),
+        const SyncRemoteTarget(id: '1', name: 'b'),
+        precondition: const SyncPrecondition(
+          revision: SyncRevision('tag'),
+          contentHash: 'expected',
+        ),
+      ),
+      throwsA(isA<SyncConflictException>()),
+    );
+    expect(contentCalls, 0);
+  });
+
+  test('download requires stable bytes without an identity hash', () async {
+    final store = _Store();
+    await store.write(
+      'onedrive_oauth:id',
+      '{"access_token":"a","account_id":"x"}',
+    );
+    final stalePayload = Uint8List.fromList([1, 2]);
+    final currentPayload = Uint8List.fromList([4, 5]);
+    var metadataCalls = 0;
+    var contentCalls = 0;
+    final waits = <Duration>[];
+    final provider = OneDriveProvider(
+      authenticator: OneDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost/cb'),
+        browser: _Browser(),
+        callback: _Callback(),
+        tokenStore: OneDriveTokenStore(store),
+      ),
+      tokenStore: OneDriveTokenStore(store),
+      maxTransientRetries: 2,
+      delay: (d) async => waits.add(d),
+      httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/content')) {
+          contentCalls++;
+          return http.Response.bytes(
+            contentCalls <= 2 ? stalePayload : currentPayload,
+            200,
+          );
+        }
+        metadataCalls++;
+        return http.Response('{"eTag":"tag"}', 200);
+      }),
+    );
+
+    final result = await provider.download(
+      const SyncAuthSession(accountId: 'x'),
+      const SyncRemoteTarget(id: '1', name: 'b'),
+    );
+
+    expect(result.payload, currentPayload);
+    expect(contentCalls, 4);
+    expect(metadataCalls, 8);
+    expect(waits, [const Duration(seconds: 1), const Duration(seconds: 2)]);
+  });
+  test('hashless download fails after one bounded confirmation', () async {
+    final store = _Store();
+    await store.write(
+      'onedrive_oauth:id',
+      '{"access_token":"a","account_id":"x"}',
+    );
+    var contentCalls = 0;
+    final waits = <Duration>[];
+    final provider = OneDriveProvider(
+      authenticator: OneDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost/cb'),
+        browser: _Browser(),
+        callback: _Callback(),
+        tokenStore: OneDriveTokenStore(store),
+      ),
+      tokenStore: OneDriveTokenStore(store),
+      maxTransientRetries: 1,
+      delay: (d) async => waits.add(d),
+      httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/content')) {
+          contentCalls++;
+          return http.Response.bytes([contentCalls.isEven ? 2 : 1], 200);
+        }
+        return http.Response('{"eTag":"tag"}', 200);
+      }),
+    );
+
+    await expectLater(
+      provider.download(
+        const SyncAuthSession(accountId: 'x'),
+        const SyncRemoteTarget(id: '1', name: 'b'),
+      ),
+      throwsA(
+        isA<OneDriveException>().having(
+          (e) => e.message,
+          'message',
+          'Unable to verify downloaded content',
+        ),
+      ),
+    );
+    expect(contentCalls, 3);
+    expect(waits, [const Duration(seconds: 1)]);
   });
   test('account mismatch is rejected', () async {
     final store = _Store();

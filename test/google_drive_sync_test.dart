@@ -1237,8 +1237,15 @@ void main() {
       precondition: const SyncPrecondition(revision: SyncRevision('3')),
     );
     expect(result.payload, bytes);
-    expect(reads, 2);
-    expect(delays, [const Duration(milliseconds: 100)]);
+    expect(reads, 8);
+    expect(delays, [
+      const Duration(milliseconds: 100),
+      const Duration(milliseconds: 100),
+      const Duration(milliseconds: 100),
+      const Duration(milliseconds: 200),
+      const Duration(milliseconds: 200),
+      const Duration(milliseconds: 400),
+    ]);
   });
 
   test('download conflicts after bounded stale revision retries', () async {
@@ -1309,6 +1316,82 @@ void main() {
       throwsA(isA<SyncConflictException>()),
     );
     expect(reads, 1);
+  });
+
+  test('download rejects matching revision with divergent content hash', () async {
+    final t = MemTokens();
+    await t.write(
+      'google_drive_oauth:id',
+      jsonEncode({'access_token': 'a', 'expires_at': '2999-01-01T00:00:00Z'}),
+    );
+    var mediaReads = 0;
+    final client = MockClient((r) async {
+      if (r.url.queryParameters['alt'] == 'media') {
+        mediaReads++;
+        return http.Response.bytes([1], 200);
+      }
+      return http.Response(
+        jsonEncode({
+          'version': '3',
+          'appProperties': {'realmwiseSha256': 'remote-sha'},
+        }),
+        200,
+      );
+    });
+    final auth = GoogleDriveOAuthAuthenticator(
+      clientId: 'id',
+      redirectUri: Uri.parse('http://localhost'),
+      browser: B(),
+      callback: C(Uri.parse('http://localhost')),
+      tokenStore: GoogleDriveTokenStore(t),
+      httpClient: client,
+    );
+    final provider = GoogleDriveProvider(
+      authenticator: auth,
+      tokenStore: GoogleDriveTokenStore(t),
+      httpClient: client,
+    );
+    await expectLater(
+      provider.download(
+        const SyncAuthSession(accountId: 'x'),
+        const SyncRemoteTarget(id: 'f', name: 'f'),
+        precondition: const SyncPrecondition(
+          revision: SyncRevision('3'),
+          contentHash: 'expected-sha',
+        ),
+      ),
+      throwsA(isA<SyncConflictException>()),
+    );
+    expect(mediaReads, 0);
+  });
+
+  test('metadata does not treat Drive MD5 as Realmwise SHA-256', () async {
+    final t = MemTokens();
+    await t.write(
+      'google_drive_oauth:id',
+      jsonEncode({'access_token': 'a', 'expires_at': '2999-01-01T00:00:00Z'}),
+    );
+    final client = MockClient((_) async => http.Response(
+          jsonEncode({'version': '3', 'md5Checksum': 'md5-value'}),
+          200,
+        ));
+    final auth = GoogleDriveOAuthAuthenticator(
+      clientId: 'id',
+      redirectUri: Uri.parse('http://localhost'),
+      browser: B(),
+      callback: C(Uri.parse('http://localhost')),
+      tokenStore: GoogleDriveTokenStore(t),
+      httpClient: client,
+    );
+    final metadata = await GoogleDriveProvider(
+      authenticator: auth,
+      tokenStore: GoogleDriveTokenStore(t),
+      httpClient: client,
+    ).metadata(
+      const SyncAuthSession(accountId: 'x'),
+      const SyncRemoteTarget(id: 'f', name: 'f'),
+    );
+    expect(metadata?.contentHash, isEmpty);
   });
 
   test('download integrity mismatch and revision conflict', () async {
