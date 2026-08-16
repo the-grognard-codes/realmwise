@@ -21,7 +21,9 @@ class SyncCoordinator {
 
   /// Compares both sides with the last committed pair.  A metadata lookup
   /// failure is deliberately distinguishable from an empty remote file.
-  Future<SyncClassificationResult> classify(String? currentLocalFingerprint) async {
+  Future<SyncClassificationResult> classify(
+    String? currentLocalFingerprint,
+  ) async {
     final p = provider, s = session, t = target, saved = metadata;
     if (p == null || s == null || t == null || saved == null) {
       return const SyncClassificationResult(SyncClassification.unknownError);
@@ -34,11 +36,43 @@ class SyncCoordinator {
       if (remote == null) {
         return const SyncClassificationResult(SyncClassification.unknownError);
       }
-      final localChanged = currentLocalFingerprint == null ||
+      final localChanged =
           currentLocalFingerprint != saved.lastSuccessfulLocalFingerprint;
-      final remoteChanged = saved.revision == null || saved.contentHash == null ||
-          remote.revision.value != saved.revision ||
-          remote.contentHash != saved.contentHash;
+      // A provider revision can advance while the Realmwise payload remains
+      // unchanged.  The non-null content hash is the authoritative payload
+      // identity in that case; reconcile the benign revision churn so the
+      // next classification compares against the current remote revision.
+      final sameContent =
+          saved.contentHash != null &&
+          saved.contentHash!.isNotEmpty &&
+          remote.contentHash.isNotEmpty &&
+          remote.contentHash == saved.contentHash;
+      if (sameContent && remote.revision.value != saved.revision) {
+        metadata = SyncMetadata(
+          catalogIdentity: saved.catalogIdentity,
+          provider: saved.provider,
+          accountId: saved.accountId,
+          accountDisplayName: saved.accountDisplayName,
+          remoteTargetId: saved.remoteTargetId,
+          remoteTargetName: saved.remoteTargetName,
+          revision: remote.revision.value,
+          contentHash: remote.contentHash,
+          lastSuccessfulLocalFingerprint: saved.lastSuccessfulLocalFingerprint,
+          createdAt: saved.createdAt,
+          updatedAt: DateTime.now().toUtc(),
+          state: saved.state,
+          error: saved.error,
+        );
+        await metadataStorage.write(metadata!);
+      }
+      final remoteChanged =
+          !sameContent &&
+          (saved.revision == null ||
+              saved.contentHash == null ||
+              saved.contentHash!.isEmpty ||
+              remote.contentHash.isEmpty ||
+              remote.revision.value != saved.revision ||
+              remote.contentHash != saved.contentHash);
       final kind = switch ((localChanged, remoteChanged)) {
         (false, false) => SyncClassification.noChanges,
         (true, false) => SyncClassification.localOnly,
@@ -47,7 +81,10 @@ class SyncCoordinator {
       };
       return SyncClassificationResult(kind, remote: remote);
     } on Object catch (error) {
-      return SyncClassificationResult(SyncClassification.unknownError, error: error);
+      return SyncClassificationResult(
+        SyncClassification.unknownError,
+        error: error,
+      );
     }
   }
 
@@ -73,7 +110,8 @@ class SyncCoordinator {
       throw StateError('The local catalog changed; review the conflict again.');
     }
     final latest = await p.metadata(s, t);
-    if (latest == null || latest.revision != observedRemote.revision ||
+    if (latest == null ||
+        latest.revision != observedRemote.revision ||
         latest.contentHash != observedRemote.contentHash) {
       throw SyncConflictException(latest ?? observedRemote);
     }
@@ -82,9 +120,15 @@ class SyncCoordinator {
       return download(expectedRemote: observedRemote);
     }
     if (payload == null || payloadFingerprint == null) {
-      throw ArgumentError('Upload replacement requires payload and fingerprint.');
+      throw ArgumentError(
+        'Upload replacement requires payload and fingerprint.',
+      );
     }
-    await sync(payload, localFingerprint: payloadFingerprint, expectedRemote: observedRemote);
+    await sync(
+      payload,
+      localFingerprint: payloadFingerprint,
+      expectedRemote: observedRemote,
+    );
     return null;
   }
 
@@ -251,10 +295,13 @@ class SyncCoordinator {
         current.remoteTargetId == t.id &&
         current.lastSuccessfulLocalFingerprint == localFingerprint &&
         current.revision != null &&
-        current.contentHash != null) {
+        current.contentHash != null &&
+        current.contentHash!.isNotEmpty) {
       try {
         final remote = await p.metadata(s, t);
-        if (remote != null && remote.contentHash == current.contentHash) {
+        if (remote != null &&
+            remote.contentHash.isNotEmpty &&
+            remote.contentHash == current.contentHash) {
           // Drive can advance a file revision for its own metadata processing
           // after a successful Realmwise upload.  Its Realmwise-managed
           // payload hash is the authoritative indication that the portable
@@ -297,7 +344,10 @@ class SyncCoordinator {
         t,
         payload,
         precondition: expectedRemote != null
-            ? SyncPrecondition(revision: expectedRemote.revision, contentHash: expectedRemote.contentHash)
+            ? SyncPrecondition(
+                revision: expectedRemote.revision,
+                contentHash: expectedRemote.contentHash,
+              )
             : current.revision == null
             ? null
             : SyncPrecondition(
@@ -349,7 +399,9 @@ class SyncCoordinator {
     return metadata!;
   }
 
-  Future<SyncDownloadResult> download({SyncRemoteMetadata? expectedRemote}) async {
+  Future<SyncDownloadResult> download({
+    SyncRemoteMetadata? expectedRemote,
+  }) async {
     final p = provider, s = session, t = target, current = metadata;
     if (p == null || s == null || t == null || current == null) {
       throw StateError('Connect Google Drive before restoring.');
