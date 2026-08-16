@@ -87,30 +87,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } on SyncDecisionRequired catch (decision) {
       if (!mounted) return;
       if (decision.result.classification == SyncClassification.unknownError) {
-        throw StateError('Sync status could not be checked. Retry without changing either catalog.');
+        throw StateError(
+          'Sync status could not be checked. Retry without changing either catalog.',
+        );
       }
       final localFingerprint = decision.localFingerprint ?? '';
       final choice = await showDialog<SyncConflictChoice>(
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Catalogs differ'),
-          content: const Text('Choose which catalog to keep. Download replaces this device with the remote catalog. Upload replaces the remote catalog with this device. Cancel leaves both unchanged.'),
+          content: const Text(
+            'Choose which catalog to keep. Download replaces this device with the remote catalog. Upload replaces the remote catalog with this device. Cancel leaves both unchanged.',
+          ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, SyncConflictChoice.cancel), child: const Text('Cancel')),
-            OutlinedButton(onPressed: () => Navigator.pop(context, SyncConflictChoice.downloadReplaceLocal), child: const Text('Download and replace local')),
-            FilledButton(onPressed: () => Navigator.pop(context, SyncConflictChoice.uploadReplaceRemote), child: const Text('Upload and replace remote')),
+            TextButton(
+              onPressed: () =>
+                  Navigator.pop(context, SyncConflictChoice.cancel),
+              child: const Text('Cancel'),
+            ),
+            OutlinedButton(
+              onPressed: () => Navigator.pop(
+                context,
+                SyncConflictChoice.downloadReplaceLocal,
+              ),
+              child: const Text('Download and replace local'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(
+                context,
+                SyncConflictChoice.uploadReplaceRemote,
+              ),
+              child: const Text('Upload and replace remote'),
+            ),
           ],
         ),
       );
       if (choice == null || choice == SyncConflictChoice.cancel) return;
-      await widget.controller.resolveSyncDecision(choice,
-          decision: decision.result, localFingerprint: localFingerprint);
+      await widget.controller.resolveSyncDecision(
+        choice,
+        decision: decision.result,
+        localFingerprint: localFingerprint,
+      );
     }
     if (!mounted) return;
     final providerLabel =
         widget.controller.selectedProvider?.provider == 'onedrive'
         ? 'Microsoft OneDrive'
-        : widget.controller.selectedProvider?.provider == 'dropbox' ? 'Dropbox' : 'Google Drive';
+        : widget.controller.selectedProvider?.provider == 'dropbox'
+        ? 'Dropbox'
+        : 'Google Drive';
     final message =
         widget.controller.syncCoordinator.lastOutcome ==
             SyncOutcome.alreadySynced
@@ -326,6 +351,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ).showSnackBar(SnackBar(content: Text('Bundle is not valid: $error')));
       return;
     }
+    if (!mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -424,28 +450,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } on SyncDecisionRequired catch (decision) {
       if (!mounted) return;
       if (decision.result.classification == SyncClassification.unknownError) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sync status unavailable. Retry; nothing was changed.')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Sync status unavailable. Retry; nothing was changed.',
+            ),
+          ),
+        );
         return;
       }
       final choice = await showDialog<SyncConflictChoice>(
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Catalogs differ'),
-          content: const Text('Downloading replaces this device with the remote catalog. Upload replaces the remote catalog with this device. Cancel leaves both unchanged.'),
+          content: const Text(
+            'Downloading replaces this device with the remote catalog. Upload replaces the remote catalog with this device. Cancel leaves both unchanged.',
+          ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, SyncConflictChoice.cancel), child: const Text('Cancel')),
-            OutlinedButton(onPressed: () => Navigator.pop(context, SyncConflictChoice.downloadReplaceLocal), child: const Text('Download and replace local')),
-            FilledButton(onPressed: () => Navigator.pop(context, SyncConflictChoice.uploadReplaceRemote), child: const Text('Upload and replace remote')),
+            TextButton(
+              onPressed: () =>
+                  Navigator.pop(context, SyncConflictChoice.cancel),
+              child: const Text('Cancel'),
+            ),
+            OutlinedButton(
+              onPressed: () => Navigator.pop(
+                context,
+                SyncConflictChoice.downloadReplaceLocal,
+              ),
+              child: const Text('Download and replace local'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(
+                context,
+                SyncConflictChoice.uploadReplaceRemote,
+              ),
+              child: const Text('Upload and replace remote'),
+            ),
           ],
         ),
       );
       if (choice != null && choice != SyncConflictChoice.cancel) {
-        await widget.controller.resolveSyncDecision(choice,
-            decision: decision.result, localFingerprint: decision.localFingerprint ?? '');
+        await widget.controller.resolveSyncDecision(
+          choice,
+          decision: decision.result,
+          localFingerprint: decision.localFingerprint ?? '',
+        );
       }
       return;
     } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not download remote catalog: $error')));
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not download remote catalog: $error')),
+        );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -780,8 +836,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final providers = widget.controller.availableProviders;
     final selected = widget.controller.selectedProvider;
     final connected = widget.controller.providerSelectionLocked;
-    String label(SyncProvider p) =>
-        p.provider == 'onedrive' ? 'Microsoft OneDrive' : p.provider == 'dropbox' ? 'Dropbox' : 'Google Drive';
+    String label(SyncProvider p) => p.provider == 'onedrive'
+        ? 'Microsoft OneDrive'
+        : p.provider == 'dropbox'
+        ? 'Dropbox'
+        : 'Google Drive';
     final status = providers.isEmpty
         ? 'Cloud sync is not configured on this build.'
         : connected
@@ -824,7 +883,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onPressed: _busy || selected == null || connected
                     ? null
                     : () => _run(
-                        selected.provider == 'onedrive' ? widget.controller.connectOneDrive : selected.provider == 'dropbox' ? widget.controller.connectDropbox : widget.controller.connectGoogleDrive,
+                        selected.provider == 'onedrive'
+                            ? widget.controller.connectOneDrive
+                            : selected.provider == 'dropbox'
+                            ? widget.controller.connectDropbox
+                            : widget.controller.connectGoogleDrive,
                         success: '${label(selected)} connected.',
                       ),
                 icon: const Icon(Icons.login),

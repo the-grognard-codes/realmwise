@@ -332,7 +332,7 @@ class AppController extends ChangeNotifier {
       'realmwise-conflict-${DateTime.now().microsecondsSinceEpoch}.realmwise',
     );
     try {
-      final localBackup = () => backups.createBackup(
+      Future<void> localBackup() => backups.createBackup(
         databasePath: database.databasePath,
         database: database.databaseHandle,
       );
@@ -575,7 +575,7 @@ class AppController extends ChangeNotifier {
     try {
       await Directory(path.dirname(backup)).create(recursive: true);
       await File(active).copy(backup);
-      await File(active).rename(backup + '.swap');
+      await File(active).rename('$backup.swap');
       originalMoved = true;
       await File(staged).rename(active);
       swapped = true;
@@ -588,7 +588,7 @@ class AppController extends ChangeNotifier {
         if (originalMoved) {
           final current = File(active);
           if (await current.exists()) await current.delete();
-          final old = File(backup + '.swap');
+          final old = File('$backup.swap');
           if (await old.exists()) {
             await old.rename(active);
           } else if (await File(backup).exists()) {
@@ -601,7 +601,7 @@ class AppController extends ChangeNotifier {
     } finally {
       final stagedFile = File(staged);
       if (await stagedFile.exists()) await stagedFile.delete();
-      final old = File(backup + '.swap');
+      final old = File('$backup.swap');
       if (await old.exists() && swapped) await old.delete();
       if (!committed) {
         final importedAssets = Directory(importImageRoot);

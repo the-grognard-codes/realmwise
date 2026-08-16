@@ -1,6 +1,10 @@
+Add normal structured download diagnostics with the planned logging feature.
+
+
 Add default and debug level logging feature.
     Any logging built in by default?
     Toggle in the UI
+    Add normal structured download diagnostics with the planned logging feature.
     
 Find out about Android publication.
     Get a manifest of what is required packages, builds, etc.

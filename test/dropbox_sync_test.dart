@@ -9,11 +9,14 @@ import 'package:realmwise/services/sync_contract.dart';
 
 class _Store implements TokenStorage {
   final m = <String, String>{};
+  @override
   Future<String?> read(String k) async => m[k];
+  @override
   Future<void> write(String k, String v) async {
     m[k] = v;
   }
 
+  @override
   Future<void> delete(String k) async {
     m.remove(k);
   }
@@ -21,6 +24,7 @@ class _Store implements TokenStorage {
 
 class _Browser implements DropboxOAuthBrowser {
   Uri? opened;
+  @override
   Future<void> open(Uri u) async {
     opened = u;
   }
@@ -29,6 +33,7 @@ class _Browser implements DropboxOAuthBrowser {
 class _Callback implements DropboxOAuthCallback {
   _Callback(this.uri);
   final Uri uri;
+  @override
   Future<Uri> waitForCallback() async => uri;
 }
 
