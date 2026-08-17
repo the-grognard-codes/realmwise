@@ -109,6 +109,75 @@ abstract interface class SyncProvider
   String get provider;
 }
 
+/// A provider-side, advisory fencing lease.  Implementations store this as a
+/// separate object from the catalog bundle and must use the provider's
+/// conditional revision/ETag writes for every mutation.
+abstract interface class SyncLeaseProvider {
+  Future<SyncLease?> readLease(
+    SyncAuthSession session,
+    SyncRemoteTarget target,
+    String catalogIdentity,
+  );
+
+  Future<SyncLease> acquireLease(
+    SyncAuthSession session,
+    SyncRemoteTarget target,
+    String catalogIdentity, {
+    required String deviceId,
+    required String deviceName,
+    required Duration duration,
+    bool takeover = false,
+  });
+
+  Future<SyncLease> renewLease(
+    SyncAuthSession session,
+    SyncRemoteTarget target,
+    String catalogIdentity, {
+    required String deviceId,
+    required String token,
+    required Duration duration,
+  });
+
+  Future<void> releaseLease(
+    SyncAuthSession session,
+    SyncRemoteTarget target,
+    String catalogIdentity, {
+    required String deviceId,
+    required String token,
+  });
+}
+
+class SyncLease {
+  const SyncLease({
+    required this.catalogIdentity,
+    required this.ownerDeviceId,
+    required this.ownerDeviceName,
+    required this.generation,
+    required this.token,
+    required this.issuedAt,
+    required this.expiresAt,
+    required this.lastRenewedAt,
+    this.remoteRevision,
+  });
+  final String catalogIdentity, ownerDeviceId, ownerDeviceName, generation, token;
+  final DateTime issuedAt, expiresAt, lastRenewedAt;
+  final SyncRevision? remoteRevision;
+  bool isValidAt(DateTime now) => expiresAt.isAfter(now);
+}
+
+class SyncLeaseContendedException implements Exception {
+  const SyncLeaseContendedException(this.lease);
+  final SyncLease lease;
+  @override
+  String toString() => 'Automatic sync is owned by another device.';
+}
+
+class SyncLeaseLostException implements Exception {
+  const SyncLeaseLostException();
+  @override
+  String toString() => 'Automatic sync ownership was lost.';
+}
+
 /// Optional provider capability. Providers that cannot enumerate/delete old
 /// revisions simply omit this interface; the current bundle is always kept.
 abstract interface class SyncRetentionProvider {

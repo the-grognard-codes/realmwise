@@ -56,6 +56,16 @@ class SyncMetadata {
     this.error,
     this.includePersonalImages = false,
     this.retainedRevisionCount = 3,
+    this.automaticSyncEnabled = false,
+    this.deviceId,
+    this.deviceName,
+    this.ownershipGeneration,
+    this.leaseToken,
+    this.leaseExpiresAt,
+    this.lastLeaseRenewedAt,
+    this.lastAutomaticAttemptAt,
+    this.lastAutomaticSuccessAt,
+    this.automaticSchedulerState,
   });
 
   final String catalogIdentity;
@@ -72,6 +82,11 @@ class SyncMetadata {
   final String? error;
   final bool includePersonalImages;
   final int retainedRevisionCount;
+  final bool automaticSyncEnabled;
+  final String? deviceId, deviceName, ownershipGeneration, leaseToken,
+      automaticSchedulerState;
+  final DateTime? leaseExpiresAt, lastLeaseRenewedAt, lastAutomaticAttemptAt,
+      lastAutomaticSuccessAt;
 
   Map<String, Object?> toJson() => {
     'schemaVersion': 1,
@@ -90,6 +105,16 @@ class SyncMetadata {
     'error': error == null ? null : sanitizeSyncError(error!),
     'includePersonalImages': includePersonalImages,
     'retainedRevisionCount': retainedRevisionCount,
+    'automaticSyncEnabled': automaticSyncEnabled,
+    'deviceId': deviceId,
+    'deviceName': deviceName,
+    'ownershipGeneration': ownershipGeneration,
+    'leaseToken': leaseToken,
+    'leaseExpiresAt': leaseExpiresAt?.toIso8601String(),
+    'lastLeaseRenewedAt': lastLeaseRenewedAt?.toIso8601String(),
+    'lastAutomaticAttemptAt': lastAutomaticAttemptAt?.toIso8601String(),
+    'lastAutomaticSuccessAt': lastAutomaticSuccessAt?.toIso8601String(),
+    'automaticSchedulerState': automaticSchedulerState,
   };
 
   factory SyncMetadata.fromJson(Map<String, Object?> json) => SyncMetadata(
@@ -113,6 +138,46 @@ class SyncMetadata {
     includePersonalImages: json['includePersonalImages'] as bool? ?? false,
     retainedRevisionCount:
         (json['retainedRevisionCount'] as num?)?.toInt() ?? 3,
+    automaticSyncEnabled: json['automaticSyncEnabled'] as bool? ?? false,
+    deviceId: json['deviceId'] as String?,
+    deviceName: json['deviceName'] as String?,
+    ownershipGeneration: json['ownershipGeneration'] as String?,
+    leaseToken: json['leaseToken'] as String?,
+    leaseExpiresAt: _date(json['leaseExpiresAt']),
+    lastLeaseRenewedAt: _date(json['lastLeaseRenewedAt']),
+    lastAutomaticAttemptAt: _date(json['lastAutomaticAttemptAt']),
+    lastAutomaticSuccessAt: _date(json['lastAutomaticSuccessAt']),
+    automaticSchedulerState: json['automaticSchedulerState'] as String?,
+  );
+
+  SyncMetadata copyWith({
+    bool? automaticSyncEnabled,
+    String? deviceId,
+    String? deviceName,
+    String? ownershipGeneration,
+    String? leaseToken,
+    DateTime? leaseExpiresAt,
+    DateTime? lastLeaseRenewedAt,
+    DateTime? lastAutomaticAttemptAt,
+    DateTime? lastAutomaticSuccessAt,
+    String? automaticSchedulerState,
+    bool clearLease = false,
+  }) => SyncMetadata(
+    catalogIdentity: catalogIdentity, provider: provider, accountId: accountId,
+    accountDisplayName: accountDisplayName, remoteTargetId: remoteTargetId,
+    remoteTargetName: remoteTargetName, revision: revision,
+    contentHash: contentHash, lastSuccessfulLocalFingerprint: lastSuccessfulLocalFingerprint,
+    createdAt: createdAt, updatedAt: DateTime.now().toUtc(), state: state, error: error,
+    includePersonalImages: includePersonalImages, retainedRevisionCount: retainedRevisionCount,
+    automaticSyncEnabled: automaticSyncEnabled ?? this.automaticSyncEnabled,
+    deviceId: deviceId ?? this.deviceId, deviceName: deviceName ?? this.deviceName,
+    ownershipGeneration: clearLease ? null : ownershipGeneration ?? this.ownershipGeneration,
+    leaseToken: clearLease ? null : leaseToken ?? this.leaseToken,
+    leaseExpiresAt: clearLease ? null : leaseExpiresAt ?? this.leaseExpiresAt,
+    lastLeaseRenewedAt: clearLease ? null : lastLeaseRenewedAt ?? this.lastLeaseRenewedAt,
+    lastAutomaticAttemptAt: lastAutomaticAttemptAt ?? this.lastAutomaticAttemptAt,
+    lastAutomaticSuccessAt: lastAutomaticSuccessAt ?? this.lastAutomaticSuccessAt,
+    automaticSchedulerState: automaticSchedulerState ?? this.automaticSchedulerState,
   );
 
   static DateTime? _date(Object? value) =>

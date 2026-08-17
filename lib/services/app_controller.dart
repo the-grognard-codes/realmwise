@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
@@ -30,7 +32,7 @@ enum CatalogHierarchyOrder {
 }
 
 /// Application session state: selected database, theme preference, and services.
-class AppController extends ChangeNotifier {
+class AppController extends ChangeNotifier with WidgetsBindingObserver {
   AppController({
     TokenStorage? tokenStorage,
     this.imageRootPathOverride,
@@ -94,20 +96,50 @@ class AppController extends ChangeNotifier {
       CatalogHierarchyOrder.gameSystemSettingBookType;
   bool includePersonalImagesInBundles = false;
   Future<void>? _syncFuture;
+  Timer? _automaticSyncTimer;
+  Future<void>? _automaticFuture;
+  Future<void> _operationTail = Future<void>.value();
+  bool automaticSyncEnabled = false;
+  String deviceId = '';
+  String deviceName = '';
+  DateTime? automaticSyncLastAttempt;
+  DateTime? automaticSyncLastSuccess;
+  String? automaticSyncError;
+
+  /// The coordinator owns the cloud lease. This flag is intentionally false
+  /// until the coordinator has confirmed ownership; local preferences alone
+  /// must never authorize an automatic upload.
+  bool automaticSyncOwnershipValid = false;
   SyncProgress? syncProgress;
   bool get isSyncing => _syncFuture != null || syncCoordinator.isSyncing;
   void cancelSync() => syncCoordinator.cancel();
 
   Future<void> _cancelAndAwaitSync() async {
+    _automaticSyncTimer?.cancel();
     final running = _syncFuture;
-    if (running == null) return;
-    syncCoordinator.cancel();
-    try {
-      await running;
-    } on Object {
-      // Lifecycle changes intentionally absorb cancellation/failure; the
-      // catalog remains intact and the next open can restore its metadata.
+    if (running != null) {
+      syncCoordinator.cancel();
+      try {
+        await running;
+      } on Object {
+        // Lifecycle changes intentionally absorb cancellation/failure; the
+        // catalog remains intact and the next open can restore its metadata.
+      }
     }
+    final automatic = _automaticFuture;
+    if (automatic != null) {
+      try {
+        await automatic;
+      } on Object {
+        // Closing is best effort and must not be blocked by cloud failure.
+      }
+    }
+  }
+
+  Future<T> _serialize<T>(Future<T> Function() action) {
+    final result = _operationTail.then((_) => action());
+    _operationTail = result.then<void>((_) {}, onError: (_, __) {});
+    return result;
   }
 
   // Work IDs observed after opening a database are the session baseline. Any
@@ -121,6 +153,23 @@ class AppController extends ChangeNotifier {
   Future<void> initialize() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      deviceId = prefs.getString('realmwise.device.id') ?? '';
+      if (deviceId.isEmpty) {
+        final random = Random.secure();
+        deviceId = List<String>.generate(
+          16,
+          (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+        ).join();
+        await prefs.setString('realmwise.device.id', deviceId);
+      }
+      deviceName =
+          prefs.getString('realmwise.device.name') ??
+          (Platform.isAndroid
+              ? 'Android device'
+              : Platform.isWindows
+              ? 'Windows device'
+              : 'Realmwise device');
+      WidgetsBinding.instance.addObserver(this);
       syncCoordinator = SyncCoordinator(
         metadataStorage: SharedPreferencesSyncMetadataStorage(prefs),
       );
@@ -182,6 +231,13 @@ class AppController extends ChangeNotifier {
     final catalogIdentity = await database.ensureCatalogIdentity();
     syncMetadata = await syncCoordinator.metadataStorage.read(catalogIdentity);
     syncCoordinator.metadata = syncMetadata;
+    automaticSyncEnabled = syncMetadata?.automaticSyncEnabled ?? false;
+    automaticSyncOwnershipValid =
+        automaticSyncEnabled &&
+        syncMetadata?.deviceId == deviceId &&
+        syncMetadata?.leaseToken != null &&
+        (syncMetadata?.leaseExpiresAt?.isAfter(DateTime.now().toUtc()) ??
+            false);
     final savedSync = syncMetadata;
     final provider = savedSync?.provider == null
         ? null
@@ -231,6 +287,180 @@ class AppController extends ChangeNotifier {
       await prefs.setString('last_database_path', database.databasePath);
     }
     notifyListeners();
+    if (automaticSyncEnabled) scheduleAutomaticSync();
+  }
+
+  Future<void> setDeviceName(String value) async {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) throw ArgumentError('Enter a device name.');
+    deviceName = trimmed;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('realmwise.device.name', trimmed);
+    notifyListeners();
+  }
+
+  Future<void> setAutomaticSyncEnabled(bool enabled) async {
+    final metadata = syncCoordinator.metadata;
+    if (metadata == null || !syncCoordinator.isConnected) {
+      throw StateError(
+        'Connect a cloud provider before enabling automatic sync.',
+      );
+    }
+    _automaticSyncTimer?.cancel();
+    if (enabled) {
+      await syncCoordinator.enableAutomaticSync(
+        deviceId: deviceId,
+        deviceName: deviceName,
+      );
+      automaticSyncOwnershipValid = true;
+      scheduleAutomaticSync();
+    } else {
+      await syncCoordinator.disableAutomaticSync();
+      automaticSyncOwnershipValid = false;
+    }
+    automaticSyncEnabled = enabled;
+    automaticSyncError = null;
+    syncMetadata = syncCoordinator.metadata;
+    notifyListeners();
+  }
+
+  Future<void> takeOverAutomaticSync() async {
+    if (!syncCoordinator.isConnected) {
+      throw StateError('Connect a cloud provider first.');
+    }
+    await syncCoordinator.takeOverAutomaticSync(
+      deviceId: deviceId,
+      deviceName: deviceName,
+      confirmed: true,
+    );
+    automaticSyncEnabled = true;
+    automaticSyncOwnershipValid = false;
+    syncMetadata = syncCoordinator.metadata;
+    notifyListeners();
+    // A takeover must validate the remote state before the first upload.
+    await _validateAutomaticRemote();
+  }
+
+  void scheduleAutomaticSync({Duration debounce = const Duration(seconds: 5)}) {
+    if (!automaticSyncEnabled || !automaticSyncOwnershipValid) return;
+    _automaticSyncTimer?.cancel();
+    _automaticSyncTimer = Timer(debounce, () {
+      final running = _runAutomaticSync();
+      _automaticFuture = running;
+      unawaited(
+        running.whenComplete(() {
+          if (identical(_automaticFuture, running)) _automaticFuture = null;
+        }),
+      );
+    });
+  }
+
+  Future<void> _runAutomaticSync() async {
+    if (!automaticSyncEnabled || !automaticSyncOwnershipValid || isSyncing)
+      return;
+    automaticSyncLastAttempt = DateTime.now().toUtc();
+    notifyListeners();
+    try {
+      await _serialize(_automaticUploadInternal);
+      automaticSyncLastSuccess = DateTime.now().toUtc();
+      automaticSyncError = null;
+    } catch (error) {
+      automaticSyncError = error.toString().replaceFirst('Exception: ', '');
+      if (error is SyncLeaseLostException) {
+        automaticSyncEnabled = false;
+        automaticSyncOwnershipValid = false;
+        _automaticSyncTimer?.cancel();
+        syncMetadata = syncCoordinator.metadata;
+      }
+    }
+    notifyListeners();
+  }
+
+  Future<void> _automaticUploadInternal() async {
+    if (!database.isOpen) throw StateError('Open a catalog first.');
+    final temporary = await getTemporaryDirectory();
+    final bundlePath = path.join(
+      temporary.path,
+      'realmwise-auto-${DateTime.now().microsecondsSinceEpoch}.realmwise',
+    );
+    try {
+      await exportDeviceBundle(bundlePath);
+      final manifest = await bundles.validateBundle(bundlePath);
+      syncMetadata = await syncCoordinator.automaticUpload(
+        Uint8List.fromList(await File(bundlePath).readAsBytes()),
+        localFingerprint: manifest.contentFingerprint,
+      );
+    } finally {
+      final file = File(bundlePath);
+      if (await file.exists()) await file.delete();
+    }
+  }
+
+  Future<void> _validateAutomaticRemote() async {
+    final temporary = await getTemporaryDirectory();
+    final bundlePath = path.join(
+      temporary.path,
+      'realmwise-auto-validate-${DateTime.now().microsecondsSinceEpoch}.realmwise',
+    );
+    try {
+      await _serialize(() async {
+        await exportDeviceBundle(bundlePath);
+        final manifest = await bundles.validateBundle(bundlePath);
+        final decision = await syncCoordinator.classify(
+          manifest.contentFingerprint,
+        );
+        if (decision.classification == SyncClassification.divergent ||
+            decision.classification == SyncClassification.unknownError ||
+            decision.classification == SyncClassification.remoteOnly) {
+          throw SyncDecisionRequired(
+            decision,
+            localFingerprint: manifest.contentFingerprint,
+          );
+        }
+      });
+      automaticSyncOwnershipValid = true;
+      syncMetadata = syncCoordinator.metadata;
+      scheduleAutomaticSync();
+      notifyListeners();
+    } catch (_) {
+      automaticSyncOwnershipValid = false;
+      rethrow;
+    } finally {
+      final file = File(bundlePath);
+      if (await file.exists()) await file.delete();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      if (automaticSyncEnabled) unawaited(_refreshAutomaticLease());
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      // Best effort only: lifecycle callbacks must never delay closing.
+      if (automaticSyncEnabled && automaticSyncOwnershipValid) {
+        final running = _runAutomaticSync();
+        _automaticFuture = running;
+        unawaited(
+          running.whenComplete(() {
+            if (identical(_automaticFuture, running)) _automaticFuture = null;
+          }),
+        );
+      }
+    }
+  }
+
+  Future<void> _refreshAutomaticLease() async {
+    try {
+      final lease = await syncCoordinator.refreshAutomaticLease();
+      automaticSyncOwnershipValid = lease != null;
+      syncMetadata = syncCoordinator.metadata;
+      if (lease != null) scheduleAutomaticSync();
+      notifyListeners();
+    } catch (error) {
+      automaticSyncError = error.toString().replaceFirst('Exception: ', '');
+      notifyListeners();
+    }
   }
 
   Future<void> _migrateRpgGeekToken(String catalogIdentity) async {
@@ -848,6 +1078,7 @@ class AppController extends ChangeNotifier {
           .whereType<int>()
           .where((id) => !_sessionBaselineWorkIds.contains(id)),
     );
+    scheduleAutomaticSync();
   }
 
   /// Clears the session-only NEW marker for a work once it is selected.
@@ -859,6 +1090,8 @@ class AppController extends ChangeNotifier {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _automaticSyncTimer?.cancel();
     unawaited(backups.stop());
     unawaited(database.close());
     _http.close();

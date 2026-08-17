@@ -82,6 +82,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
     success: 'RPGGeek key saved in this local database.',
   );
 
+  Future<void> _editDeviceName() async {
+    final name = TextEditingController(text: widget.controller.deviceName);
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Name this device'),
+        content: TextField(
+          controller: name,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(labelText: 'Device name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (accepted == true && mounted) {
+      await _run(
+        () => widget.controller.setDeviceName(name.text),
+        success: 'Device name saved.',
+      );
+    }
+    name.dispose();
+  }
+
+  Future<void> _confirmTakeover() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Take over automatic sync?'),
+        content: const Text(
+          'This device will request ownership of automatic backups. If another device is online, it may continue until it next contacts cloud storage; takeover does not instantly disable an offline device.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Take over'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await _run(
+        widget.controller.takeOverAutomaticSync,
+        success: 'Automatic sync ownership request sent.',
+      );
+    }
+  }
+
   Future<void> _syncNow() async {
     try {
       await widget.controller.syncNow();
@@ -904,6 +965,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
+    final automaticSection = _Section(
+      title: 'Automatic sync',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Automatic sync'),
+            subtitle: Text(
+              widget.controller.automaticSyncEnabled
+                  ? (widget.controller.automaticSyncOwnershipValid
+                        ? 'This device owns automatic sync.'
+                        : 'Waiting for cloud ownership confirmation; uploads are paused.')
+                  : 'Off. Manual Sync now remains available.',
+            ),
+            value: widget.controller.automaticSyncEnabled,
+            onChanged: _busy || !connected
+                ? null
+                : (value) => _run(
+                    () => value
+                        ? widget.controller.setAutomaticSyncEnabled(true)
+                        : widget.controller.setAutomaticSyncEnabled(false),
+                  ),
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              widget.controller.deviceName.isEmpty
+                  ? 'This device'
+                  : widget.controller.deviceName,
+            ),
+            subtitle: Text(
+              'Device ID: ${widget.controller.deviceId.isEmpty ? 'Unavailable' : widget.controller.deviceId}',
+            ),
+            trailing: IconButton(
+              icon: const Icon(Icons.edit),
+              tooltip: 'Edit device name',
+              onPressed: _busy ? null : _editDeviceName,
+            ),
+          ),
+          if (connected && !widget.controller.automaticSyncOwnershipValid)
+            OutlinedButton.icon(
+              onPressed: _busy || !connected ? null : _confirmTakeover,
+              icon: const Icon(Icons.switch_account_outlined),
+              label: const Text('Take over automatic sync'),
+            ),
+          if (widget.controller.automaticSyncLastSuccess != null)
+            Text(
+              'Last automatic sync: ${DateFormat.yMMMd().add_jm().format(widget.controller.automaticSyncLastSuccess!.toLocal())}',
+            ),
+          if (widget.controller.automaticSyncError != null)
+            Text(
+              widget.controller.automaticSyncError!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          const SizedBox(height: 6),
+          const Text(
+            'Automatic sync is a single-device backup with controlled handoff, not realtime multi-device collaboration.',
+          ),
+        ],
+      ),
+    );
     final providerSection = _Section(
       title: 'Sync Providers',
       child: Column(
@@ -1018,6 +1141,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SizedBox(width: double.infinity, child: statusSection),
+        SizedBox(width: double.infinity, child: automaticSection),
         SizedBox(width: double.infinity, child: providerSection),
         SizedBox(width: double.infinity, child: infoSection),
       ],

@@ -203,7 +203,7 @@ class GoogleDriveOAuthAuthenticator implements SyncAuthenticator {
   }
 }
 
-class GoogleDriveProvider implements SyncProvider {
+class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
   GoogleDriveProvider({
     required this.authenticator,
     required this.tokenStore,
@@ -218,6 +218,32 @@ class GoogleDriveProvider implements SyncProvider {
   final Map<String, String> _etags = {};
   @override
   String get provider => 'google_drive';
+
+  Future<String?> _leaseFile(SyncAuthSession s, String c) async {
+    final q=Uri.encodeQueryComponent("name = 'Realmwise.lease.${sha256.convert(utf8.encode(c)).toString()}' and 'appDataFolder' in parents and trashed = false");
+    final r=await _http.get(Uri.parse('https://www.googleapis.com/drive/v3/files?q=$q&spaces=appDataFolder&fields=files(id)'),headers:{'Authorization':'Bearer ${await _access(s)}'});
+    if(r.statusCode!=200)return null; final a=(jsonDecode(r.body)['files'] as List? ?? const []); return a.isEmpty?null:a.first['id'] as String;
+  }
+  Future<SyncLease?> _cloudLease(SyncAuthSession s,String c) async { final id=await _leaseFile(s,c); if(id==null)return null; final r=await _http.get(Uri.parse('https://www.googleapis.com/drive/v3/files/$id?fields=description,version'),headers:{'Authorization':'Bearer ${await _access(s)}'}); if(r.statusCode!=200)return null; final j=jsonDecode(r.body) as Map; final etag=r.headers['etag']; if(etag==null||etag.isEmpty)return null; _etags[id]=etag; final x=jsonDecode(j['description'] as String) as Map; return SyncLease(catalogIdentity:c,ownerDeviceId:x['ownerDeviceId'] as String,ownerDeviceName:x['ownerDeviceName'] as String,generation:x['generation'] as String,token:x['token'] as String,issuedAt:DateTime.parse(x['issuedAt'] as String),expiresAt:DateTime.parse(x['expiresAt'] as String),lastRenewedAt:DateTime.parse(x['lastRenewedAt'] as String),remoteRevision:SyncRevision(etag)); }
+  @override Future<SyncLease?> readLease(SyncAuthSession s, SyncRemoteTarget t, String c) => _cloudLease(s,c);
+  Future<void> _writeCloudLease(SyncAuthSession s, SyncLease l, String? id, String? revision) async { final body=jsonEncode({'catalogIdentity':l.catalogIdentity,'ownerDeviceId':l.ownerDeviceId,'ownerDeviceName':l.ownerDeviceName,'generation':l.generation,'token':l.token,'issuedAt':l.issuedAt.toIso8601String(),'expiresAt':l.expiresAt.toIso8601String(),'lastRenewedAt':l.lastRenewedAt.toIso8601String()}); final h={'Authorization':'Bearer ${await _access(s)}','Content-Type':'application/json',if(revision!=null)'If-Match':revision}; final r=id==null?await _http.post(Uri.parse('https://www.googleapis.com/drive/v3/files'),headers:h,body:jsonEncode({'name':'Realmwise.lease.${sha256.convert(utf8.encode(l.catalogIdentity))}','parents':['appDataFolder'],'mimeType':'application/octet-stream','description':body})):await _http.patch(Uri.parse('https://www.googleapis.com/drive/v3/files/$id'),headers:h,body:jsonEncode({'description':body})); if(r.statusCode==412)throw const SyncLeaseLostException(); if(r.statusCode~/100!=2)throw Exception('Drive lease write failed'); }
+  @override Future<SyncLease> acquireLease(SyncAuthSession s, SyncRemoteTarget t, String c, {required String deviceId, required String deviceName, required Duration duration, bool takeover = false}) async {
+    final o=await _cloudLease(s,c), n=DateTime.now().toUtc(); if(!takeover&&o!=null&&o.isValidAt(n)&&o.ownerDeviceId!=deviceId)throw SyncLeaseContendedException(o); final l=SyncLease(catalogIdentity:c,ownerDeviceId:deviceId,ownerDeviceName:deviceName,generation:((int.tryParse(o?.generation??'')??0)+1).toString(),token:'${deviceId}_${n.microsecondsSinceEpoch}',issuedAt:n,expiresAt:n.add(duration),lastRenewedAt:n); await _writeCloudLease(s,l,await _leaseFile(s,c),o?.remoteRevision?.value); return l;
+  }
+  @override
+  Future<SyncLease> renewLease(SyncAuthSession s, SyncRemoteTarget t, String c, {required String deviceId, required String token, required Duration duration}) async {
+    final old = await _cloudLease(s,c), now = DateTime.now().toUtc();
+    if (old == null || old.ownerDeviceId != deviceId || old.token != token || !old.isValidAt(now)) throw const SyncLeaseLostException();
+    final lease = SyncLease(catalogIdentity:c, ownerDeviceId:old.ownerDeviceId, ownerDeviceName:old.ownerDeviceName, generation:old.generation, token:old.token, issuedAt:old.issuedAt, expiresAt:now.add(duration), lastRenewedAt:now);
+    await _writeCloudLease(s,lease,await _leaseFile(s,c),old.remoteRevision?.value); return lease;
+  }
+  @override
+  Future<void> releaseLease(SyncAuthSession s, SyncRemoteTarget t, String c, {required String deviceId, required String token}) async {
+    final old = await _cloudLease(s,c);
+    if (old == null || old.ownerDeviceId != deviceId || old.token != token) return;
+    final r=await _http.delete(Uri.parse('https://www.googleapis.com/drive/v3/files/${await _leaseFile(s,c)}'),headers:{'Authorization':'Bearer ${await _access(s)}','If-Match':old.remoteRevision?.value ?? ''});
+    if (r.statusCode != 204 && r.statusCode != 200 && r.statusCode != 404) throw Exception('Drive lease release failed');
+  }
   Future<void> clearCredentials() => tokenStore.delete(authenticator._key);
   Future<SyncAuthSession?> restoreSession() async {
     final token = await tokenStore.read(authenticator._key);

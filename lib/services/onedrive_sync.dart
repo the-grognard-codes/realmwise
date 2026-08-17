@@ -10,7 +10,6 @@ import 'sync_debug.dart';
 abstract interface class OneDriveOAuthBrowser {
   Future<void> open(Uri uri);
 }
-
 abstract interface class OneDriveOAuthCallback {
   Future<Uri> waitForCallback();
 }
@@ -249,8 +248,7 @@ class OneDriveOAuthAuthenticator implements SyncAuthenticator {
     return List.generate(n, (_) => c[r.nextInt(c.length)]).join();
   }
 }
-
-class OneDriveProvider implements SyncProvider {
+class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
   OneDriveProvider({
     required this.authenticator,
     required this.tokenStore,
@@ -310,6 +308,15 @@ class OneDriveProvider implements SyncProvider {
 
   @override
   String get provider => 'onedrive';
+  String _leasePath(String c) => 'Realmwise/Realmwise.lease.${sha256.convert(utf8.encode(c)).toString()}.json';
+  Future<Map?> _leaseResource(SyncAuthSession s,String c) async { final r=await _retryTransient(() async=>_http.get(Uri.parse('https://graph.microsoft.com/v1.0/me/drive/root:/${_leasePath(c)}'),headers:await _authHeaders(s))); if(r.statusCode==404)return null; if(r.statusCode!=200)_fail(r,'OneDrive lease metadata failed'); return jsonDecode(r.body) as Map; }
+  Future<SyncLease?> _cloudLease(SyncAuthSession s,String c) async { final m=await _leaseResource(s,c); if(m==null)return null; final d=await _retryTransient(() async=>_http.get(Uri.parse('${m['@microsoft.graph.downloadUrl']}'))); if(d.statusCode!=200)throw OneDriveException('OneDrive lease download failed'); final x=jsonDecode(d.body) as Map; return SyncLease(catalogIdentity:c,ownerDeviceId:x['ownerDeviceId'] as String,ownerDeviceName:x['ownerDeviceName'] as String,generation:x['generation'] as String,token:x['token'] as String,issuedAt:DateTime.parse(x['issuedAt'] as String),expiresAt:DateTime.parse(x['expiresAt'] as String),lastRenewedAt:DateTime.parse(x['lastRenewedAt'] as String),remoteRevision:SyncRevision(m['eTag'] as String)); }
+
+  @override Future<SyncLease?> readLease(SyncAuthSession s, SyncRemoteTarget t, String c) => _cloudLease(s,c);
+  Future<SyncLease> _writeLease(SyncAuthSession s,SyncLease l,String? etag) async { final h={'Authorization':'Bearer ${await _access(s)}','Content-Type':'application/json',if(etag!=null)'If-Match':etag}; final r=await _http.put(Uri.parse('https://graph.microsoft.com/v1.0/me/drive/root:/${_leasePath(l.catalogIdentity)}:/content'),headers:h,body:jsonEncode({'catalogIdentity':l.catalogIdentity,'ownerDeviceId':l.ownerDeviceId,'ownerDeviceName':l.ownerDeviceName,'generation':l.generation,'token':l.token,'issuedAt':l.issuedAt.toIso8601String(),'expiresAt':l.expiresAt.toIso8601String(),'lastRenewedAt':l.lastRenewedAt.toIso8601String()})); if(r.statusCode==412)throw const SyncLeaseLostException(); if(r.statusCode!=200&&r.statusCode!=201) _fail(r,'OneDrive lease write failed'); return l; }
+  @override Future<SyncLease> acquireLease(SyncAuthSession s, SyncRemoteTarget t, String c, {required String deviceId, required String deviceName, required Duration duration, bool takeover = false}) async { final o=await _cloudLease(s,c),n=DateTime.now().toUtc(); if(!takeover&&o!=null&&o.isValidAt(n)&&o.ownerDeviceId!=deviceId)throw SyncLeaseContendedException(o); final l=SyncLease(catalogIdentity:c,ownerDeviceId:deviceId,ownerDeviceName:deviceName,generation:((int.tryParse(o?.generation??'')??0)+1).toString(),token:'${deviceId}_${n.microsecondsSinceEpoch}',issuedAt:n,expiresAt:n.add(duration),lastRenewedAt:n); return _writeLease(s,l,o?.remoteRevision?.value); }
+  @override Future<SyncLease> renewLease(SyncAuthSession s, SyncRemoteTarget t, String c, {required String deviceId, required String token, required Duration duration}) async { final o=await _cloudLease(s,c),n=DateTime.now().toUtc(); if(o==null||o.ownerDeviceId!=deviceId||o.token!=token||!o.isValidAt(n))throw const SyncLeaseLostException(); final l=SyncLease(catalogIdentity:c,ownerDeviceId:o.ownerDeviceId,ownerDeviceName:o.ownerDeviceName,generation:o.generation,token:o.token,issuedAt:o.issuedAt,expiresAt:n.add(duration),lastRenewedAt:n); return _writeLease(s,l,o.remoteRevision?.value); }
+  @override Future<void> releaseLease(SyncAuthSession s, SyncRemoteTarget t, String c, {required String deviceId, required String token}) async { final o=await _cloudLease(s,c); if(o==null||o.ownerDeviceId!=deviceId||o.token!=token)return; final r=await _http.delete(Uri.parse('https://graph.microsoft.com/v1.0/me/drive/root:/${_leasePath(c)}'),headers:{'Authorization':'Bearer ${await _access(s)}','If-Match':o.remoteRevision?.value??''}); if(r.statusCode!=204&&r.statusCode!=404) _fail(r,'OneDrive lease release failed'); }
   Future<void> clearCredentials() => tokenStore.delete(authenticator._key);
   Future<SyncAuthSession?> restoreSession() async {
     final t = await tokenStore.read(authenticator._key);

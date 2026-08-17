@@ -549,6 +549,154 @@ class SyncCoordinator {
     await metadataStorage.write(metadata!);
   }
 
+  /// Enables the foreground automatic-backup path and acquires the cloud
+  /// fencing lease. Providers which do not implement leases fail closed.
+  Future<SyncLease> enableAutomaticSync({
+    required String deviceId,
+    required String deviceName,
+    Duration leaseDuration = const Duration(minutes: 10),
+  }) async {
+    final p = provider, s = session, t = target, current = metadata;
+    if (p is! SyncLeaseProvider || s == null || t == null || current == null) {
+      throw StateError('This provider does not support automatic sync leases.');
+    }
+    final leases = p as SyncLeaseProvider;
+    final existing = await leases.readLease(s, t, current.catalogIdentity);
+    if (existing != null && existing.isValidAt(DateTime.now().toUtc()) &&
+        existing.ownerDeviceId != deviceId) {
+      throw SyncLeaseContendedException(existing);
+    }
+    final lease = await leases.acquireLease(s, t, current.catalogIdentity,
+        deviceId: deviceId, deviceName: deviceName, duration: leaseDuration);
+    metadata = current.copyWith(
+      automaticSyncEnabled: true,
+      deviceId: deviceId,
+      deviceName: deviceName,
+      ownershipGeneration: lease.generation,
+      leaseToken: lease.token,
+      leaseExpiresAt: lease.expiresAt,
+      lastLeaseRenewedAt: lease.lastRenewedAt,
+      automaticSchedulerState: 'ready',
+    );
+    await metadataStorage.write(metadata!);
+    return lease;
+  }
+
+  Future<SyncLease> takeOverAutomaticSync({
+    required String deviceId,
+    required String deviceName,
+    required bool confirmed,
+    Duration leaseDuration = const Duration(minutes: 10),
+  }) async {
+    if (!confirmed) throw StateError('Takeover requires explicit confirmation.');
+    final p = provider, s = session, t = target, current = metadata;
+    if (p is! SyncLeaseProvider || s == null || t == null || current == null) {
+      throw StateError('This provider does not support automatic sync leases.');
+    }
+    final leases = p as SyncLeaseProvider;
+    // The provider must re-read and conditionally fence the prior generation.
+    final lease = await leases.acquireLease(s, t, current.catalogIdentity,
+        deviceId: deviceId, deviceName: deviceName,
+        duration: leaseDuration, takeover: true);
+    metadata = current.copyWith(
+      automaticSyncEnabled: true, deviceId: deviceId, deviceName: deviceName,
+      ownershipGeneration: lease.generation, leaseToken: lease.token,
+      leaseExpiresAt: lease.expiresAt, lastLeaseRenewedAt: lease.lastRenewedAt,
+      automaticSchedulerState: 'needs_remote_validation',
+    );
+    await metadataStorage.write(metadata!);
+    return lease;
+  }
+
+  Future<void> disableAutomaticSync() async {
+    final p = provider, s = session, t = target, current = metadata;
+    if (p is SyncLeaseProvider && s != null && t != null && current != null &&
+        current.deviceId != null && current.leaseToken != null) {
+      try {
+        await (p as SyncLeaseProvider).releaseLease(s, t, current.catalogIdentity,
+            deviceId: current.deviceId!, token: current.leaseToken!);
+      } catch (_) {
+        // Local disable must never be blocked by an offline provider.
+      }
+    }
+    if (current != null) {
+      metadata = current.copyWith(automaticSyncEnabled: false,
+          automaticSchedulerState: 'disabled', clearLease: true);
+      await metadataStorage.write(metadata!);
+    }
+  }
+
+  Future<SyncLease?> refreshAutomaticLease({
+    Duration leaseDuration = const Duration(minutes: 10),
+  }) async {
+    final p = provider, s = session, t = target, current = metadata;
+    if (p is! SyncLeaseProvider || s == null || t == null || current == null ||
+        !current.automaticSyncEnabled || current.deviceId == null ||
+        current.leaseToken == null) return null;
+    final leases = p as SyncLeaseProvider;
+    final remote = await leases.readLease(s, t, current.catalogIdentity);
+    if (remote == null || remote.ownerDeviceId != current.deviceId ||
+        remote.token != current.leaseToken ||
+        !remote.isValidAt(DateTime.now().toUtc())) {
+      metadata = current.copyWith(automaticSyncEnabled: false,
+          automaticSchedulerState: 'lease_lost', clearLease: true);
+      await metadataStorage.write(metadata!);
+      return null;
+    }
+    final lease = await leases.renewLease(s, t, current.catalogIdentity,
+        deviceId: current.deviceId!, token: current.leaseToken!, duration: leaseDuration);
+    metadata = current.copyWith(ownershipGeneration: lease.generation,
+        leaseExpiresAt: lease.expiresAt, lastLeaseRenewedAt: lease.lastRenewedAt,
+        automaticSchedulerState: 'ready');
+    await metadataStorage.write(metadata!);
+    return lease;
+  }
+
+  /// Automatic uploads are fenced immediately before transfer.  Callers still
+  /// provide the already-created, SQLite-consistent bundle snapshot.
+  Future<SyncMetadata> automaticUpload(Uint8List payload, {
+    String? localFingerprint,
+    SyncProgressCallback? onProgress,
+  }) => _exclusive(() async {
+    final current = metadata;
+    if (current == null || !current.automaticSyncEnabled) {
+      throw const SyncLeaseLostException();
+    }
+    if (current.automaticSchedulerState == 'needs_remote_validation') {
+      if (localFingerprint == null) throw SyncConflictException(
+        SyncRemoteMetadata(revision: SyncRevision(''), contentHash: ''),
+      );
+      final check = await classify(localFingerprint);
+      if (check.classification == SyncClassification.divergent ||
+          check.classification == SyncClassification.unknownError) {
+        metadata = current.copyWith(automaticSchedulerState: 'conflict');
+        await metadataStorage.write(metadata!);
+        throw SyncConflictException(check.remote ?? const SyncRemoteMetadata(
+          revision: SyncRevision(''), contentHash: '',
+        ));
+      }
+      metadata = current.copyWith(automaticSchedulerState: 'ready');
+      await metadataStorage.write(metadata!);
+    }
+    final lease = await refreshAutomaticLease();
+    if (lease == null) throw const SyncLeaseLostException();
+    metadata = metadata!.copyWith(lastAutomaticAttemptAt: DateTime.now().toUtc(),
+        automaticSchedulerState: 'syncing');
+    await metadataStorage.write(metadata!);
+    try {
+      final result = await _syncInternal(payload, localFingerprint: localFingerprint,
+          onProgress: onProgress);
+      metadata = metadata!.copyWith(lastAutomaticSuccessAt: DateTime.now().toUtc(),
+          automaticSchedulerState: 'ready');
+      await metadataStorage.write(metadata!);
+      return result;
+    } on Object {
+      metadata = metadata!.copyWith(automaticSchedulerState: 'error');
+      await metadataStorage.write(metadata!);
+      rethrow;
+    }
+  });
+
   Future<void> disconnect() async {
     final identity = metadata?.catalogIdentity;
     provider = null;

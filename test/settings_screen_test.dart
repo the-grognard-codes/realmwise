@@ -37,6 +37,9 @@ void main() {
     await tester.tap(find.text('Cloud Sync'));
     await tester.pumpAndSettle();
     expect(find.text('Sync Status'), findsOneWidget);
+    expect(find.text('Automatic sync'), findsOneWidget);
+    expect(find.textContaining('Device ID:'), findsOneWidget);
+    expect(find.textContaining('single-device backup'), findsOneWidget);
     expect(find.text('Sync Providers'), findsOneWidget);
     expect(find.text('Sync Information'), findsOneWidget);
     expect(find.text('Include Personal Images/Catalog Icons'), findsOneWidget);

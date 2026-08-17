@@ -136,7 +136,7 @@ class DropboxOAuthAuthenticator implements SyncAuthenticator {
   }
 }
 
-class DropboxProvider implements SyncProvider {
+class DropboxProvider implements SyncProvider, SyncLeaseProvider {
   DropboxProvider({
     required this.authenticator,
     required this.tokenStore,
@@ -166,6 +166,27 @@ class DropboxProvider implements SyncProvider {
 
   @override
   String get provider => 'dropbox';
+
+  String _leasePath(String c) => '/.realmwise/leases/${sha256.convert(utf8.encode(c)).toString()}.json';
+  Future<SyncLease?> _cloudLease(SyncAuthSession s, String c) async {
+    final path = _leasePath(c);
+    final m = await _call('/2/files/get_metadata', s, body: {'path': path});
+    if (m.statusCode == 409 || m.statusCode == 404) return null;
+    if (m.statusCode != 200) _fail(m, 'Dropbox lease metadata failed');
+    final d = await _http.post(Uri.https('content.dropboxapi.com','/2/files/download'), headers: {'Authorization':'Bearer ${await _access(s)}','Dropbox-API-Arg':jsonEncode({'path':path})});
+    if (d.statusCode != 200) _fail(d, 'Dropbox lease download failed');
+    final j = jsonDecode(d.body) as Map;
+    return SyncLease(catalogIdentity:c, ownerDeviceId:j['ownerDeviceId'] as String, ownerDeviceName:j['ownerDeviceName'] as String, generation:j['generation'] as String, token:j['token'] as String, issuedAt:DateTime.parse(j['issuedAt'] as String), expiresAt:DateTime.parse(j['expiresAt'] as String), lastRenewedAt:DateTime.parse(j['lastRenewedAt'] as String), remoteRevision:SyncRevision((jsonDecode(m.body) as Map)['rev'] as String));
+  }
+  @override Future<SyncLease?> readLease(SyncAuthSession s, SyncRemoteTarget t, String c) => _cloudLease(s,c);
+  @override Future<SyncLease> acquireLease(SyncAuthSession s, SyncRemoteTarget t, String c, {required String deviceId, required String deviceName, required Duration duration, bool takeover = false}) async { final o=await _cloudLease(s,c),n=DateTime.now().toUtc(); if(!takeover&&o!=null&&o.isValidAt(n)&&o.ownerDeviceId!=deviceId) throw SyncLeaseContendedException(o); final l=SyncLease(catalogIdentity:c,ownerDeviceId:deviceId,ownerDeviceName:deviceName,generation:((int.tryParse(o?.generation??'')??0)+1).toString(),token:'${deviceId}_${n.microsecondsSinceEpoch}',issuedAt:n,expiresAt:n.add(duration),lastRenewedAt:n); await _writeLease(s,l,o?.remoteRevision?.value); return l; }
+  @override Future<SyncLease> renewLease(SyncAuthSession s, SyncRemoteTarget t, String c, {required String deviceId, required String token, required Duration duration}) async { final o=await _cloudLease(s,c),n=DateTime.now().toUtc(); if(o==null||o.ownerDeviceId!=deviceId||o.token!=token||!o.isValidAt(n)) throw const SyncLeaseLostException(); final l=SyncLease(catalogIdentity:c,ownerDeviceId:o.ownerDeviceId,ownerDeviceName:o.ownerDeviceName,generation:o.generation,token:o.token,issuedAt:o.issuedAt,expiresAt:n.add(duration),lastRenewedAt:n); await _writeLease(s,l,o.remoteRevision?.value); return l; }
+  Future<void> _writeLease(SyncAuthSession s, SyncLease l, String? rev) async { final p=_leasePath(l.catalogIdentity), mode=rev==null?{'.tag':'add'}:{'.tag':'update','update':rev}; final r=await _http.post(Uri.https('content.dropboxapi.com','/2/files/upload'),headers:{'Authorization':'Bearer ${await _access(s)}','Content-Type':'application/octet-stream','Dropbox-API-Arg':jsonEncode({'path':p,'mode':mode})},body:utf8.encode(jsonEncode({'catalogIdentity':l.catalogIdentity,'ownerDeviceId':l.ownerDeviceId,'ownerDeviceName':l.ownerDeviceName,'generation':l.generation,'token':l.token,'issuedAt':l.issuedAt.toIso8601String(),'expiresAt':l.expiresAt.toIso8601String(),'lastRenewedAt':l.lastRenewedAt.toIso8601String()}))); if(r.statusCode==409) throw const SyncLeaseLostException(); if(r.statusCode~/100!=2)_fail(r,'Dropbox lease write failed'); }
+  @override Future<void> releaseLease(SyncAuthSession s, SyncRemoteTarget t, String c, {required String deviceId, required String token}) async {
+    // Dropbox delete_v2 has no revision precondition. Leave the lease to
+    // expire rather than racing a newer owner's sidecar with an unconditional delete.
+    await _cloudLease(s,c);
+  }
   Future<void> clearCredentials() => tokenStore.delete(authenticator._key);
   Future<SyncAuthSession?> restoreSession() async {
     final t = await tokenStore.read(authenticator._key);
