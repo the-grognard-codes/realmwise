@@ -1,13 +1,61 @@
 import 'dart:typed_data';
 
 /// Comparison of the last known good local/remote pair with the current pair.
-enum SyncClassification { noChanges, localOnly, remoteOnly, divergent, unknownError }
+enum SyncClassification {
+  noChanges,
+  localOnly,
+  remoteOnly,
+  divergent,
+  unknownError,
+}
 
 /// Explicit conflict choices.  A replacement is never implicit.
 enum SyncConflictChoice { downloadReplaceLocal, uploadReplaceRemote, cancel }
 
+/// Cancellation and progress are deliberately provider-neutral so the UI can
+/// stop a manual transfer without ever mutating the active catalog halfway
+/// through a bundle operation.
+class SyncCancellationToken {
+  bool _cancelled = false;
+  bool get isCancelled => _cancelled;
+  void cancel() => _cancelled = true;
+  void throwIfCancelled() {
+    if (_cancelled) throw const SyncCancelledException();
+  }
+}
+
+class SyncCancelledException implements Exception {
+  const SyncCancelledException();
+  @override
+  String toString() => 'Sync was cancelled.';
+}
+
+class SyncBusyException implements Exception {
+  const SyncBusyException();
+  @override
+  String toString() => 'A sync is already running for this catalog.';
+}
+
+typedef SyncProgressCallback = void Function(SyncProgress progress);
+
+class SyncProgress {
+  const SyncProgress({
+    required this.completed,
+    required this.total,
+    this.phase = 'syncing',
+  });
+  final int completed;
+  final int total;
+  final String phase;
+  double get fraction => total <= 0 ? 0 : (completed / total).clamp(0, 1);
+}
+
 class SyncClassificationResult {
-  const SyncClassificationResult(this.classification, {this.remote, this.error});
+  const SyncClassificationResult(
+    this.classification, {
+    this.remote,
+    this.error,
+  });
   final SyncClassification classification;
   final SyncRemoteMetadata? remote;
   final Object? error;
@@ -17,7 +65,8 @@ class SyncDecisionRequired implements Exception {
   const SyncDecisionRequired(this.result, {this.localFingerprint});
   final SyncClassificationResult result;
   final String? localFingerprint;
-  @override String toString() => 'Sync decision required: ${result.classification.name}';
+  @override
+  String toString() => 'Sync decision required: ${result.classification.name}';
 }
 
 /// Provider-neutral authentication/session contract. Implementations must keep
@@ -58,6 +107,16 @@ abstract interface class SyncProvider
         SyncMetadataLookup,
         SyncTransfer {
   String get provider;
+}
+
+/// Optional provider capability. Providers that cannot enumerate/delete old
+/// revisions simply omit this interface; the current bundle is always kept.
+abstract interface class SyncRetentionProvider {
+  Future<void> retainRevisions(
+    SyncAuthSession session,
+    SyncRemoteTarget target, {
+    int keep = 3,
+  });
 }
 
 class SyncConflictException implements Exception {

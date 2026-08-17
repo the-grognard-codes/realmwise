@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:realmwise/services/sync_metadata.dart';
 import 'dart:typed_data';
@@ -89,6 +90,122 @@ void main() {
       Exception('Bearer abc123 https://x.test/?access_token=secret'),
     );
     expect(result, 'sync_error');
+  });
+
+  test('metadata persists image policy and retention decision', () {
+    final value = SyncMetadata(
+      catalogIdentity: 'c',
+      includePersonalImages: true,
+      retainedRevisionCount: 5,
+    );
+    final restored = SyncMetadata.decode(value.encode());
+    expect(restored.includePersonalImages, isTrue);
+    expect(restored.retainedRevisionCount, 5);
+  });
+
+  test('sync states have understandable status labels', () {
+    expect(SyncState.notConnected.label, 'Not connected');
+    expect(SyncState.ready.label, contains('last sync succeeded'));
+    expect(SyncState.needsDecision.label, contains('Conflict'));
+    expect(SyncState.error.label, 'Sync error');
+  });
+
+  test('coordinator prevents concurrent syncs for one catalog', () async {
+    final provider = _RetentionProvider()..holdUpload = true;
+    final coordinator = SyncCoordinator(metadataStorage: _MemorySyncStorage());
+    await coordinator.connect(provider, 'catalog');
+    coordinator.metadata = const SyncMetadata(
+      catalogIdentity: 'catalog',
+      provider: 'fake',
+      accountId: 'a',
+      remoteTargetId: 'target',
+      revision: 'old',
+      contentHash: 'old',
+      lastSuccessfulLocalFingerprint: 'old',
+      state: SyncState.ready,
+    );
+    final first = coordinator.sync(
+      Uint8List.fromList([1]),
+      localFingerprint: 'new',
+    );
+    await provider.uploadStarted.future;
+    await expectLater(
+      coordinator.sync(Uint8List.fromList([1]), localFingerprint: 'newer'),
+      throwsA(isA<SyncBusyException>()),
+    );
+    provider.releaseUpload.complete();
+    await first;
+  });
+
+  test('cancellation before upload leaves metadata unchanged', () async {
+    final provider = _RetentionProvider();
+    final coordinator = SyncCoordinator(metadataStorage: _MemorySyncStorage());
+    await coordinator.connect(provider, 'catalog');
+    coordinator.metadata = const SyncMetadata(
+      catalogIdentity: 'catalog',
+      provider: 'fake',
+      accountId: 'a',
+      remoteTargetId: 'target',
+      revision: 'old',
+      contentHash: 'old',
+      lastSuccessfulLocalFingerprint: 'old',
+      state: SyncState.ready,
+    );
+    await expectLater(
+      coordinator.sync(
+        Uint8List.fromList([1]),
+        localFingerprint: 'new',
+        onProgress: (_) => coordinator.cancel(),
+      ),
+      throwsA(isA<SyncCancelledException>()),
+    );
+    expect(provider.uploads, 0);
+    expect(coordinator.metadata?.revision, 'old');
+  });
+
+  test('cancellation after upload still commits successful revision', () async {
+    final provider = _RetentionProvider()..holdUpload = true;
+    final coordinator = SyncCoordinator(metadataStorage: _MemorySyncStorage());
+    await coordinator.connect(provider, 'catalog');
+    coordinator.metadata = const SyncMetadata(
+      catalogIdentity: 'catalog',
+      provider: 'fake',
+      accountId: 'a',
+      remoteTargetId: 'target',
+      revision: 'old',
+      contentHash: 'old',
+      lastSuccessfulLocalFingerprint: 'old',
+      state: SyncState.ready,
+    );
+    final pending = coordinator.sync(
+      Uint8List.fromList([1]),
+      localFingerprint: 'new',
+    );
+    await provider.uploadStarted.future;
+    coordinator.cancel();
+    provider.releaseUpload.complete();
+    final result = await pending;
+    expect(result.revision, 'new');
+    expect(coordinator.metadata?.lastSuccessfulLocalFingerprint, 'new');
+  });
+
+  test('retention capability receives configured revision limit', () async {
+    final provider = _RetentionProvider();
+    final coordinator = SyncCoordinator(metadataStorage: _MemorySyncStorage());
+    await coordinator.connect(provider, 'catalog');
+    coordinator.metadata = const SyncMetadata(
+      catalogIdentity: 'catalog',
+      provider: 'fake',
+      accountId: 'a',
+      remoteTargetId: 'target',
+      revision: 'old',
+      contentHash: 'old',
+      lastSuccessfulLocalFingerprint: 'old',
+      state: SyncState.ready,
+      retainedRevisionCount: 2,
+    );
+    await coordinator.sync(Uint8List.fromList([1]), localFingerprint: 'new');
+    expect(provider.retentionKeep, 2);
   });
 
   test('invalid metadata is safely defaulted and schema-versioned', () {
@@ -376,4 +493,38 @@ class _PolicyProvider implements SyncProvider {
     SyncPrecondition? precondition,
   }) async =>
       SyncDownloadResult(payload: Uint8List.fromList([1]), metadata: remote);
+}
+
+class _RetentionProvider extends _PolicyProvider
+    implements SyncRetentionProvider {
+  final uploadStarted = Completer<void>();
+  final releaseUpload = Completer<void>();
+  bool holdUpload = false;
+  int? retentionKeep;
+
+  @override
+  Future<SyncUploadResult> upload(
+    SyncAuthSession session,
+    SyncRemoteTarget target,
+    Uint8List payload, {
+    SyncPrecondition? precondition,
+  }) async {
+    uploads++;
+    uploadStarted.complete();
+    if (holdUpload) await releaseUpload.future;
+    remote = const SyncRemoteMetadata(
+      revision: SyncRevision('new'),
+      contentHash: 'new-hash',
+    );
+    return SyncUploadResult(metadata: remote);
+  }
+
+  @override
+  Future<void> retainRevisions(
+    SyncAuthSession session,
+    SyncRemoteTarget target, {
+    int keep = 3,
+  }) async {
+    retentionKeep = keep;
+  }
 }

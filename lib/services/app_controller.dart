@@ -93,6 +93,22 @@ class AppController extends ChangeNotifier {
   CatalogHierarchyOrder hierarchyOrder =
       CatalogHierarchyOrder.gameSystemSettingBookType;
   bool includePersonalImagesInBundles = false;
+  Future<void>? _syncFuture;
+  SyncProgress? syncProgress;
+  bool get isSyncing => _syncFuture != null || syncCoordinator.isSyncing;
+  void cancelSync() => syncCoordinator.cancel();
+
+  Future<void> _cancelAndAwaitSync() async {
+    final running = _syncFuture;
+    if (running == null) return;
+    syncCoordinator.cancel();
+    try {
+      await running;
+    } on Object {
+      // Lifecycle changes intentionally absorb cancellation/failure; the
+      // catalog remains intact and the next open can restore its metadata.
+    }
+  }
 
   // Work IDs observed after opening a database are the session baseline. Any
   // IDs appearing later are kept in memory only so the catalog can label them.
@@ -156,6 +172,7 @@ class AppController extends ChangeNotifier {
     // example, portable bundle restore). A live coordinator session must not
     // outlive that catalog swap; persisted metadata below may restore it when
     // the imported catalog has the same identity.
+    await _cancelAndAwaitSync();
     syncCoordinator.resetRuntime();
     syncMetadata = null;
     _selectedProvider = null;
@@ -230,6 +247,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> closeDatabase() async {
+    await _cancelAndAwaitSync();
     await backups.stop();
     await database.close();
     syncCoordinator.resetRuntime();
@@ -267,6 +285,8 @@ class AppController extends ChangeNotifier {
         await syncCoordinator.configureTarget(target);
         syncMetadata = syncCoordinator.metadata;
       }
+      // Keep the persisted sync policy aligned with the bundle export policy.
+      await setIncludePersonalImagesInBundles(includePersonalImagesInBundles);
     } catch (error) {
       await syncCoordinator.failConnection(error);
       syncMetadata = syncCoordinator.metadata;
@@ -283,7 +303,18 @@ class AppController extends ChangeNotifier {
 
   Future<void> disconnectOneDrive() => disconnectGoogleDrive();
 
-  Future<void> syncNow() async {
+  Future<void> syncNow() {
+    final running = _syncFuture;
+    if (running != null) return Future<void>.error(const SyncBusyException());
+    final operation = _syncNowInternal();
+    _syncFuture = operation;
+    return operation.whenComplete(() {
+      if (identical(_syncFuture, operation)) _syncFuture = null;
+      syncProgress = null;
+    });
+  }
+
+  Future<void> _syncNowInternal() async {
     if (!database.isOpen) throw StateError('Open a catalog first.');
     final identity = await database.ensureCatalogIdentity();
     final temporary = await getTemporaryDirectory();
@@ -308,6 +339,10 @@ class AppController extends ChangeNotifier {
       syncMetadata = await syncCoordinator.sync(
         Uint8List.fromList(await File(bundlePath).readAsBytes()),
         localFingerprint: manifest.contentFingerprint,
+        onProgress: (value) {
+          syncProgress = value;
+          notifyListeners();
+        },
       );
       assert(syncMetadata?.catalogIdentity == identity);
       notifyListeners();
@@ -494,10 +529,25 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> disconnectGoogleDrive() async {
+    await _cancelAndAwaitSync();
     final provider = _selectedProvider;
+    final active = syncCoordinator.metadata;
+    final session = syncCoordinator.session;
     if (provider is GoogleDriveProvider) await provider.clearCredentials();
     if (provider is OneDriveProvider) await provider.clearCredentials();
     if (provider is DropboxProvider) await provider.clearCredentials();
+    // Provider implementations may have their own cleanup, but deleting the
+    // canonical key here also protects custom/test providers from leaving a
+    // credential behind after disconnect.
+    if (active?.provider != null && session != null) {
+      await _tokenStorage.delete(
+        syncCredentialKey(
+          catalogIdentity: active!.catalogIdentity,
+          provider: active.provider!,
+          accountId: session.accountId,
+        ),
+      );
+    }
     await syncCoordinator.disconnect();
     syncMetadata = null;
     _selectedProvider = null;
@@ -523,6 +573,28 @@ class AppController extends ChangeNotifier {
     includePersonalImagesInBundles = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('include_personal_images_in_bundles', value);
+    final current = syncCoordinator.metadata;
+    if (current != null) {
+      syncCoordinator.metadata = SyncMetadata(
+        catalogIdentity: current.catalogIdentity,
+        provider: current.provider,
+        accountId: current.accountId,
+        accountDisplayName: current.accountDisplayName,
+        remoteTargetId: current.remoteTargetId,
+        remoteTargetName: current.remoteTargetName,
+        revision: current.revision,
+        contentHash: current.contentHash,
+        lastSuccessfulLocalFingerprint: current.lastSuccessfulLocalFingerprint,
+        createdAt: current.createdAt,
+        updatedAt: current.updatedAt,
+        state: current.state,
+        error: current.error,
+        includePersonalImages: value,
+        retainedRevisionCount: current.retainedRevisionCount,
+      );
+      syncMetadata = syncCoordinator.metadata;
+      await syncCoordinator.metadataStorage.write(syncMetadata!);
+    }
     notifyListeners();
   }
 
