@@ -14,6 +14,17 @@ enum SyncState {
   error,
 }
 
+extension SyncStateLabel on SyncState {
+  String get label => switch (this) {
+    SyncState.notConnected => 'Not connected',
+    SyncState.connectedUnconfigured => 'Connected — choose a destination',
+    SyncState.ready => 'Connected (last sync succeeded)',
+    SyncState.syncing => 'Syncing',
+    SyncState.needsDecision => 'Conflict needs your decision',
+    SyncState.error => 'Sync error',
+  };
+}
+
 String syncCredentialKey({
   required String catalogIdentity,
   required String provider,
@@ -43,6 +54,8 @@ class SyncMetadata {
     this.updatedAt,
     this.state = SyncState.notConnected,
     this.error,
+    this.includePersonalImages = false,
+    this.retainedRevisionCount = 3,
   });
 
   final String catalogIdentity;
@@ -57,6 +70,8 @@ class SyncMetadata {
   final DateTime? createdAt, updatedAt;
   final SyncState state;
   final String? error;
+  final bool includePersonalImages;
+  final int retainedRevisionCount;
 
   Map<String, Object?> toJson() => {
     'schemaVersion': 1,
@@ -73,6 +88,8 @@ class SyncMetadata {
     'updatedAt': updatedAt?.toIso8601String(),
     'state': state.name,
     'error': error == null ? null : sanitizeSyncError(error!),
+    'includePersonalImages': includePersonalImages,
+    'retainedRevisionCount': retainedRevisionCount,
   };
 
   factory SyncMetadata.fromJson(Map<String, Object?> json) => SyncMetadata(
@@ -84,7 +101,8 @@ class SyncMetadata {
     remoteTargetName: json['remoteTargetName'] as String?,
     revision: json['revision'] as String?,
     contentHash: json['contentHash'] as String?,
-    lastSuccessfulLocalFingerprint: json['lastSuccessfulLocalFingerprint'] as String?,
+    lastSuccessfulLocalFingerprint:
+        json['lastSuccessfulLocalFingerprint'] as String?,
     createdAt: _date(json['createdAt']),
     updatedAt: _date(json['updatedAt']),
     state: SyncState.values.firstWhere(
@@ -92,6 +110,9 @@ class SyncMetadata {
       orElse: () => SyncState.notConnected,
     ),
     error: json['error'] == null ? null : sanitizeSyncError(json['error']!),
+    includePersonalImages: json['includePersonalImages'] as bool? ?? false,
+    retainedRevisionCount:
+        (json['retainedRevisionCount'] as num?)?.toInt() ?? 3,
   );
 
   static DateTime? _date(Object? value) =>

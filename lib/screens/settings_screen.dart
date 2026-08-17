@@ -8,6 +8,7 @@ import '../services/app_controller.dart';
 import '../services/catalog_bundle_service.dart';
 import '../services/sync_coordinator.dart';
 import '../services/sync_contract.dart';
+import '../services/sync_metadata.dart';
 import '../theme/app_theme.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -536,13 +537,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Column(
         children: [
           const TabBar(
             tabs: [
               Tab(text: 'Interface'),
-              Tab(text: 'Database'),
+              Tab(text: 'Local Database'),
+              Tab(text: 'Cloud Sync'),
               Tab(text: 'Data Sources'),
             ],
           ),
@@ -551,6 +553,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 _tabContent(_interfaceSections()),
                 _tabContent(_databaseSections()),
+                _tabContent(_cloudSyncSections()),
                 _tabContent(_dataSourceSections()),
               ],
             ),
@@ -826,12 +829,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     ),
-    _cloudSyncSection(),
     _deviceSyncSection(),
     _databaseRecoverySection(),
   ];
 
+  List<Widget> _cloudSyncSections() => [
+    _cloudSyncSection(),
+    _Section(
+      title: 'Include Personal Images/Catalog Icons',
+      child: SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Include personal images and catalog icons'),
+        subtitle: const Text(
+          'Off by default. Turn this on only when you want images included in cloud bundles; mobile data may be used.',
+        ),
+        value: widget.controller.includePersonalImagesInBundles,
+        onChanged: _busy
+            ? null
+            : widget.controller.setIncludePersonalImagesInBundles,
+      ),
+    ),
+  ];
+
   Widget _cloudSyncSection() {
+    return AnimatedBuilder(
+      animation: widget.controller,
+      builder: (context, _) => _cloudSyncSectionContent(),
+    );
+  }
+
+  Widget _cloudSyncSectionContent() {
     final metadata = widget.controller.syncMetadata;
     final providers = widget.controller.availableProviders;
     final selected = widget.controller.selectedProvider;
@@ -844,14 +871,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final status = providers.isEmpty
         ? 'Cloud sync is not configured on this build.'
         : connected
-        ? 'Connected provider: ${selected == null ? 'Unknown' : label(selected)}'
-        : 'Not connected';
-    return _Section(
-      title: 'Cloud Sync',
+        ? 'Connected provider: ${selected == null ? 'Unknown' : label(selected)} (${metadata?.accountDisplayName ?? metadata?.accountId ?? 'account unavailable'})'
+        : metadata?.state.label ?? 'Not connected';
+    final progress = widget.controller.syncProgress;
+    final statusSection = _Section(
+      title: 'Sync Status',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(status),
+          if (metadata?.state != null &&
+              metadata!.state != SyncState.notConnected)
+            Text('Status: ${metadata.state.label}'),
+          if (metadata?.updatedAt != null && metadata!.state == SyncState.ready)
+            Text(
+              'Last successful sync: ${DateFormat.yMMMd().add_jm().format(metadata.updatedAt!.toLocal())}',
+            ),
+          if (progress != null) ...[
+            const SizedBox(height: 10),
+            LinearProgressIndicator(value: progress.fraction),
+            const SizedBox(height: 4),
+            Text('${progress.phase} (${(progress.fraction * 100).round()}%)'),
+            const Text(
+              'Cancel stops at the next safe boundary; an in-flight provider request may finish before cancellation takes effect.',
+            ),
+          ],
+          if (metadata?.error != null)
+            Text(
+              'Last sync failed. Retry when online; re-authorize if access expired. Check quota, resolve conflicts, or reconnect if the remote bundle is invalid.',
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+        ],
+      ),
+    );
+    final providerSection = _Section(
+      title: 'Sync Providers',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           if (providers.isNotEmpty)
             Wrap(
               spacing: 8,
@@ -869,12 +926,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   )
                   .toList(),
             ),
-          if (metadata?.error != null)
-            Text(
-              'Last sync failed. You can try again.',
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          const SizedBox(height: 10),
           Wrap(
             spacing: 10,
             runSpacing: 10,
@@ -896,7 +947,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               OutlinedButton.icon(
-                onPressed: _busy || !connected
+                onPressed: _busy || !connected || widget.controller.isSyncing
                     ? null
                     : () => _run(
                         widget.controller.disconnectGoogleDrive,
@@ -905,11 +956,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 icon: const Icon(Icons.logout),
                 label: const Text('Disconnect'),
               ),
+            ],
+          ),
+        ],
+      ),
+    );
+    final infoSection = _Section(
+      title: 'Sync Information',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
               FilledButton.icon(
-                onPressed: _busy || !connected ? null : () => _run(_syncNow),
+                onPressed: _busy || !connected || widget.controller.isSyncing
+                    ? null
+                    : () => _run(_syncNow),
                 icon: const Icon(Icons.sync),
                 label: const Text('Sync now'),
               ),
+              if (widget.controller.isSyncing)
+                OutlinedButton.icon(
+                  onPressed: widget.controller.cancelSync,
+                  icon: const Icon(Icons.stop_circle_outlined),
+                  label: const Text('Cancel sync'),
+                ),
+              if (metadata?.error != null)
+                TextButton.icon(
+                  onPressed: _busy || !connected ? null : () => _run(_syncNow),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry'),
+                ),
               OutlinedButton.icon(
                 onPressed: _busy || !connected ? null : _downloadRemote,
                 icon: const Icon(Icons.cloud_download_outlined),
@@ -921,8 +1000,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Text(
             'Sync uploads a portable catalog bundle. Disconnect removes local credentials and settings only; remote files are not deleted.',
           ),
+          const SizedBox(height: 8),
+          const Text(
+            'Cloud Sync stores bundles in an isolated Realmwise section. The application cannot access your other files. A bundle contains catalog data and, only when enabled, selected images; it does not upload unrelated personal data.',
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Remote retention is provider-native: the current bundle is retained, and any prior version history is kept according to the connected provider\'s limits and policies.',
+          ),
         ],
       ),
+    );
+    // Keep every Cloud Sync card aligned to the tab's available content width.
+    // Without an explicit width, the cards can size themselves to their
+    // individual contents when the surrounding tab is centered.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(width: double.infinity, child: statusSection),
+        SizedBox(width: double.infinity, child: providerSection),
+        SizedBox(width: double.infinity, child: infoSection),
+      ],
     );
   }
 

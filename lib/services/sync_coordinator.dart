@@ -16,6 +16,28 @@ class SyncCoordinator {
   SyncRemoteTarget? target;
   SyncMetadata? metadata;
   SyncOutcome lastOutcome = SyncOutcome.uploaded;
+  final Set<String> _activeCatalogs = <String>{};
+  SyncCancellationToken? activeCancellation;
+  SyncProgress? progress;
+  bool get isSyncing => _activeCatalogs.contains(metadata?.catalogIdentity);
+
+  Future<T> _exclusive<T>(Future<T> Function() action) async {
+    final identity = metadata?.catalogIdentity;
+    if (identity == null)
+      throw StateError('Connect a provider before syncing.');
+    if (!_activeCatalogs.add(identity)) throw const SyncBusyException();
+    final token = SyncCancellationToken();
+    activeCancellation = token;
+    try {
+      return await action();
+    } finally {
+      _activeCatalogs.remove(identity);
+      if (identical(activeCancellation, token)) activeCancellation = null;
+      progress = null;
+    }
+  }
+
+  void cancel() => activeCancellation?.cancel();
 
   bool get isConnected => provider != null && session != null;
 
@@ -152,6 +174,8 @@ class SyncCoordinator {
       createdAt: current.createdAt,
       updatedAt: DateTime.now().toUtc(),
       state: SyncState.ready,
+      includePersonalImages: current.includePersonalImages,
+      retainedRevisionCount: current.retainedRevisionCount,
     );
     await metadataStorage.write(metadata!);
   }
@@ -279,6 +303,21 @@ class SyncCoordinator {
     Uint8List payload, {
     String? localFingerprint,
     SyncRemoteMetadata? expectedRemote,
+    SyncProgressCallback? onProgress,
+  }) => _exclusive(
+    () => _syncInternal(
+      payload,
+      localFingerprint: localFingerprint,
+      expectedRemote: expectedRemote,
+      onProgress: onProgress,
+    ),
+  );
+
+  Future<SyncMetadata> _syncInternal(
+    Uint8List payload, {
+    String? localFingerprint,
+    SyncRemoteMetadata? expectedRemote,
+    SyncProgressCallback? onProgress,
   }) async {
     final p = provider, s = session, t = target, current = metadata;
     if (p == null || s == null || t == null || current == null) {
@@ -288,6 +327,12 @@ class SyncCoordinator {
       'hasFingerprint': localFingerprint != null,
       'hasRevision': current.revision != null,
     });
+    progress = const SyncProgress(
+      completed: 0,
+      total: 1,
+      phase: 'Preparing bundle',
+    );
+    onProgress?.call(progress!);
     if (localFingerprint != null &&
         current.state == SyncState.ready &&
         current.provider == p.provider &&
@@ -339,6 +384,13 @@ class SyncCoordinator {
     }
     late final SyncUploadResult result;
     try {
+      activeCancellation?.throwIfCancelled();
+      progress = const SyncProgress(
+        completed: 0,
+        total: 1,
+        phase: 'Uploading bundle',
+      );
+      onProgress?.call(progress!);
       result = await p.upload(
         s,
         t,
@@ -355,6 +407,8 @@ class SyncCoordinator {
                 contentHash: current.contentHash,
               ),
       );
+      progress = const SyncProgress(completed: 1, total: 1, phase: 'Complete');
+      onProgress?.call(progress!);
     } catch (error) {
       SyncDebug.trace('coordinator.sync.upload_error', {
         'type': error.runtimeType.toString(),
@@ -390,8 +444,22 @@ class SyncCoordinator {
       createdAt: current.createdAt,
       updatedAt: DateTime.now().toUtc(),
       state: SyncState.ready,
+      includePersonalImages: current.includePersonalImages,
+      retainedRevisionCount: current.retainedRevisionCount,
     );
     await metadataStorage.write(metadata!);
+    if (p case final SyncRetentionProvider retention) {
+      try {
+        await retention.retainRevisions(
+          s,
+          t,
+          keep: current.retainedRevisionCount,
+        );
+      } catch (_) {
+        // Retention is best effort and must not turn a successful upload into
+        // a failed sync on providers without revision deletion support.
+      }
+    }
     lastOutcome = SyncOutcome.uploaded;
     SyncDebug.trace('coordinator.sync.uploaded', {
       'revision': result.metadata.revision.value,
@@ -431,6 +499,8 @@ class SyncCoordinator {
         createdAt: current.createdAt,
         updatedAt: DateTime.now().toUtc(),
         state: SyncState.ready,
+        includePersonalImages: current.includePersonalImages,
+        retainedRevisionCount: current.retainedRevisionCount,
       );
       return result;
     } catch (error) {
@@ -473,6 +543,8 @@ class SyncCoordinator {
       createdAt: current.createdAt,
       updatedAt: DateTime.now().toUtc(),
       state: SyncState.ready,
+      includePersonalImages: current.includePersonalImages,
+      retainedRevisionCount: current.retainedRevisionCount,
     );
     await metadataStorage.write(metadata!);
   }
