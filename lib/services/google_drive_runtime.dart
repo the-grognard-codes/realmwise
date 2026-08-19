@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter/services.dart';
 
 import 'google_drive_sync.dart';
 import 'secure_storage_service.dart';
@@ -46,6 +47,32 @@ class LocalhostOAuthCallback implements OAuthCallback {
   Future<void> close() async => _server?.close(force: true);
 }
 
+class AndroidGoogleDriveAuthorizationBridge
+    implements AndroidGoogleDriveAuthorization {
+  const AndroidGoogleDriveAuthorizationBridge();
+  static const _channel = MethodChannel('realmwise/google_drive');
+
+  @override
+  Future<Map<String, Object?>> authorize({required String clientId}) async {
+    final value = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+      'authorize',
+      <String, Object?>{'client_id': clientId},
+    );
+    if (value == null) {
+      throw GoogleDriveAuthException('Google authorization returned no result');
+    }
+    return value.map((key, value) => MapEntry('$key', value));
+  }
+
+  @override
+  Future<void> clearToken(String token) async {
+    await _channel.invokeMethod<void>(
+      'clear_token',
+      <String, Object?>{'token': token},
+    );
+  }
+}
+
 GoogleDriveProvider? createConfiguredGoogleDriveProvider() {
   const clientId = String.fromEnvironment('GOOGLE_DRIVE_CLIENT_ID');
   if (clientId.trim().isEmpty) return null;
@@ -70,6 +97,9 @@ GoogleDriveProvider? createConfiguredGoogleDriveProvider() {
       redirectUri: redirect,
       browser: UrlLauncherOAuthBrowser(),
       callback: LocalhostOAuthCallback(redirect),
+      androidAuthorization: Platform.isAndroid
+          ? const AndroidGoogleDriveAuthorizationBridge()
+          : null,
       tokenStore: storage,
     ),
     tokenStore: storage,

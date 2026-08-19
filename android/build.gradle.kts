@@ -32,6 +32,23 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// file_picker 11 skips applying Kotlin when it detects AGP 9, even though
+// its Android implementation is written in Kotlin. Apply the Kotlin Android
+// plugin here so its classes are included in the plugin AAR and Flutter's
+// generated registrant can register it normally.
+subprojects {
+    if (project.name == "file_picker") {
+        pluginManager.apply("org.jetbrains.kotlin.android")
+        plugins.withId("org.jetbrains.kotlin.android") {
+            tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+                compilerOptions {
+                    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+                }
+            }
+        }
+    }
+}
+
 // Ensure all Android library/application subprojects compile against API 36
 // This helps avoid AAR metadata mismatches from plugins compiled with older SDKs.
 subprojects {

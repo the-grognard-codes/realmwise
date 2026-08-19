@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
@@ -12,6 +13,9 @@ abstract interface class OneDriveOAuthBrowser {
 }
 abstract interface class OneDriveOAuthCallback {
   Future<Uri> waitForCallback();
+}
+abstract interface class OneDriveOAuthCallbackCancellation {
+  Future<void> cancel();
 }
 
 class OneDriveAuthException implements Exception {
@@ -103,6 +107,7 @@ class OneDriveOAuthAuthenticator implements SyncAuthenticator {
     required this.callback,
     required this.tokenStore,
     this.tenant = 'common',
+    this.callbackTimeout = const Duration(minutes: 5),
     http.Client? httpClient,
     this._delay,
     this.maxTransientRetries = 3,
@@ -112,6 +117,7 @@ class OneDriveOAuthAuthenticator implements SyncAuthenticator {
   final OneDriveOAuthBrowser browser;
   final OneDriveOAuthCallback callback;
   final OneDriveTokenStore tokenStore;
+  final Duration callbackTimeout;
   final http.Client _http;
   final Future<void> Function(Duration)? _delay;
   final int maxTransientRetries;
@@ -167,9 +173,30 @@ class OneDriveOAuthAuthenticator implements SyncAuthenticator {
         'code_challenge_method': 'S256',
       },
     );
-    final f = callback.waitForCallback();
-    await browser.open(auth);
-    final u = await f;
+    Future<Uri>? callbackFuture;
+    late final Uri u;
+    try {
+      // Attach a drain handler immediately. If opening the browser fails, the
+      // native/localhost callback future may later complete with cancellation;
+      // that secondary error must not become an uncaught async exception.
+      callbackFuture = callback.waitForCallback();
+      unawaited(callbackFuture.then<void>((_) {}, onError: (_, __) {}));
+      await browser.open(auth);
+      u = await callbackFuture.timeout(
+        callbackTimeout,
+        onTimeout: () => throw OneDriveAuthException(
+          'Timed out waiting for OneDrive OAuth callback',
+        ),
+      );
+    } catch (_) {
+      final cancellable = callback;
+      if (cancellable is OneDriveOAuthCallbackCancellation) {
+        try {
+          await (cancellable as OneDriveOAuthCallbackCancellation).cancel();
+        } catch (_) {}
+      }
+      rethrow;
+    }
     if (u.queryParameters['state'] != state)
       throw OneDriveAuthException('Invalid OAuth state');
     if (u.queryParameters['error'] != null)

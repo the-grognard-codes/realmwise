@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
@@ -25,10 +26,27 @@ import 'secure_storage_service.dart';
 import 'sync_contract.dart';
 import 'sync_coordinator.dart';
 import 'sync_metadata.dart';
+import 'sync_debug.dart';
 
 enum CatalogHierarchyOrder {
   gameSystemSettingBookType,
   gameSystemBookTypeSetting,
+}
+
+class _InMemorySyncMetadataStorage implements SyncMetadataStorage {
+  final Map<String, SyncMetadata> _values = <String, SyncMetadata>{};
+
+  @override
+  Future<SyncMetadata?> read(String catalogIdentity) async =>
+      _values[catalogIdentity];
+
+  @override
+  Future<void> write(SyncMetadata metadata) async =>
+      _values[metadata.catalogIdentity] = metadata;
+
+  @override
+  Future<void> remove(String catalogIdentity) async =>
+      _values.remove(catalogIdentity);
 }
 
 /// Application session state: selected database, theme preference, and services.
@@ -69,6 +87,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   final String? imageRootPathOverride;
   final Map<String, SyncProvider> _providers;
   SyncProvider? _selectedProvider;
+  SyncProvider? _pendingConnectionProvider;
+  bool _pendingConnectionCancellationRequested = false;
+  bool get isConnectionPending => _pendingConnectionProvider != null;
   SyncProvider? get syncProvider => _selectedProvider;
   String get syncProviderName => _selectedProvider?.provider ?? 'none';
   List<SyncProvider> get availableProviders =>
@@ -87,6 +108,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   late SyncCoordinator syncCoordinator;
+  bool _syncCoordinatorInitialized = false;
   SyncMetadata? syncMetadata;
 
   bool loading = true;
@@ -170,9 +192,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
               ? 'Windows device'
               : 'Realmwise device');
       WidgetsBinding.instance.addObserver(this);
-      syncCoordinator = SyncCoordinator(
-        metadataStorage: SharedPreferencesSyncMetadataStorage(prefs),
-      );
+      _ensureSyncCoordinator(prefs);
       _selectedProvider ??= _providers.isEmpty ? null : _providers.values.first;
       includePersonalImagesInBundles =
           prefs.getBool('include_personal_images_in_bundles') ?? false;
@@ -191,6 +211,11 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       }
     } catch (exception) {
       error = exception.toString();
+      // Opening a database performs additional session setup, including the
+      // image library.  Do not expose a partially opened catalog when one of
+      // those later steps fails: screens may otherwise assume that image
+      // storage is ready and throw while rendering.
+      if (database.isOpen) await database.close();
     } finally {
       loading = false;
       notifyListeners();
@@ -221,73 +246,115 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     // example, portable bundle restore). A live coordinator session must not
     // outlive that catalog swap; persisted metadata below may restore it when
     // the imported catalog has the same identity.
+    SharedPreferences? prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } on MissingPluginException {
+      // Direct controller use in a headless/test environment has no platform
+      // preferences; catalog opening remains usable with session-only sync
+      // metadata in that case.
+    }
+    _ensureSyncCoordinator(prefs);
     await _cancelAndAwaitSync();
     syncCoordinator.resetRuntime();
     syncMetadata = null;
     _selectedProvider = null;
     error = null;
     await backups.stop();
-    await database.open(databasePath);
-    final catalogIdentity = await database.ensureCatalogIdentity();
-    syncMetadata = await syncCoordinator.metadataStorage.read(catalogIdentity);
-    syncCoordinator.metadata = syncMetadata;
-    automaticSyncEnabled = syncMetadata?.automaticSyncEnabled ?? false;
-    automaticSyncOwnershipValid =
-        automaticSyncEnabled &&
-        syncMetadata?.deviceId == deviceId &&
-        syncMetadata?.leaseToken != null &&
-        (syncMetadata?.leaseExpiresAt?.isAfter(DateTime.now().toUtc()) ??
-            false);
-    final savedSync = syncMetadata;
-    final provider = savedSync?.provider == null
-        ? null
-        : _providers[savedSync!.provider!];
-    _selectedProvider = provider;
-    if (savedSync != null &&
-        provider != null &&
-        (provider is GoogleDriveProvider ||
-            provider is OneDriveProvider ||
-            provider is DropboxProvider)) {
-      final restored = provider is GoogleDriveProvider
-          ? await provider.restoreSession()
-          : provider is OneDriveProvider
-          ? await provider.restoreSession()
-          : await (provider as DropboxProvider).restoreSession();
-      if (restored != null) {
-        try {
-          await syncCoordinator.restore(provider, restored, savedSync);
-          syncMetadata = syncCoordinator.metadata;
-        } catch (_) {
-          syncMetadata = savedSync;
+    try {
+      await database.open(databasePath);
+      final catalogIdentity = await database.ensureCatalogIdentity();
+      syncMetadata = await syncCoordinator.metadataStorage.read(
+        catalogIdentity,
+      );
+      syncCoordinator.metadata = syncMetadata;
+      automaticSyncEnabled = syncMetadata?.automaticSyncEnabled ?? false;
+      automaticSyncOwnershipValid =
+          automaticSyncEnabled &&
+          syncMetadata?.deviceId == deviceId &&
+          syncMetadata?.leaseToken != null &&
+          (syncMetadata?.leaseExpiresAt?.isAfter(DateTime.now().toUtc()) ??
+              false);
+      final savedSync = syncMetadata;
+      final provider = savedSync?.provider == null
+          ? null
+          : _providers[savedSync!.provider!];
+      _selectedProvider = provider;
+      if (savedSync != null &&
+          provider != null &&
+          (provider is GoogleDriveProvider ||
+              provider is OneDriveProvider ||
+              provider is DropboxProvider)) {
+        final restored = provider is GoogleDriveProvider
+            ? await provider.restoreSession()
+            : provider is OneDriveProvider
+            ? await provider.restoreSession()
+            : await (provider as DropboxProvider).restoreSession();
+        if (restored != null) {
+          try {
+            await syncCoordinator.restore(provider, restored, savedSync);
+            syncMetadata = syncCoordinator.metadata;
+          } catch (_) {
+            syncMetadata = savedSync;
+          }
         }
       }
-    }
-    await _migrateRpgGeekToken(catalogIdentity);
-    _sessionBaselineWorkIds
-      ..clear()
-      ..addAll(
-        (await database.listRecords())
-            .map((record) => record.work.id)
-            .whereType<int>(),
+      await _migrateRpgGeekToken(catalogIdentity);
+      _sessionBaselineWorkIds
+        ..clear()
+        ..addAll(
+          (await database.listRecords())
+              .map((record) => record.work.id)
+              .whereType<int>(),
+        );
+      sessionNewWorkIds.clear();
+      final imageFolder = await database.getSetting('image_folder');
+      await imageStorage.initialize(imageFolder ?? imageRootPathOverride);
+      seedName = await database.getSetting('theme_seed') ?? 'Dragon red';
+      final savedHierarchy = await database.getSetting(
+        'catalog_hierarchy_order',
       );
-    sessionNewWorkIds.clear();
-    final imageFolder = await database.getSetting('image_folder');
-    await imageStorage.initialize(imageFolder ?? imageRootPathOverride);
-    seedName = await database.getSetting('theme_seed') ?? 'Dragon red';
-    final savedHierarchy = await database.getSetting('catalog_hierarchy_order');
-    hierarchyOrder = savedHierarchy == 'gameSystemBookTypeSetting'
-        ? CatalogHierarchyOrder.gameSystemBookTypeSetting
-        : CatalogHierarchyOrder.gameSystemSettingBookType;
-    await backups.start(
-      databasePath: database.databasePath,
-      database: database.databaseHandle,
-    );
-    if (remember) {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('last_database_path', database.databasePath);
+      hierarchyOrder = savedHierarchy == 'gameSystemBookTypeSetting'
+          ? CatalogHierarchyOrder.gameSystemBookTypeSetting
+          : CatalogHierarchyOrder.gameSystemSettingBookType;
+      await backups.start(
+        databasePath: database.databasePath,
+        database: database.databaseHandle,
+      );
+      if (remember) {
+        if (prefs != null) {
+          await prefs.setString('last_database_path', database.databasePath);
+        }
+      }
+      notifyListeners();
+      if (automaticSyncEnabled) scheduleAutomaticSync();
+    } catch (exception) {
+      // Opening the database is a transaction from the UI's perspective. If
+      // image storage (or any later bootstrap step) fails, leave no live DB
+      // behind for callers to mistake for a ready catalog.
+      await backups.stop();
+      await database.close();
+      syncCoordinator.resetRuntime();
+      syncMetadata = null;
+      _selectedProvider = null;
+      automaticSyncEnabled = false;
+      automaticSyncOwnershipValid = false;
+      _sessionBaselineWorkIds.clear();
+      sessionNewWorkIds.clear();
+      error = exception.toString();
+      notifyListeners();
+      rethrow;
     }
-    notifyListeners();
-    if (automaticSyncEnabled) scheduleAutomaticSync();
+  }
+
+  void _ensureSyncCoordinator(SharedPreferences? prefs) {
+    if (_syncCoordinatorInitialized) return;
+    syncCoordinator = SyncCoordinator(
+      metadataStorage: prefs == null
+          ? _InMemorySyncMetadataStorage()
+          : SharedPreferencesSyncMetadataStorage(prefs),
+    );
+    _syncCoordinatorInitialized = true;
   }
 
   Future<void> setDeviceName(String value) async {
@@ -498,6 +565,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     }
     if (!database.isOpen) throw StateError('Open a catalog first.');
     final identity = await database.ensureCatalogIdentity();
+    _pendingConnectionProvider = provider;
+    _pendingConnectionCancellationRequested = false;
+    notifyListeners();
     try {
       syncMetadata = await syncCoordinator.connect(provider, identity);
       if (syncMetadata!.state == SyncState.connectedUnconfigured &&
@@ -518,13 +588,35 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       // Keep the persisted sync policy aligned with the bundle export policy.
       await setIncludePersonalImagesInBundles(includePersonalImagesInBundles);
     } catch (error) {
-      await syncCoordinator.failConnection(error);
-      syncMetadata = syncCoordinator.metadata;
+      if (_pendingConnectionCancellationRequested &&
+          identical(_pendingConnectionProvider, provider)) {
+        await syncCoordinator.disconnect();
+        syncMetadata = null;
+      } else {
+        await syncCoordinator.failConnection(error);
+        syncMetadata = syncCoordinator.metadata;
+      }
       notifyListeners();
       rethrow;
+    } finally {
+      if (identical(_pendingConnectionProvider, provider)) {
+        _pendingConnectionProvider = null;
+        _pendingConnectionCancellationRequested = false;
+        notifyListeners();
+      }
     }
     _selectedProvider = provider;
     notifyListeners();
+  }
+
+  /// Cancels only an in-flight Dropbox OAuth callback. Other connection
+  /// operations are intentionally not interrupted by this UI action.
+  Future<void> cancelPendingConnection() async {
+    final provider = _pendingConnectionProvider;
+    if (provider is DropboxProvider) {
+      _pendingConnectionCancellationRequested = true;
+      await provider.cancelPendingAuthentication();
+    }
   }
 
   Future<void> connectGoogleDrive() => _connect(_providers['google_drive']);
@@ -584,12 +676,12 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Applies a choice made in the conflict dialog. Every replacement creates
   /// a recoverable local snapshot before transfer or database swap.
-  Future<void> resolveSyncDecision(
+  Future<bool> resolveSyncDecision(
     SyncConflictChoice choice, {
     required SyncClassificationResult decision,
     required String localFingerprint,
   }) async {
-    if (choice == SyncConflictChoice.cancel) return;
+    if (choice == SyncConflictChoice.cancel) return false;
     if (!database.isOpen) throw StateError('Open a catalog first.');
     final temporary = await getTemporaryDirectory();
     final bundlePath = path.join(
@@ -611,7 +703,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
             'The local catalog changed; review the conflict again.',
           );
         }
-        await downloadRemoteBundle(
+        return downloadRemoteBundle(
           expectedRemote: decision.remote,
           expectedLocalFingerprint: localFingerprint,
           backup: localBackup,
@@ -659,6 +751,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         );
         syncMetadata = syncCoordinator.metadata;
         notifyListeners();
+        return false;
       }
     } finally {
       final file = File(bundlePath);
@@ -666,7 +759,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> downloadRemoteBundle({
+  Future<bool> downloadRemoteBundle({
     SyncRemoteMetadata? expectedRemote,
     String? expectedLocalFingerprint,
     Future<void> Function()? backup,
@@ -688,7 +781,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         if (decision.classification == SyncClassification.localOnly ||
             decision.classification == SyncClassification.divergent ||
             decision.classification == SyncClassification.unknownError) {
-          throw SyncDecisionRequired(decision);
+          throw SyncDecisionRequired(
+            decision,
+            localFingerprint: local.contentFingerprint,
+          );
         }
         discoveredRemote = decision.remote;
       } finally {
@@ -700,6 +796,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       temporary.path,
       'realmwise-remote-${DateTime.now().microsecondsSinceEpoch}.realmwise',
     );
+    final runtimeSnapshot = syncCoordinator.captureRuntime();
     try {
       SyncDownloadResult? result;
       BundleManifest? manifest;
@@ -746,12 +843,67 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       }
       if (backup != null) await backup();
       await restoreDeviceBundle(bundlePath);
-      await syncCoordinator.commitDownload(
-        result.metadata,
-        localFingerprint: manifest.contentFingerprint,
-      );
-      syncMetadata = syncCoordinator.metadata;
+      if (runtimeSnapshot != null) {
+        SyncMetadata? rebound;
+        final registered = _providers[runtimeSnapshot.provider.provider];
+        if (!identical(registered, runtimeSnapshot.provider)) {
+          SyncDebug.trace('restore.rebind.error', const {
+            'status': 'provider_mismatch',
+          });
+          syncCoordinator.resetRuntime();
+          syncMetadata = null;
+          _selectedProvider = null;
+        } else {
+          try {
+            rebound = await syncCoordinator.rebindAfterCatalogRestore(
+              runtimeSnapshot,
+              catalogIdentity: manifest.catalogIdentity,
+              remote: result.metadata,
+              localFingerprint: manifest.contentFingerprint,
+            );
+          } catch (_) {
+            // Rebinding is best effort, but never fall back to credentials or
+            // metadata restored from the replacement catalog.
+            SyncDebug.trace('restore.rebind.error', const {'status': 'failed'});
+            syncCoordinator.resetRuntime();
+            syncMetadata = null;
+            _selectedProvider = null;
+            automaticSyncEnabled = false;
+            automaticSyncOwnershipValid = false;
+            rethrow;
+          }
+          if (rebound == null) {
+            SyncDebug.trace('restore.rebind.error', const {
+              'status': 'rejected',
+            });
+            syncCoordinator.resetRuntime();
+            syncMetadata = null;
+            _selectedProvider = null;
+          } else {
+            _selectedProvider = registered;
+            syncMetadata = rebound;
+          }
+        }
+      } else {
+        // A plain/manual import must not inherit the just-downloaded remote
+        // revision. Keep only any normal persisted restoration performed by
+        // openDatabase for this catalog identity.
+        syncMetadata = syncCoordinator.metadata;
+      }
+      automaticSyncEnabled = syncMetadata?.automaticSyncEnabled ?? false;
+      automaticSyncOwnershipValid =
+          automaticSyncEnabled &&
+          syncMetadata?.deviceId == deviceId &&
+          syncMetadata?.leaseToken != null &&
+          (syncMetadata?.leaseExpiresAt?.isAfter(DateTime.now().toUtc()) ??
+              false);
+      if (!automaticSyncOwnershipValid) {
+        _automaticSyncTimer?.cancel();
+      } else {
+        scheduleAutomaticSync();
+      }
       notifyListeners();
+      return true;
     } finally {
       final file = File(bundlePath);
       if (await file.exists()) await file.delete();

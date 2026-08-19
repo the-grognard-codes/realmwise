@@ -12,8 +12,13 @@ import '../services/sync_metadata.dart';
 import '../theme/app_theme.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, required this.controller});
+  const SettingsScreen({
+    super.key,
+    required this.controller,
+    this.onSyncRestore,
+  });
   final AppController controller;
+  final VoidCallback? onSyncRestore;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -81,6 +86,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     () => widget.controller.setRpgGeekKey(_key.text),
     success: 'RPGGeek key saved in this local database.',
   );
+
+  Future<void> _cancelConnection() async {
+    try {
+      await widget.controller.cancelPendingConnection();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not cancel connection: $error')),
+        );
+      }
+    }
+  }
 
   Future<void> _editDeviceName() async {
     final name = TextEditingController(text: widget.controller.deviceName);
@@ -185,11 +202,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       );
       if (choice == null || choice == SyncConflictChoice.cancel) return;
-      await widget.controller.resolveSyncDecision(
-        choice,
-        decision: decision.result,
-        localFingerprint: localFingerprint,
-      );
+      try {
+        final restored = await widget.controller.resolveSyncDecision(
+          choice,
+          decision: decision.result,
+          localFingerprint: localFingerprint,
+        );
+        if (restored && mounted) widget.onSyncRestore?.call();
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not complete sync: $error')),
+          );
+        }
+        return;
+      }
     }
     if (!mounted) return;
     final providerLabel =
@@ -552,11 +579,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       );
       if (choice != null && choice != SyncConflictChoice.cancel) {
-        await widget.controller.resolveSyncDecision(
-          choice,
-          decision: decision.result,
-          localFingerprint: decision.localFingerprint ?? '',
-        );
+        try {
+          final restored = await widget.controller.resolveSyncDecision(
+            choice,
+            decision: decision.result,
+            localFingerprint: decision.localFingerprint ?? '',
+          );
+          if (restored && mounted) widget.onSyncRestore?.call();
+        } catch (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Could not download remote catalog: $error'),
+              ),
+            );
+          }
+          return;
+        }
       }
       return;
     } catch (error) {
@@ -590,7 +629,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     if (confirmed == true && mounted) {
-      await widget.controller.downloadRemoteBundle();
+      final restored = await widget.controller.downloadRemoteBundle();
+      if (restored && mounted) widget.onSyncRestore?.call();
     }
   }
 
@@ -924,6 +964,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final providers = widget.controller.availableProviders;
     final selected = widget.controller.selectedProvider;
     final connected = widget.controller.providerSelectionLocked;
+    final connectionPending = widget.controller.isConnectionPending;
     String label(SyncProvider p) => p.provider == 'onedrive'
         ? 'Microsoft OneDrive'
         : p.provider == 'dropbox'
@@ -931,6 +972,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         : 'Google Drive';
     final status = providers.isEmpty
         ? 'Cloud sync is not configured on this build.'
+        : connectionPending
+        ? 'Connecting to Dropbox… (not connected)'
         : connected
         ? 'Connected provider: ${selected == null ? 'Unknown' : label(selected)} (${metadata?.accountDisplayName ?? metadata?.accountId ?? 'account unavailable'})'
         : metadata?.state.label ?? 'Not connected';
@@ -1040,7 +1083,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     (provider) => ChoiceChip(
                       label: Text(label(provider)),
                       selected: selected?.provider == provider.provider,
-                      onSelected: connected || _busy
+                      onSelected: connected || connectionPending || _busy
                           ? null
                           : (_) => _run(
                               () => widget.controller.selectProvider(provider),
@@ -1054,7 +1097,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             runSpacing: 10,
             children: [
               OutlinedButton.icon(
-                onPressed: _busy || selected == null || connected
+                onPressed:
+                    _busy || connectionPending || selected == null || connected
                     ? null
                     : () => _run(
                         selected.provider == 'onedrive'
@@ -1069,8 +1113,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   selected == null ? 'Connect' : 'Connect ${label(selected)}',
                 ),
               ),
+              if (connectionPending)
+                OutlinedButton.icon(
+                  onPressed: _cancelConnection,
+                  icon: const Icon(Icons.cancel_outlined),
+                  label: const Text('Cancel connection'),
+                ),
               OutlinedButton.icon(
-                onPressed: _busy || !connected || widget.controller.isSyncing
+                onPressed:
+                    _busy ||
+                        connectionPending ||
+                        !connected ||
+                        widget.controller.isSyncing
                     ? null
                     : () => _run(
                         widget.controller.disconnectGoogleDrive,

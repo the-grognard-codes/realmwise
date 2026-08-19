@@ -30,7 +30,7 @@ class CatalogBundleService {
   }) async {
     if (!database.isOpen) throw StateError('No database is currently open.');
     final identity = await database.ensureCatalogIdentity();
-    await database.databaseHandle.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+    await database.databaseHandle.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
     final source = File(database.databasePath);
     if (!await source.exists())
       throw StateError('Active database file is missing.');
@@ -163,13 +163,16 @@ class CatalogBundleService {
               whereArgs: [row['tier'], row['section_name']],
             );
         }
-        await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+        await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
         await db.execute('VACUUM');
       } finally {
         await db.close();
       }
       final bytes = await temp.readAsBytes();
-      final fingerprint = await _computeLogicalFingerprint(temp.path, assetFiles);
+      final fingerprint = await _computeLogicalFingerprint(
+        temp.path,
+        assetFiles,
+      );
       final manifest = <String, Object?>{
         'format_version': formatVersion,
         'app_version': appVersion,
@@ -433,13 +436,16 @@ class CatalogBundleService {
             .where((name) => name != 'created_at' && name != 'updated_at')
             .toList();
         final rows = await db.query(table, columns: columns);
-        final normalized = rows
-            .map((row) => <String, Object?>{
-                  for (final c in columns) c: row[c],
-                })
-            .map(jsonEncode)
-            .toList()
-          ..sort();
+        final normalized =
+            rows
+                .map(
+                  (row) => <String, Object?>{
+                    for (final c in columns) c: row[c],
+                  },
+                )
+                .map(jsonEncode)
+                .toList()
+              ..sort();
         state[table] = normalized;
       }
       final assetTuples = <Map<String, Object?>>[];
@@ -451,7 +457,9 @@ class CatalogBundleService {
           'sha256': sha256.convert(data).toString(),
         });
       }
-      assetTuples.sort((a, b) => (a['path'] as String).compareTo(b['path'] as String));
+      assetTuples.sort(
+        (a, b) => (a['path'] as String).compareTo(b['path'] as String),
+      );
       final canonical = jsonEncode({'database': state, 'assets': assetTuples});
       return sha256.convert(utf8.encode(canonical)).toString();
     } finally {

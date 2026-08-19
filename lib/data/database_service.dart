@@ -35,7 +35,7 @@ class DatabaseService {
       filePath,
       version: 5,
       onConfigure: (database) async =>
-          database.execute('PRAGMA foreign_keys = ON'),
+          database.rawQuery('PRAGMA foreign_keys = ON'),
       onCreate: _createSchema,
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -537,13 +537,13 @@ class DatabaseService {
 
   /// Removes the pre-secure-storage RPGGeek token after it is copied safely.
   Future<void> deleteLegacyRpgGeekKey() async {
-    await _db.execute('PRAGMA secure_delete = ON');
+    await _db.rawQuery('PRAGMA secure_delete = ON');
     await _db.delete(
       'settings',
       where: 'setting_key = ?',
       whereArgs: ['rpggeek_api_key'],
     );
-    await _db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+    await _db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
     await _db.execute('VACUUM');
   }
 

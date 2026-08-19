@@ -101,7 +101,7 @@ class _RealmwiseBootstrapState extends State<RealmwiseBootstrap> {
     themeMode: ThemeMode.system,
     home: _controller.loading
         ? const _LoadingScreen()
-        : _controller.isOpen
+        : _controller.isOpen && _controller.error == null
         ? CatalogShell(controller: _controller)
         : DatabaseGateway(controller: _controller, error: _controller.error),
   );
@@ -115,8 +115,9 @@ class _LoadingScreen extends StatelessWidget {
     body: SafeArea(
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final imageWidth =
-              (constraints.maxWidth * 0.8).clamp(1.0, 520.0).toDouble();
+          final imageWidth = (constraints.maxWidth * 0.8)
+              .clamp(1.0, 520.0)
+              .toDouble();
           return Center(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(24),
@@ -191,7 +192,10 @@ class _CatalogShellState extends State<CatalogShell> {
         controller: widget.controller,
         onSaved: () => setState(() => _page = 0),
       ),
-      SettingsScreen(controller: widget.controller),
+      SettingsScreen(
+        controller: widget.controller,
+        onSyncRestore: () => setState(() => _page = 0),
+      ),
     ];
     return LayoutBuilder(
       builder: (context, constraints) {

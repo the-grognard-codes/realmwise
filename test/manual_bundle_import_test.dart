@@ -50,61 +50,167 @@ void main() {
     controller.dispose();
   });
 
-  test('invalid bundle fails before replacement and preserves active database', () async {
-    final controller = AppController(
-      tokenStorage: _MemoryTokenStorage(),
-      imageRootPathOverride: p.join(dir.path, 'images'),
-    );
-    final active = p.join(dir.path, 'active.db');
-    await controller.openDatabase(active, remember: false);
-    await controller.database.databaseHandle.insert('works', {'title': 'Keep'});
-    final invalid = p.join(dir.path, 'invalid.realmwise');
-    await File(invalid).writeAsString('not zip');
-    await expectLater(
-      controller.restoreDeviceBundle(invalid),
-      throwsA(isA<FormatException>()),
-    );
-    expect((await controller.database.databaseHandle.query('works')).single['title'], 'Keep');
-    controller.dispose();
-  });
+  test(
+    'invalid bundle fails before replacement and preserves active database',
+    () async {
+      final controller = AppController(
+        tokenStorage: _MemoryTokenStorage(),
+        imageRootPathOverride: p.join(dir.path, 'images'),
+      );
+      final active = p.join(dir.path, 'active.db');
+      await controller.openDatabase(active, remember: false);
+      await controller.database.databaseHandle.insert('works', {
+        'title': 'Keep',
+      });
+      final invalid = p.join(dir.path, 'invalid.realmwise');
+      await File(invalid).writeAsString('not zip');
+      await expectLater(
+        controller.restoreDeviceBundle(invalid),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        (await controller.database.databaseHandle.query(
+          'works',
+        )).single['title'],
+        'Keep',
+      );
+      controller.dispose();
+    },
+  );
 
   test(
     'bundle restore clears a live sync session when catalog setup is absent',
     () async {
+      final provider = _FakeSyncProvider();
+      final controller = AppController(
+        syncProvider: provider,
+        tokenStorage: _MemoryTokenStorage(),
+        imageRootPathOverride: p.join(dir.path, 'images'),
+      );
+      controller.syncCoordinator = SyncCoordinator(
+        metadataStorage: SharedPreferencesSyncMetadataStorage(
+          await SharedPreferences.getInstance(),
+        ),
+      );
+      final active = p.join(dir.path, 'active.db');
+      await controller.openDatabase(active, remember: false);
+      await controller.selectProvider(provider);
+      controller.syncCoordinator.provider = provider;
+      controller.syncCoordinator.session = const SyncAuthSession(
+        accountId: 'account',
+      );
+      controller.syncCoordinator.target = const SyncRemoteTarget(
+        id: 'target',
+        name: 'Target',
+      );
+      controller.syncMetadata = null;
+
+      final bundle = p.join(dir.path, 'bundle.realmwise');
+      await controller.exportDeviceBundle(bundle);
+      await controller.restoreDeviceBundle(bundle);
+
+      expect(controller.selectedProvider, isNull);
+      expect(controller.syncMetadata, isNull);
+      expect(controller.syncCoordinator.isConnected, isFalse);
+      controller.dispose();
+    },
+  );
+  test('remote restore rehydrates the registered selected provider', () async {
     final provider = _FakeSyncProvider();
+    final source = AppController(
+      tokenStorage: _MemoryTokenStorage(),
+      imageRootPathOverride: p.join(dir.path, 'source-images'),
+    );
+    await source.openDatabase(p.join(dir.path, 'source.db'), remember: false);
+    final bundle = p.join(dir.path, 'remote.realmwise');
+    await source.exportDeviceBundle(bundle);
     final controller = AppController(
       syncProvider: provider,
       tokenStorage: _MemoryTokenStorage(),
-      imageRootPathOverride: p.join(dir.path, 'images'),
+      imageRootPathOverride: p.join(dir.path, 'active-images'),
     );
     controller.syncCoordinator = SyncCoordinator(
       metadataStorage: SharedPreferencesSyncMetadataStorage(
         await SharedPreferences.getInstance(),
       ),
     );
-    final active = p.join(dir.path, 'active.db');
-    await controller.openDatabase(active, remember: false);
+    await controller.openDatabase(
+      p.join(dir.path, 'active.db'),
+      remember: false,
+    );
     await controller.selectProvider(provider);
-    controller.syncCoordinator.provider = provider;
-    controller.syncCoordinator.session = const SyncAuthSession(
-      accountId: 'account',
+    controller.syncCoordinator
+      ..provider = provider
+      ..session = const SyncAuthSession(accountId: 'account')
+      ..target = const SyncRemoteTarget(id: 'target', name: 'Target')
+      ..metadata = const SyncMetadata(
+        catalogIdentity: 'active',
+        provider: 'fake',
+        accountId: 'account',
+        remoteTargetId: 'target',
+      );
+    controller.syncMetadata = controller.syncCoordinator.metadata;
+    provider.payload = await File(bundle).readAsBytes();
+    final applied = await controller.downloadRemoteBundle(
+      expectedRemote: const SyncRemoteMetadata(
+        revision: SyncRevision('1'),
+        contentHash: 'remote',
+      ),
     );
-    controller.syncCoordinator.target = const SyncRemoteTarget(
-      id: 'target',
-      name: 'Target',
-    );
-    controller.syncMetadata = null;
-
-    final bundle = p.join(dir.path, 'bundle.realmwise');
-    await controller.exportDeviceBundle(bundle);
-    await controller.restoreDeviceBundle(bundle);
-
-    expect(controller.selectedProvider, isNull);
-    expect(controller.syncMetadata, isNull);
-    expect(controller.syncCoordinator.isConnected, isFalse);
+    expect(applied, isTrue);
+    expect(identical(controller.selectedProvider, provider), isTrue);
+    expect(controller.syncCoordinator.isConnected, isTrue);
+    source.dispose();
     controller.dispose();
-    },
-  );
+  });
+
+  test('remote restore rejects an unregistered captured provider', () async {
+    final registered = _FakeSyncProvider();
+    final unregistered = _FakeSyncProvider();
+    final source = AppController(
+      tokenStorage: _MemoryTokenStorage(),
+      imageRootPathOverride: p.join(dir.path, 'source-images-2'),
+    );
+    await source.openDatabase(p.join(dir.path, 'source-2.db'), remember: false);
+    final bundle = p.join(dir.path, 'remote-2.realmwise');
+    await source.exportDeviceBundle(bundle);
+    final controller = AppController(
+      syncProvider: registered,
+      tokenStorage: _MemoryTokenStorage(),
+      imageRootPathOverride: p.join(dir.path, 'active-images-2'),
+    );
+    controller.syncCoordinator = SyncCoordinator(
+      metadataStorage: SharedPreferencesSyncMetadataStorage(
+        await SharedPreferences.getInstance(),
+      ),
+    );
+    await controller.openDatabase(
+      p.join(dir.path, 'active-2.db'),
+      remember: false,
+    );
+    controller.syncCoordinator
+      ..provider = unregistered
+      ..session = const SyncAuthSession(accountId: 'account')
+      ..target = const SyncRemoteTarget(id: 'target', name: 'Target')
+      ..metadata = const SyncMetadata(
+        catalogIdentity: 'active',
+        provider: 'fake',
+        accountId: 'account',
+        remoteTargetId: 'target',
+      );
+    unregistered.payload = await File(bundle).readAsBytes();
+    final applied = await controller.downloadRemoteBundle(
+      expectedRemote: const SyncRemoteMetadata(
+        revision: SyncRevision('1'),
+        contentHash: 'remote',
+      ),
+    );
+    expect(applied, isTrue);
+    expect(controller.selectedProvider, isNull);
+    expect(controller.syncCoordinator.isConnected, isFalse);
+    source.dispose();
+    controller.dispose();
+  });
 }
 
 class _MemoryTokenStorage implements TokenStorage {
@@ -117,6 +223,7 @@ class _MemoryTokenStorage implements TokenStorage {
 }
 
 class _FakeSyncProvider implements SyncProvider {
+  Uint8List? payload;
   @override
   String get provider => 'fake';
 
@@ -148,5 +255,11 @@ class _FakeSyncProvider implements SyncProvider {
     SyncAuthSession session,
     SyncRemoteTarget target, {
     SyncPrecondition? precondition,
-  }) => throw UnimplementedError();
+  }) async => SyncDownloadResult(
+    payload: payload!,
+    metadata: const SyncRemoteMetadata(
+      revision: SyncRevision('1'),
+      contentHash: 'remote',
+    ),
+  );
 }
