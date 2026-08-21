@@ -118,4 +118,25 @@ void main() {
     await service.close();
     await folder.delete(recursive: true);
   });
+
+  test('product code survives editing and saving an existing record', () async {
+    final folder = await Directory.systemTemp.createTemp('rpg_catalog_product_code_');
+    final service = DatabaseService();
+    await service.open('${folder.path}${Platform.pathSeparator}catalog.db');
+
+    final saved = await service.saveRecord(
+      const CatalogRecord(
+        work: BookWork(title: 'Product Code Manual', productCode: 'OLD-1'),
+      ),
+    );
+    final edited = await service.saveRecord(
+      saved.copyWith(work: saved.work.copyWith(productCode: 'NEW-2')),
+    );
+
+    expect(edited.work.productCode, 'NEW-2');
+    expect((await service.getRecord(saved.work.id!)).work.productCode, 'NEW-2');
+
+    await service.close();
+    await folder.delete(recursive: true);
+  });
 }
