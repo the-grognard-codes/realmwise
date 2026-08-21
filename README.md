@@ -10,7 +10,7 @@ Realmwise is a local-first Flutter application for cataloging tabletop RPG books
 - OpenLibrary searching and optional RPGGeek enrichment. RPGGeek values take precedence when returned.
 - Works when offline: all catalog, edit, search-field suggestions, image, backup, and database features stay available; remote lookups report a useful offline error.
 - Periodic crash-recovery database snapshots (every 10 minutes while open).
-- Manual, conflict-aware catalog bundle sync through Google Drive, Microsoft OneDrive, or Dropbox (with secure token storage and account-scoped metadata).
+- Automatic, conflict-aware catalog bundle sync through Google Drive, Microsoft OneDrive, or Dropbox (with secure token storage and account-scoped metadata).
 - Adaptive Material UI for narrow phones and resizable desktop windows.
 
 ## Run locally
@@ -49,11 +49,13 @@ The app requests the `drive.appdata` scope and stores its sync bundle in Drive's
 
 For an External consent screen in **Testing**, add every tester explicitly. Google test-user authorizations for this Drive scope—including offline refresh tokens—expire after seven days, so testers will need to reconnect periodically. Use a published production configuration for durable refresh tokens.
 
-Drive sync is a manual copy/recovery mechanism, not a replacement for local backups. Keep the local database and image backups, and use **Settings → Database** export/restore when moving to a different account, OAuth client, or device configuration. Before restoring or switching devices, make sure the target device can authenticate with the same Google account and matching client/redirect settings; otherwise its hidden app-data bundle will not be discoverable.
+Automatic sync is a single-device backup and controlled handoff mechanism, not a real-time multi-device merge or replacement for local backups. The active device owns the remote bundle lease; edits made offline on a previous owner are not merged automatically and may need a deliberate export/restore or handoff. Keep the local database and image backups, and use **Settings → Database** export/restore when moving to a different account, OAuth client, or device configuration. Before restoring or switching devices, make sure the target device can authenticate with the same Google account and matching client/redirect settings; otherwise its hidden app-data bundle will not be discoverable.
+
+On Android, configure the provider's Android OAuth application and supported browser/app redirect flow; the desktop loopback instructions above are only for Windows/Linux builds. Provider authentication and account access remain subject to the provider's policies.
 
 ## Manual cloud sync
 
-Cloud sync is an optional manual copy/recovery mechanism. In **Settings → Sync**, choose one configured provider, connect an account, then use **Sync now** or **Download**. Provider selection is locked while connected; disconnect before switching providers. Sync bundles contain the catalog database and, when enabled in settings, owned images. Keep local database and image backups as well.
+Cloud sync is an optional automatic copy/recovery mechanism. In **Settings → Sync**, choose one configured provider and connect an account. Sync bundles contain the catalog database and, when enabled in settings, owned images. Sync is designed for one active device at a time and controlled handoff; it does not perform real-time merging of concurrent edits. If a device was offline while it was no longer the active owner, review its local changes before handing off or restoring. Keep local database and image backups as well.
 
 ### Microsoft OneDrive
 

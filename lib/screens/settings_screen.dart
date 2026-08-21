@@ -12,8 +12,13 @@ import '../services/sync_metadata.dart';
 import '../theme/app_theme.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, required this.controller});
+  const SettingsScreen({
+    super.key,
+    required this.controller,
+    this.onSyncRestore,
+  });
   final AppController controller;
+  final VoidCallback? onSyncRestore;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -82,6 +87,79 @@ class _SettingsScreenState extends State<SettingsScreen> {
     success: 'RPGGeek key saved in this local database.',
   );
 
+  Future<void> _cancelConnection() async {
+    try {
+      await widget.controller.cancelPendingConnection();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not cancel connection: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _editDeviceName() async {
+    final name = TextEditingController(text: widget.controller.deviceName);
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Name this device'),
+        content: TextField(
+          controller: name,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(labelText: 'Device name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (accepted == true && mounted) {
+      await _run(
+        () => widget.controller.setDeviceName(name.text),
+        success: 'Device name saved.',
+      );
+    }
+    name.dispose();
+  }
+
+  Future<void> _confirmTakeover() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Take over automatic sync?'),
+        content: const Text(
+          'This device will request ownership of automatic backups. If another device is online, it may continue until it next contacts cloud storage; takeover does not instantly disable an offline device.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Take over'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await _run(
+        widget.controller.takeOverAutomaticSync,
+        success: 'Automatic sync ownership request sent.',
+      );
+    }
+  }
+
   Future<void> _syncNow() async {
     try {
       await widget.controller.syncNow();
@@ -124,11 +202,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       );
       if (choice == null || choice == SyncConflictChoice.cancel) return;
-      await widget.controller.resolveSyncDecision(
-        choice,
-        decision: decision.result,
-        localFingerprint: localFingerprint,
-      );
+      try {
+        final restored = await widget.controller.resolveSyncDecision(
+          choice,
+          decision: decision.result,
+          localFingerprint: localFingerprint,
+        );
+        if (restored && mounted) widget.onSyncRestore?.call();
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not complete sync: $error')),
+          );
+        }
+        return;
+      }
     }
     if (!mounted) return;
     final providerLabel =
@@ -491,11 +579,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       );
       if (choice != null && choice != SyncConflictChoice.cancel) {
-        await widget.controller.resolveSyncDecision(
-          choice,
-          decision: decision.result,
-          localFingerprint: decision.localFingerprint ?? '',
-        );
+        try {
+          final restored = await widget.controller.resolveSyncDecision(
+            choice,
+            decision: decision.result,
+            localFingerprint: decision.localFingerprint ?? '',
+          );
+          if (restored && mounted) widget.onSyncRestore?.call();
+        } catch (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Could not download remote catalog: $error'),
+              ),
+            );
+          }
+          return;
+        }
       }
       return;
     } catch (error) {
@@ -529,7 +629,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     if (confirmed == true && mounted) {
-      await widget.controller.downloadRemoteBundle();
+      final restored = await widget.controller.downloadRemoteBundle();
+      if (restored && mounted) widget.onSyncRestore?.call();
     }
   }
 
@@ -863,6 +964,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final providers = widget.controller.availableProviders;
     final selected = widget.controller.selectedProvider;
     final connected = widget.controller.providerSelectionLocked;
+    final connectionPending = widget.controller.isConnectionPending;
     String label(SyncProvider p) => p.provider == 'onedrive'
         ? 'Microsoft OneDrive'
         : p.provider == 'dropbox'
@@ -870,6 +972,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         : 'Google Drive';
     final status = providers.isEmpty
         ? 'Cloud sync is not configured on this build.'
+        : connectionPending
+        ? 'Connecting to Dropbox… (not connected)'
         : connected
         ? 'Connected provider: ${selected == null ? 'Unknown' : label(selected)} (${metadata?.accountDisplayName ?? metadata?.accountId ?? 'account unavailable'})'
         : metadata?.state.label ?? 'Not connected';
@@ -904,6 +1008,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
+    final automaticSection = _Section(
+      title: 'Automatic sync',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Automatic sync'),
+            subtitle: Text(
+              widget.controller.automaticSyncEnabled
+                  ? (widget.controller.automaticSyncOwnershipValid
+                        ? 'This device owns automatic sync.'
+                        : 'Waiting for cloud ownership confirmation; uploads are paused.')
+                  : 'Off. Manual Sync now remains available.',
+            ),
+            value: widget.controller.automaticSyncEnabled,
+            onChanged: _busy || !connected
+                ? null
+                : (value) => _run(
+                    () => value
+                        ? widget.controller.setAutomaticSyncEnabled(true)
+                        : widget.controller.setAutomaticSyncEnabled(false),
+                  ),
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              widget.controller.deviceName.isEmpty
+                  ? 'This device'
+                  : widget.controller.deviceName,
+            ),
+            subtitle: Text(
+              'Device ID: ${widget.controller.deviceId.isEmpty ? 'Unavailable' : widget.controller.deviceId}',
+            ),
+            trailing: IconButton(
+              icon: const Icon(Icons.edit),
+              tooltip: 'Edit device name',
+              onPressed: _busy ? null : _editDeviceName,
+            ),
+          ),
+          if (connected && !widget.controller.automaticSyncOwnershipValid)
+            OutlinedButton.icon(
+              onPressed: _busy || !connected ? null : _confirmTakeover,
+              icon: const Icon(Icons.switch_account_outlined),
+              label: const Text('Take over automatic sync'),
+            ),
+          if (widget.controller.automaticSyncLastSuccess != null)
+            Text(
+              'Last automatic sync: ${DateFormat.yMMMd().add_jm().format(widget.controller.automaticSyncLastSuccess!.toLocal())}',
+            ),
+          if (widget.controller.automaticSyncError != null)
+            Text(
+              widget.controller.automaticSyncError!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          const SizedBox(height: 6),
+          const Text(
+            'Automatic sync is a single-device backup with controlled handoff, not realtime multi-device collaboration.',
+          ),
+        ],
+      ),
+    );
     final providerSection = _Section(
       title: 'Sync Providers',
       child: Column(
@@ -917,7 +1083,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     (provider) => ChoiceChip(
                       label: Text(label(provider)),
                       selected: selected?.provider == provider.provider,
-                      onSelected: connected || _busy
+                      onSelected: connected || connectionPending || _busy
                           ? null
                           : (_) => _run(
                               () => widget.controller.selectProvider(provider),
@@ -931,7 +1097,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             runSpacing: 10,
             children: [
               OutlinedButton.icon(
-                onPressed: _busy || selected == null || connected
+                onPressed:
+                    _busy || connectionPending || selected == null || connected
                     ? null
                     : () => _run(
                         selected.provider == 'onedrive'
@@ -946,8 +1113,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   selected == null ? 'Connect' : 'Connect ${label(selected)}',
                 ),
               ),
+              if (connectionPending)
+                OutlinedButton.icon(
+                  onPressed: _cancelConnection,
+                  icon: const Icon(Icons.cancel_outlined),
+                  label: const Text('Cancel connection'),
+                ),
               OutlinedButton.icon(
-                onPressed: _busy || !connected || widget.controller.isSyncing
+                onPressed:
+                    _busy ||
+                        connectionPending ||
+                        !connected ||
+                        widget.controller.isSyncing
                     ? null
                     : () => _run(
                         widget.controller.disconnectGoogleDrive,
@@ -1018,6 +1195,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SizedBox(width: double.infinity, child: statusSection),
+        SizedBox(width: double.infinity, child: automaticSection),
         SizedBox(width: double.infinity, child: providerSection),
         SizedBox(width: double.infinity, child: infoSection),
       ],

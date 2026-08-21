@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:realmwise/services/dropbox_sync.dart';
+import 'package:realmwise/services/dropbox_runtime.dart';
 import 'package:realmwise/services/secure_storage_service.dart';
 import 'package:realmwise/services/sync_contract.dart';
 
@@ -37,10 +40,120 @@ class _Callback implements DropboxOAuthCallback {
   Future<Uri> waitForCallback() async => uri;
 }
 
+class _CancellableCallback
+    implements DropboxOAuthCallback, DropboxOAuthCallbackCancellation {
+  final completer = Completer<Uri>();
+  var cancelCount = 0;
+
+  @override
+  Future<Uri> waitForCallback() => completer.future;
+
+  @override
+  Future<void> cancel() async {
+    cancelCount++;
+  }
+}
+
+class _FailingBrowser implements DropboxOAuthBrowser {
+  @override
+  Future<void> open(Uri uri) => Future<void>.error(StateError('browser'));
+}
+
 String _dropboxHash(Uint8List bytes) =>
     sha256.convert(sha256.convert(bytes).bytes).toString();
 
 void main() {
+  test('Android Dropbox callback receives native callback URI', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    const channel = MethodChannel('realmwise/dropbox_oauth');
+    final calls = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          calls.add(call.method);
+          if (call.method == 'wait_for_callback') {
+            expect(
+              call.arguments['redirect_uri'],
+              'com.realmwise.rpg.tracker://oauth2redirect/dropbox',
+            );
+            return 'com.realmwise.rpg.tracker://oauth2redirect/dropbox?code=opaque&state=opaque';
+          }
+          return null;
+        });
+    final callback = AndroidDropboxCallback(
+      Uri.parse('com.realmwise.rpg.tracker://oauth2redirect/dropbox'),
+    );
+    expect(
+      await callback.waitForCallback(),
+      Uri.parse(
+        'com.realmwise.rpg.tracker://oauth2redirect/dropbox?code=opaque&state=opaque',
+      ),
+    );
+    expect(calls, ['wait_for_callback']);
+    channel.setMockMethodCallHandler(null);
+  });
+
+  test(
+    'Android Dropbox callback cancellation forwards to native bridge',
+    () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      const channel = MethodChannel('realmwise/dropbox_oauth');
+      final pending = Completer<String?>();
+      final calls = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add(call.method);
+            if (call.method == 'wait_for_callback') return pending.future;
+            pending.completeError(
+              PlatformException(code: 'authorization_cancelled'),
+            );
+            return null;
+          });
+      final callback = AndroidDropboxCallback(
+        Uri.parse('com.realmwise.rpg.tracker://oauth2redirect/dropbox'),
+      );
+      final waiting = callback.waitForCallback();
+      final waitingError = expectLater(waiting, throwsA(isA<PlatformException>()));
+      await callback.cancel();
+      await waitingError;
+      expect(calls, ['wait_for_callback', 'cancel_callback']);
+      channel.setMockMethodCallHandler(null);
+    },
+  );
+
+  test('OAuth callback timeout cancels a pending callback', () async {
+    final store = DropboxTokenStore(_Store());
+    final callback = _CancellableCallback();
+    final auth = DropboxOAuthAuthenticator(
+      clientId: 'id',
+      redirectUri: Uri.parse('http://localhost/cb'),
+      browser: _Browser(),
+      callback: callback,
+      tokenStore: store,
+      callbackTimeout: const Duration(milliseconds: 1),
+    );
+
+    await expectLater(
+      auth.authenticate(),
+      throwsA(isA<DropboxAuthException>()),
+    );
+    expect(callback.cancelCount, 1);
+  });
+
+  test('browser failure cancels a pending callback', () async {
+    final store = DropboxTokenStore(_Store());
+    final callback = _CancellableCallback();
+    final auth = DropboxOAuthAuthenticator(
+      clientId: 'id',
+      redirectUri: Uri.parse('http://localhost/cb'),
+      browser: _FailingBrowser(),
+      callback: callback,
+      tokenStore: store,
+    );
+
+    await expectLater(auth.authenticate(), throwsA(isA<StateError>()));
+    expect(callback.cancelCount, 1);
+  });
+
   test('token store round trip and provider id', () async {
     final s = _Store();
     final t = DropboxTokenStore(s);

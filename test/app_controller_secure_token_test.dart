@@ -91,6 +91,36 @@ void main() {
   });
 
   test(
+    'failed image storage initialization closes database and can recover',
+    () async {
+      final folder = await Directory.systemTemp.createTemp(
+        'realmwise_storage_recovery_',
+      );
+      PathProviderPlatform.instance = _FakePathProvider(folder.path);
+      final invalidImageRoot = File(
+        '${folder.path}${Platform.pathSeparator}not-a-directory',
+      )..writeAsStringSync('occupied');
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final controller = AppController(
+        imageRootPathOverride: invalidImageRoot.path,
+        tokenStorage: _MemoryTokenStorage(),
+      );
+      await controller.initialize();
+      expect(controller.isOpen, isFalse);
+      expect(controller.activeDatabasePath, isNull);
+
+      await invalidImageRoot.delete();
+      final dbPath = '${folder.path}${Platform.pathSeparator}catalog.db';
+      await controller.openDatabase(dbPath, remember: false);
+      expect(controller.isOpen, isTrue);
+
+      await controller.closeDatabase();
+      controller.dispose();
+      await folder.delete(recursive: true);
+    },
+  );
+
+  test(
     'initialize opens legacy default database when Realmwise default is absent',
     () async {
       final folder = await Directory.systemTemp.createTemp(

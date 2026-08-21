@@ -40,7 +40,7 @@ class BackupService {
     required Database database,
   }) async {
     // Checkpoint WAL before copying so a snapshot contains every committed edit.
-    await database.execute('PRAGMA wal_checkpoint(FULL)');
+    await database.rawQuery('PRAGMA wal_checkpoint(FULL)');
     final folder = Directory(path.join(path.dirname(databasePath), 'backups'));
     await folder.create(recursive: true);
     final source = File(databasePath);
@@ -85,13 +85,13 @@ class BackupService {
         "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'",
       );
       if (tables.isNotEmpty) {
-        await db.execute('PRAGMA secure_delete = ON');
+        await db.rawQuery('PRAGMA secure_delete = ON');
         await db.delete(
           'settings',
           where: 'setting_key = ?',
           whereArgs: ['rpggeek_api_key'],
         );
-        await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+        await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
         await db.execute('VACUUM');
       }
     } finally {

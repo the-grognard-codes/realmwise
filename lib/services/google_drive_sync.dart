@@ -17,6 +17,14 @@ abstract interface class OAuthCallback {
   Future<Uri> waitForCallback();
 }
 
+/// Platform-native authorization used by Android GIS. It deliberately
+/// returns only a short-lived access token; Android never receives a client
+/// secret or stores a refresh token.
+abstract interface class AndroidGoogleDriveAuthorization {
+  Future<Map<String, Object?>> authorize({required String clientId});
+  Future<void> clearToken(String token);
+}
+
 class GoogleDriveAuthException implements Exception {
   GoogleDriveAuthException(this.message);
   final String message;
@@ -97,11 +105,13 @@ class GoogleDriveOAuthAuthenticator implements SyncAuthenticator {
     required this.callback,
     required this.tokenStore,
     this.clientSecret,
+    this.androidAuthorization,
     this.scopes = const ['https://www.googleapis.com/auth/drive.appdata'],
     http.Client? httpClient,
   }) : _http = httpClient ?? http.Client();
   final String clientId;
   final String? clientSecret;
+  final AndroidGoogleDriveAuthorization? androidAuthorization;
   final Uri redirectUri;
   final OAuthBrowser browser;
   final OAuthCallback callback;
@@ -110,8 +120,53 @@ class GoogleDriveOAuthAuthenticator implements SyncAuthenticator {
   final http.Client _http;
   String get _key => 'google_drive_oauth:$clientId';
 
+  /// Revokes the currently cached Android access token. This endpoint does
+  /// not require a client secret; local credentials are cleared regardless
+  /// of network success so disconnect is reliable offline.
+  Future<void> revokeCachedAccessToken() async {
+    final token = await tokenStore.read(_key);
+    final access = token['access_token'] as String?;
+    if (access == null || access.isEmpty) return;
+    try {
+      final response = await _http.post(
+        Uri.parse('https://oauth2.googleapis.com/revoke'),
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: {'token': access},
+      );
+      if (response.statusCode != 200) {
+        throw GoogleDriveAuthException(
+          'Google token revocation was not confirmed',
+        );
+      }
+    } catch (_) {
+      // Revocation is best effort; deleting local credentials is mandatory.
+    }
+  }
+
   @override
   Future<SyncAuthSession> authenticate() async {
+    if (androidAuthorization != null) {
+      final token = await androidAuthorization!.authorize(clientId: clientId);
+      final access = token['access_token'] as String?;
+      if (access == null || access.trim().isEmpty)
+        throw GoogleDriveAuthException('Missing access token');
+      final expiryMs = (token['expires_at_epoch_ms'] as num?)?.toInt();
+      final expiresAt = expiryMs == null
+          ? DateTime.now().add(const Duration(minutes: 50))
+          : DateTime.fromMillisecondsSinceEpoch(expiryMs);
+      final stored = <String, Object?>{
+        'access_token': access,
+        'expires_at': expiresAt.toIso8601String(),
+        'account_id': token['account_id'] as String? ?? 'google-drive',
+        if (token['account_name'] is String)
+          'account_name': token['account_name'],
+      };
+      await tokenStore.write(_key, stored);
+      return SyncAuthSession(
+        accountId: stored['account_id'] as String,
+        displayName: stored['account_name'] as String?,
+      );
+    }
     final verifier = _random(64);
     final challenge = base64Url
         .encode(sha256.convert(utf8.encode(verifier)).bytes)
@@ -203,13 +258,62 @@ class GoogleDriveOAuthAuthenticator implements SyncAuthenticator {
   }
 }
 
-class GoogleDriveProvider implements SyncProvider {
+class _GoogleDriveHttpClient extends http.BaseClient {
+  _GoogleDriveHttpClient(this.inner, this.clearToken, this.reauthorize);
+  final http.Client inner;
+  final Future<void> Function(String token)? clearToken;
+  final Future<String?> Function()? reauthorize;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final response = await inner.send(request);
+    if (response.statusCode != 401 || reauthorize == null) return response;
+    // Only buffered http.Request instances can be replayed safely. Do not
+    // consume a streaming body merely to attempt an unsafe retry.
+    if (request is! http.Request) return response;
+    await response.stream.drain();
+    // A request body is buffered by the http package before send, so it can
+    // be replayed exactly once after interactive Android reauthorization.
+    final replay = http.Request(request.method, request.url)
+      ..headers.addAll(request.headers)
+      ..bodyBytes = request.bodyBytes;
+    final rejected = request.headers['authorization'];
+    if (rejected != null && clearToken != null) {
+      await clearToken!(rejected.replaceFirst(RegExp(r'^Bearer\s+', caseSensitive: false), ''));
+    }
+    final access = await reauthorize!();
+    if (access != null && access.isNotEmpty) {
+      replay.headers['authorization'] = 'Bearer $access';
+    }
+    return inner.send(replay);
+  }
+
+  @override
+  void close() {
+    inner.close();
+    super.close();
+  }
+}
+
+class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
   GoogleDriveProvider({
     required this.authenticator,
     required this.tokenStore,
     http.Client? httpClient,
     Future<void> Function(Duration duration)? delay,
-  }) : _http = httpClient ?? http.Client(),
+  }) : _http = _GoogleDriveHttpClient(
+         httpClient ?? http.Client(),
+         authenticator.androidAuthorization?.clearToken,
+         authenticator.androidAuthorization == null
+             ? null
+             : () async {
+                 await authenticator.authenticate();
+                 final token = await authenticator.tokenStore.read(
+                   authenticator._key,
+                 );
+                 return token['access_token'] as String?;
+               },
+       ),
        _delay = delay ?? Future<void>.delayed;
   final GoogleDriveOAuthAuthenticator authenticator;
   final GoogleDriveTokenStore tokenStore;
@@ -218,7 +322,195 @@ class GoogleDriveProvider implements SyncProvider {
   final Map<String, String> _etags = {};
   @override
   String get provider => 'google_drive';
-  Future<void> clearCredentials() => tokenStore.delete(authenticator._key);
+
+  Future<String?> _leaseFile(SyncAuthSession s, String c) async {
+    final q = Uri.encodeQueryComponent(
+      "name = 'Realmwise.lease.${sha256.convert(utf8.encode(c)).toString()}' and 'appDataFolder' in parents and trashed = false",
+    );
+    final r = await _http.get(
+      Uri.parse(
+        'https://www.googleapis.com/drive/v3/files?q=$q&spaces=appDataFolder&fields=files(id)',
+      ),
+      headers: {'Authorization': 'Bearer ${await _access(s)}'},
+    );
+    if (r.statusCode != 200) return null;
+    final a = (jsonDecode(r.body)['files'] as List? ?? const []);
+    return a.isEmpty ? null : a.first['id'] as String;
+  }
+
+  Future<SyncLease?> _cloudLease(SyncAuthSession s, String c) async {
+    final id = await _leaseFile(s, c);
+    if (id == null) return null;
+    final r = await _http.get(
+      Uri.parse(
+        'https://www.googleapis.com/drive/v3/files/$id?fields=description,version',
+      ),
+      headers: {'Authorization': 'Bearer ${await _access(s)}'},
+    );
+    if (r.statusCode != 200) return null;
+    final j = jsonDecode(r.body) as Map;
+    final etag = r.headers['etag'];
+    if (etag == null || etag.isEmpty) return null;
+    _etags[id] = etag;
+    final x = jsonDecode(j['description'] as String) as Map;
+    return SyncLease(
+      catalogIdentity: c,
+      ownerDeviceId: x['ownerDeviceId'] as String,
+      ownerDeviceName: x['ownerDeviceName'] as String,
+      generation: x['generation'] as String,
+      token: x['token'] as String,
+      issuedAt: DateTime.parse(x['issuedAt'] as String),
+      expiresAt: DateTime.parse(x['expiresAt'] as String),
+      lastRenewedAt: DateTime.parse(x['lastRenewedAt'] as String),
+      remoteRevision: SyncRevision(etag),
+    );
+  }
+
+  @override
+  Future<SyncLease?> readLease(
+    SyncAuthSession s,
+    SyncRemoteTarget t,
+    String c,
+  ) => _cloudLease(s, c);
+  Future<void> _writeCloudLease(
+    SyncAuthSession s,
+    SyncLease l,
+    String? id,
+    String? revision,
+  ) async {
+    final body = jsonEncode({
+      'catalogIdentity': l.catalogIdentity,
+      'ownerDeviceId': l.ownerDeviceId,
+      'ownerDeviceName': l.ownerDeviceName,
+      'generation': l.generation,
+      'token': l.token,
+      'issuedAt': l.issuedAt.toIso8601String(),
+      'expiresAt': l.expiresAt.toIso8601String(),
+      'lastRenewedAt': l.lastRenewedAt.toIso8601String(),
+    });
+    final h = {
+      'Authorization': 'Bearer ${await _access(s)}',
+      'Content-Type': 'application/json',
+      if (revision != null) 'If-Match': revision,
+    };
+    final r = id == null
+        ? await _http.post(
+            Uri.parse('https://www.googleapis.com/drive/v3/files'),
+            headers: h,
+            body: jsonEncode({
+              'name':
+                  'Realmwise.lease.${sha256.convert(utf8.encode(l.catalogIdentity))}',
+              'parents': ['appDataFolder'],
+              'mimeType': 'application/octet-stream',
+              'description': body,
+            }),
+          )
+        : await _http.patch(
+            Uri.parse('https://www.googleapis.com/drive/v3/files/$id'),
+            headers: h,
+            body: jsonEncode({'description': body}),
+          );
+    if (r.statusCode == 412) throw const SyncLeaseLostException();
+    if (r.statusCode ~/ 100 != 2) throw Exception('Drive lease write failed');
+  }
+
+  @override
+  Future<SyncLease> acquireLease(
+    SyncAuthSession s,
+    SyncRemoteTarget t,
+    String c, {
+    required String deviceId,
+    required String deviceName,
+    required Duration duration,
+    bool takeover = false,
+  }) async {
+    final o = await _cloudLease(s, c), n = DateTime.now().toUtc();
+    if (!takeover && o != null && o.isValidAt(n) && o.ownerDeviceId != deviceId)
+      throw SyncLeaseContendedException(o);
+    final l = SyncLease(
+      catalogIdentity: c,
+      ownerDeviceId: deviceId,
+      ownerDeviceName: deviceName,
+      generation: ((int.tryParse(o?.generation ?? '') ?? 0) + 1).toString(),
+      token: '${deviceId}_${n.microsecondsSinceEpoch}',
+      issuedAt: n,
+      expiresAt: n.add(duration),
+      lastRenewedAt: n,
+    );
+    await _writeCloudLease(
+      s,
+      l,
+      await _leaseFile(s, c),
+      o?.remoteRevision?.value,
+    );
+    return l;
+  }
+
+  @override
+  Future<SyncLease> renewLease(
+    SyncAuthSession s,
+    SyncRemoteTarget t,
+    String c, {
+    required String deviceId,
+    required String token,
+    required Duration duration,
+  }) async {
+    final old = await _cloudLease(s, c), now = DateTime.now().toUtc();
+    if (old == null ||
+        old.ownerDeviceId != deviceId ||
+        old.token != token ||
+        !old.isValidAt(now))
+      throw const SyncLeaseLostException();
+    final lease = SyncLease(
+      catalogIdentity: c,
+      ownerDeviceId: old.ownerDeviceId,
+      ownerDeviceName: old.ownerDeviceName,
+      generation: old.generation,
+      token: old.token,
+      issuedAt: old.issuedAt,
+      expiresAt: now.add(duration),
+      lastRenewedAt: now,
+    );
+    await _writeCloudLease(
+      s,
+      lease,
+      await _leaseFile(s, c),
+      old.remoteRevision?.value,
+    );
+    return lease;
+  }
+
+  @override
+  Future<void> releaseLease(
+    SyncAuthSession s,
+    SyncRemoteTarget t,
+    String c, {
+    required String deviceId,
+    required String token,
+  }) async {
+    final old = await _cloudLease(s, c);
+    if (old == null || old.ownerDeviceId != deviceId || old.token != token)
+      return;
+    final r = await _http.delete(
+      Uri.parse(
+        'https://www.googleapis.com/drive/v3/files/${await _leaseFile(s, c)}',
+      ),
+      headers: {
+        'Authorization': 'Bearer ${await _access(s)}',
+        'If-Match': old.remoteRevision?.value ?? '',
+      },
+    );
+    if (r.statusCode != 204 && r.statusCode != 200 && r.statusCode != 404)
+      throw Exception('Drive lease release failed');
+  }
+
+  Future<void> clearCredentials() async {
+    if (authenticator.androidAuthorization != null) {
+      await authenticator.revokeCachedAccessToken();
+    }
+    await tokenStore.delete(authenticator._key);
+  }
+
   Future<SyncAuthSession?> restoreSession() async {
     final token = await tokenStore.read(authenticator._key);
     final access = token['access_token'] as String?;
@@ -241,7 +533,19 @@ class GoogleDriveProvider implements SyncProvider {
             expiry.isAfter(DateTime.now().add(const Duration(minutes: 1)))))
       return access;
     final refresh = t['refresh_token'] as String?;
-    if (refresh == null) throw GoogleDriveAuthException('Not authenticated');
+    if (refresh == null) {
+      // Android GIS does not issue refresh tokens. Re-run the native
+      // authorization flow when the user initiates a sync after expiry.
+      if (authenticator.androidAuthorization != null) {
+        await authenticator.authenticate();
+        final renewed = await tokenStore.read(key);
+        final renewedAccess = renewed['access_token'] as String?;
+        if (renewedAccess != null && renewedAccess.isNotEmpty) {
+          return renewedAccess;
+        }
+      }
+      throw GoogleDriveAuthException('Not authenticated');
+    }
     final r = await _http.post(
       Uri.parse('https://oauth2.googleapis.com/token'),
       body: {
@@ -311,16 +615,39 @@ class GoogleDriveProvider implements SyncProvider {
       ),
       headers: {'Authorization': 'Bearer ${await _access(s)}'},
     );
-    if (r.statusCode != 200) throw Exception('Drive list failed');
-    final files = (jsonDecode(r.body)['files'] as List? ?? []);
-    return files
-        .map(
-          (f) => SyncRemoteTarget(
-            id: f['id'] as String,
-            name: f['name'] as String,
+    if (r.statusCode != 200) {
+      SyncDebug.trace('provider.list.error', {'status': r.statusCode});
+      _driveFailure(r, 'Drive list failed');
+    }
+    try {
+      final decoded = jsonDecode(r.body);
+      if (decoded is! Map || decoded['files'] is! List) {
+        throw const FormatException('files is not a list');
+      }
+      final targets = <SyncRemoteTarget>[];
+      for (final file in decoded['files'] as List) {
+        if (file is! Map || file['id'] is! String || file['name'] is! String) {
+          throw const FormatException('file entry is malformed');
+        }
+        targets.add(
+          SyncRemoteTarget(
+            id: file['id'] as String,
+            name: file['name'] as String,
           ),
-        )
-        .toList();
+        );
+      }
+      SyncDebug.trace('provider.list', {
+        'status': r.statusCode,
+        'count': targets.length,
+      });
+      return targets;
+    } catch (_) {
+      SyncDebug.trace('provider.list.error', {'status': r.statusCode});
+      throw GoogleDriveException(
+        'Drive list returned an invalid response',
+        statusCode: r.statusCode,
+      );
+    }
   }
 
   @override
@@ -565,9 +892,7 @@ class GoogleDriveProvider implements SyncProvider {
     if (expectedHash != null && expectedHash.isNotEmpty) {
       // appProperties can briefly lag the file revision.  Never restore
       // bytes without confirming the expected Realmwise identity.
-      for (var attempt = 0;
-          attempt < 3 && m.contentHash.isEmpty;
-          attempt++) {
+      for (var attempt = 0; attempt < 3 && m.contentHash.isEmpty; attempt++) {
         await _delay(Duration(milliseconds: 100 * (1 << attempt)));
         final refreshed = await metadata(s, t);
         if (refreshed == null) break;
@@ -617,7 +942,9 @@ class GoogleDriveProvider implements SyncProvider {
     }
     Future<Uint8List> fetchBytes() async {
       final r = await _http.get(
-        Uri.parse('https://www.googleapis.com/drive/v3/files/${t.id}?alt=media'),
+        Uri.parse(
+          'https://www.googleapis.com/drive/v3/files/${t.id}?alt=media',
+        ),
         headers: {'Authorization': 'Bearer ${await _access(s)}'},
       );
       if (r.statusCode != 200) throw Exception('Drive download failed');
@@ -652,7 +979,8 @@ class GoogleDriveProvider implements SyncProvider {
             confirmation.revision != precondition!.revision) {
           throw SyncConflictException(confirmation);
         }
-        final bytesMatch = bytes.length == confirmationBytes.length &&
+        final bytesMatch =
+            bytes.length == confirmationBytes.length &&
             bytes.asMap().keys.every((i) => bytes[i] == confirmationBytes[i]);
         // Do not accept an early stable pair: the complete bounded backoff
         // window must elapse before the final consecutive confirmation.
