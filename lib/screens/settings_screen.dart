@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/app_controller.dart';
 import '../services/catalog_bundle_service.dart';
@@ -26,6 +27,8 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _key;
+  late final TextEditingController _openLibraryName;
+  late final TextEditingController _openLibraryEmail;
   bool _showKey = false;
   bool _loading = true;
   bool _busy = false;
@@ -40,12 +43,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _key = TextEditingController();
+    _openLibraryName = TextEditingController();
+    _openLibraryEmail = TextEditingController();
     _load();
   }
 
   @override
   void dispose() {
     _key.dispose();
+    _openLibraryName.dispose();
+    _openLibraryEmail.dispose();
     super.dispose();
   }
 
@@ -56,6 +63,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted)
         setState(() {
           _key.text = key;
+          _openLibraryName.text = widget.controller.openLibraryContactName;
+          _openLibraryEmail.text = widget.controller.openLibraryContactEmail;
           _backups = backups;
         });
     } finally {
@@ -86,6 +95,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
     () => widget.controller.setRpgGeekKey(_key.text),
     success: 'RPGGeek key saved in this local database.',
   );
+
+  Future<void> _saveOpenLibraryContact() => _run(
+    () => widget.controller.setOpenLibraryContact(
+      name: _openLibraryName.text,
+      email: _openLibraryEmail.text,
+    ),
+    success: 'Open Library contact details saved on this device.',
+  );
+
+  Future<void> _openRpgGeekApplications() async {
+    try {
+      final launched = await launchUrl(
+        Uri.parse('https://rpggeek.com/applications'),
+      );
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open RPGGeek API page.')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open RPGGeek API page.')),
+        );
+      }
+    }
+  }
 
   Future<void> _cancelConnection() async {
     try {
@@ -644,9 +680,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const TabBar(
             tabs: [
               Tab(text: 'Interface'),
-              Tab(text: 'Local Database'),
+              Tab(text: 'Database'),
               Tab(text: 'Cloud Sync'),
-              Tab(text: 'Data Sources'),
+              Tab(text: 'Sources'),
             ],
           ),
           Expanded(
@@ -882,10 +918,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   List<Widget> _dataSourceSections() => [
     _Section(
-      title: 'RPG Geek Data Enrichment',
+      title: 'Open Library',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const Text(
+            'Open Library is a non-profit 501(c)(3) digital library project operated by the Internet Archive. They provide free access to their API, but ask users to supply a name and email address. This is optional and will never be sent to Realmwise.',
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _openLibraryName,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(labelText: 'Name'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _openLibraryEmail,
+            keyboardType: TextInputType.emailAddress,
+            autocorrect: false,
+            decoration: const InputDecoration(labelText: 'Email Address'),
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: _busy ? null : _saveOpenLibraryContact,
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('Save'),
+          ),
+        ],
+      ),
+    ),
+    _Section(
+      title: 'RPGGeek Data Enrichment',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'With an RPGGeek API key, Realmwise can enrich matching RPG items with titles, publication years, ISBNs, publishers, descriptions, cover images, credits, product and series details, dimensions, game systems, settings, families, categories, mechanics, genres, and the RPGGeek item ID when available.',
+          ),
+          const SizedBox(height: 8),
+          TextButton.icon(
+            onPressed: _openRpgGeekApplications,
+            icon: const Icon(Icons.open_in_new),
+            label: const Text('Open RPGGeek API application page'),
+          ),
+          const SizedBox(height: 8),
           const Text(
             'Optional. The key is stored only in the currently open local database and sent only when enriching a selected search result.',
           ),
@@ -970,10 +1046,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         : p.provider == 'dropbox'
         ? 'Dropbox'
         : 'Google Drive';
+    final pendingProviderLabel = selected == null
+        ? 'cloud provider'
+        : label(selected);
     final status = providers.isEmpty
         ? 'Cloud sync is not configured on this build.'
         : connectionPending
-        ? 'Connecting to Dropbox… (not connected)'
+        ? 'Connecting to $pendingProviderLabel… (not connected)'
         : connected
         ? 'Connected provider: ${selected == null ? 'Unknown' : label(selected)} (${metadata?.accountDisplayName ?? metadata?.accountId ?? 'account unavailable'})'
         : metadata?.state.label ?? 'Not connected';
@@ -1040,7 +1119,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   : widget.controller.deviceName,
             ),
             subtitle: Text(
-              'Device ID: ${widget.controller.deviceId.isEmpty ? 'Unavailable' : widget.controller.deviceId}',
+              'Device ID: ${widget.controller.deviceName.isEmpty ? 'Unavailable' : widget.controller.deviceName}',
             ),
             trailing: IconButton(
               icon: const Icon(Icons.edit),

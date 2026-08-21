@@ -27,10 +27,27 @@ import 'sync_contract.dart';
 import 'sync_coordinator.dart';
 import 'sync_metadata.dart';
 import 'sync_debug.dart';
+import '../theme/app_theme.dart';
 
 enum CatalogHierarchyOrder {
   gameSystemSettingBookType,
   gameSystemBookTypeSetting,
+}
+
+/// Returns a bounded, display-safe default name derived from a device host
+/// name. The internal device ID remains a random stable identity for leases.
+String? defaultDeviceNameForHostname(String hostname) {
+  final normalized = hostname.trim().replaceAll(
+    RegExp(r'[^A-Za-z0-9_-]+'),
+    '-',
+  );
+  final compact = normalized.replaceAll(RegExp(r'-{2,}'), '-');
+  if (compact.isEmpty) return null;
+  final trimmed = compact
+      .replaceFirst(RegExp(r'^-+'), '')
+      .replaceFirst(RegExp(r'-+$'), '');
+  if (trimmed.isEmpty) return null;
+  return trimmed.length > 12 ? trimmed.substring(0, 12) : trimmed;
 }
 
 class _InMemorySyncMetadataStorage implements SyncMetadataStorage {
@@ -79,7 +96,11 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     database: database,
     images: imageStorage,
   );
-  late final ExternalCatalogService lookup = ExternalCatalogService(_http);
+  late final ExternalCatalogService lookup = ExternalCatalogService(
+    _http,
+    ownerName: openLibraryContactName,
+    ownerEmail: openLibraryContactEmail,
+  );
   final http.Client _http;
   final TokenStorage _tokenStorage;
 
@@ -113,7 +134,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   bool loading = true;
   String? error;
-  String seedName = 'Dragon red';
+  String seedName = defaultThemeName;
   CatalogHierarchyOrder hierarchyOrder =
       CatalogHierarchyOrder.gameSystemSettingBookType;
   bool includePersonalImagesInBundles = false;
@@ -124,6 +145,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   bool automaticSyncEnabled = false;
   String deviceId = '';
   String deviceName = '';
+  String openLibraryContactName = '';
+  String openLibraryContactEmail = '';
   DateTime? automaticSyncLastAttempt;
   DateTime? automaticSyncLastSuccess;
   String? automaticSyncError;
@@ -177,20 +200,28 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       final prefs = await SharedPreferences.getInstance();
       deviceId = prefs.getString('realmwise.device.id') ?? '';
       if (deviceId.isEmpty) {
-        final random = Random.secure();
-        deviceId = List<String>.generate(
-          16,
-          (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
-        ).join();
+        deviceId = _randomDeviceId();
         await prefs.setString('realmwise.device.id', deviceId);
       }
-      deviceName =
-          prefs.getString('realmwise.device.name') ??
-          (Platform.isAndroid
-              ? 'Android device'
-              : Platform.isWindows
-              ? 'Windows device'
-              : 'Realmwise device');
+      deviceName = prefs.getString('realmwise.device.name') ?? '';
+      if (deviceName.trim().isEmpty) {
+        deviceName =
+            defaultDeviceNameForHostname(_localHostname()) ??
+            (Platform.isAndroid
+                ? 'Android'
+                : Platform.isWindows
+                ? 'Windows'
+                : 'Realmwise');
+        await prefs.setString('realmwise.device.name', deviceName);
+      }
+      openLibraryContactName =
+          prefs.getString('realmwise.openlibrary.contact.name') ?? '';
+      openLibraryContactEmail =
+          prefs.getString('realmwise.openlibrary.contact.email') ?? '';
+      lookup.setOpenLibraryContact(
+        name: openLibraryContactName,
+        email: openLibraryContactEmail,
+      );
       WidgetsBinding.instance.addObserver(this);
       _ensureSyncCoordinator(prefs);
       _selectedProvider ??= _providers.isEmpty ? null : _providers.values.first;
@@ -220,6 +251,22 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       loading = false;
       notifyListeners();
     }
+  }
+
+  String _localHostname() {
+    try {
+      return Platform.localHostname;
+    } on Object {
+      return '';
+    }
+  }
+
+  String _randomDeviceId() {
+    final random = Random.secure();
+    return List<String>.generate(
+      16,
+      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
   }
 
   Future<void> createDatabase(
@@ -310,7 +357,11 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       sessionNewWorkIds.clear();
       final imageFolder = await database.getSetting('image_folder');
       await imageStorage.initialize(imageFolder ?? imageRootPathOverride);
-      seedName = await database.getSetting('theme_seed') ?? 'Dragon red';
+      final savedTheme = await database.getSetting('theme_seed');
+      seedName = canonicalThemeName(savedTheme);
+      if (savedTheme != seedName) {
+        await database.setSetting('theme_seed', seedName);
+      }
       final savedHierarchy = await database.getSetting(
         'catalog_hierarchy_order',
       );
@@ -363,6 +414,35 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     deviceName = trimmed;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('realmwise.device.name', trimmed);
+    notifyListeners();
+  }
+
+  Future<void> setOpenLibraryContact({
+    required String name,
+    required String email,
+  }) async {
+    final trimmedName = name.trim();
+    final trimmedEmail = email.trim();
+    openLibraryContactName = trimmedName;
+    openLibraryContactEmail = trimmedEmail;
+    final prefs = await SharedPreferences.getInstance();
+    if (trimmedName.isEmpty) {
+      await prefs.remove('realmwise.openlibrary.contact.name');
+    } else {
+      await prefs.setString(
+        'realmwise.openlibrary.contact.name',
+        trimmedName,
+      );
+    }
+    if (trimmedEmail.isEmpty) {
+      await prefs.remove('realmwise.openlibrary.contact.email');
+    } else {
+      await prefs.setString(
+        'realmwise.openlibrary.contact.email',
+        trimmedEmail,
+      );
+    }
+    lookup.setOpenLibraryContact(name: trimmedName, email: trimmedEmail);
     notifyListeners();
   }
 
@@ -1082,8 +1162,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> setTheme(String name) async {
-    seedName = name;
-    await database.setSetting('theme_seed', name);
+    seedName = canonicalThemeName(name);
+    await database.setSetting('theme_seed', seedName);
     notifyListeners();
   }
 

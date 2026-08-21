@@ -221,6 +221,25 @@ void main() {
     expect(result.single.isbn13, '9780306406157');
   });
 
+  test('adds configured contact only to OpenLibrary request headers', () async {
+    final client = _RecordingClient((request) {
+      if (request.url.host == 'openlibrary.org') {
+        expect(request.headers['user-agent'], 'Realmwise/1.0 (Ada Lovelace ada@example.com)');
+        expect(request.headers['from'], 'ada@example.com');
+        return http.Response('{"ISBN:9780000000000":{"title":"Book"}}', 200);
+      }
+      fail('RPGGeek must not be contacted');
+    });
+    final service = ExternalCatalogService(
+      client,
+      ownerName: 'Ada Lovelace',
+      ownerEmail: 'ada@example.com',
+    );
+    final result = await service.searchByIsbn('9780000000000');
+    expect(result.single.title, 'Book');
+    expect(client.requests.single.url.host, 'openlibrary.org');
+  });
+
   test('rejects invalid ISBN-10 values', () async {
     expect(
       () => ExternalCatalogService(_RecordingClient((_) => _response('{}')))

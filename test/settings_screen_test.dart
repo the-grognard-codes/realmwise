@@ -22,12 +22,22 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Interface'), findsOneWidget);
-    expect(find.text('Local Database'), findsOneWidget);
+    expect(find.text('Database'), findsOneWidget);
     expect(find.text('Cloud Sync'), findsOneWidget);
-    expect(find.text('Data Sources'), findsOneWidget);
+    expect(find.text('Sources'), findsOneWidget);
     expect(find.text('Theme'), findsOneWidget);
     expect(find.text('Custom Catalog Icons'), findsOneWidget);
-    await tester.tap(find.text('Local Database'));
+    await tester.tap(find.text('Sources'));
+    await tester.pumpAndSettle();
+    expect(find.text('RPGGeek Data Enrichment'), findsOneWidget);
+    expect(find.text('Open Library'), findsOneWidget);
+    expect(find.text('Name'), findsOneWidget);
+    expect(find.text('Email Address'), findsOneWidget);
+    expect(find.textContaining('501(c)(3)'), findsOneWidget);
+    expect(find.text('Save'), findsOneWidget);
+    expect(find.text('Open RPGGeek API application page'), findsOneWidget);
+    expect(find.textContaining('product and series details'), findsOneWidget);
+    await tester.tap(find.text('Database'));
     await tester.pumpAndSettle();
     expect(find.text('Local Image Library'), findsOneWidget);
     expect(find.text('Manual Device Sync'), findsOneWidget);

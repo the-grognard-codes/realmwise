@@ -31,6 +31,55 @@ class _FakePathProvider extends PathProviderPlatform {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('derives a bounded device name from a hostname', () {
+    expect(
+      defaultDeviceNameForHostname('Realmwise-Android-Emulator-5554'),
+      'Realmwise-An',
+    );
+    expect(defaultDeviceNameForHostname('  my device  '), 'my-device');
+    expect(defaultDeviceNameForHostname('   '), isNull);
+  });
+
+  test('initialize preserves an existing device ID', () async {
+    final folder = await Directory.systemTemp.createTemp('realmwise_device_');
+    PathProviderPlatform.instance = _FakePathProvider(folder.path);
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'realmwise.device.id': 'chosen-device',
+    });
+    final controller = AppController(tokenStorage: _MemoryTokenStorage());
+    await controller.initialize();
+    expect(controller.deviceId, 'chosen-device');
+    expect(controller.deviceName, isNotEmpty);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('realmwise.device.id'), 'chosen-device');
+    await controller.closeDatabase();
+    controller.dispose();
+    await folder.delete(recursive: true);
+  });
+
+  test(
+    'initializes a hostname label separately from the lease identity',
+    () async {
+      final folder = await Directory.systemTemp.createTemp(
+        'realmwise_device_new_',
+      );
+      PathProviderPlatform.instance = _FakePathProvider(folder.path);
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final controller = AppController(tokenStorage: _MemoryTokenStorage());
+      await controller.initialize();
+      expect(controller.deviceId, hasLength(32));
+      expect(controller.deviceName, isNotEmpty);
+      expect(controller.deviceName.length, lessThanOrEqualTo(12));
+      expect(controller.deviceName, isNot(equals(controller.deviceId)));
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('realmwise.device.id'), controller.deviceId);
+      expect(prefs.getString('realmwise.device.name'), controller.deviceName);
+      await controller.closeDatabase();
+      controller.dispose();
+      await folder.delete(recursive: true);
+    },
+  );
+
   test('migrates legacy token and removes SQLite value', () async {
     final folder = await Directory.systemTemp.createTemp('rpg_token_');
     PathProviderPlatform.instance = _FakePathProvider(folder.path);
