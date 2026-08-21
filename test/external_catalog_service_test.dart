@@ -106,6 +106,8 @@ void main() {
     expect(result.mechanics, ['Dice']);
     expect(result.genre, ['Fantasy']);
     expect(result.productCode, 'PX');
+    expect(result.gameSystem, 'System');
+    expect(result.gameSetting, 'Setting');
     expect(result.seriesCode, 'SX');
     expect(result.dimensions, '8x5');
   });
