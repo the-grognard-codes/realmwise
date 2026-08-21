@@ -14,8 +14,22 @@ class CatalogLookupException implements Exception {
 
 /// Remote lookup boundary. All callers handle failure so the catalog remains usable offline.
 class ExternalCatalogService {
-  ExternalCatalogService(this._client);
+  ExternalCatalogService(
+    this._client, {
+    String? ownerName,
+    String? ownerEmail,
+  }) : _ownerName = ownerName,
+       _ownerEmail = ownerEmail;
   final http.Client _client;
+  String? _ownerName;
+  String? _ownerEmail;
+
+  /// Sets the optional contact information Open Library requests may identify
+  /// in their User-Agent/From headers. It is never used for other APIs.
+  void setOpenLibraryContact({String? name, String? email}) {
+    _ownerName = name;
+    _ownerEmail = email;
+  }
 
   Future<List<WorkCandidate>> searchByIsbn(
     String input, {
@@ -401,12 +415,14 @@ class ExternalCatalogService {
     String? ownerName,
     String? ownerEmail,
   }) async {
+    final effectiveName = ownerName ?? _ownerName;
+    final effectiveEmail = ownerEmail ?? _ownerEmail;
     final headers = <String, String>{
       'Accept': 'application/json',
-      'User-Agent': _userAgent(ownerName, ownerEmail),
+      'User-Agent': _userAgent(effectiveName, effectiveEmail),
     };
-    if (ownerEmail?.trim().isNotEmpty == true)
-      headers['From'] = ownerEmail!.trim();
+    if (effectiveEmail?.trim().isNotEmpty == true)
+      headers['From'] = effectiveEmail!.trim();
     try {
       final response = await _client
           .get(url, headers: headers)
