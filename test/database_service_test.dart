@@ -115,6 +115,7 @@ void main() {
     expect(loaded.work.designers, ['A Designer']);
     expect(loaded.work.productionStaff, ['Editor']);
     expect(loaded.work.genre, ['High fantasy']);
+    expect(loaded.work.productCode, 'PR-42');
     await service.close();
     await folder.delete(recursive: true);
   });

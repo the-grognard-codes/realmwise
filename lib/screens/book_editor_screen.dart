@@ -119,6 +119,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
   late final List<CatalogRecord> _navigationRecords;
 
   late final TextEditingController _isbn;
+  late final TextEditingController _productCode;
   late final TextEditingController _title;
   late final TextEditingController _authors;
   late final TextEditingController _publisher;
@@ -158,6 +159,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     _savedRecord = _record;
     _tabs = TabController(length: 3, vsync: this);
     _isbn = TextEditingController(text: _record.work.isbn13);
+    _productCode = TextEditingController(text: _record.work.productCode);
     _title = TextEditingController(text: _record.work.title);
     _authors = TextEditingController(text: _record.work.authors.join(', '));
     _publisher = TextEditingController(text: _record.work.publisher);
@@ -212,6 +214,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     _tabs.dispose();
     for (final controller in [
       _isbn,
+      _productCode,
       _title,
       _authors,
       _publisher,
@@ -279,6 +282,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
 
   BookWork _committedWork() => _record.work.copyWith(
     isbn13: _isbn.text.replaceAll(RegExp(r'[^0-9Xx]'), ''),
+    productCode: _productCode.text,
     title: _title.text,
     authors: _authors.text
         .split(',')
@@ -373,6 +377,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
       _record = loaded;
       _savedRecord = loaded;
       _isbn.text = loaded.work.isbn13;
+      _productCode.text = loaded.work.productCode;
       _title.text = loaded.work.title;
       _authors.text = loaded.work.authors.join(', ');
       _publisher.text = loaded.work.publisher;
@@ -449,6 +454,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     setState(() {
       _record = _record.copyWith(work: merged, images: existingImages);
       _isbn.text = merged.isbn13;
+      _productCode.text = merged.productCode;
       _title.text = merged.title;
       _authors.text = merged.authors.join(', ');
       _publisher.text = merged.publisher;
@@ -735,6 +741,11 @@ class _BookEditorScreenState extends State<BookEditorScreen>
               ? 'ISBN-13 must contain 13 digits.'
               : null;
         },
+      ),
+      const SizedBox(height: 12),
+      TextFormField(
+        controller: _productCode,
+        decoration: const InputDecoration(labelText: 'Product code'),
       ),
       const SizedBox(height: 12),
       LocalAutocompleteField(
