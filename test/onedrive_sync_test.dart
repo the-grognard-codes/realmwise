@@ -21,20 +21,21 @@ class _Store implements TokenStorage {
 }
 
 void main() {
-  test('Android callback rejects an unregistered redirect before channel use', () async {
-    final callback = AndroidOneDriveCallback(
-      Uri.parse('msauth://com.realmwise.rpg.tracker/wrong'),
-    );
-    expect(
-      callback.waitForCallback(),
-      throwsA(isA<OneDriveAuthException>()),
-    );
-  });
+  test(
+    'Android callback rejects an unregistered redirect before channel use',
+    () async {
+      final callback = AndroidOneDriveCallback(
+        Uri.parse('msauth://com.realmwise.rpg.tracker/wrong'),
+      );
+      expect(callback.waitForCallback(), throwsA(isA<OneDriveAuthException>()));
+    },
+  );
 
   test('Android callback returns the native callback URI', () async {
     TestWidgetsFlutterBinding.ensureInitialized();
     final channel = const MethodChannel('realmwise/onedrive_oauth');
-    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(channel, (call) async {
       expect(call.method, 'wait_for_callback');
       expect(
@@ -72,6 +73,178 @@ void main() {
       tokenStore: OneDriveTokenStore(s),
     );
     expect(p.provider, 'onedrive');
+  });
+  test('lease operations use the app-root item endpoint', () async {
+    final store = _Store();
+    await store.write(
+      'onedrive_oauth:id',
+      '{"access_token":"a","account_id":"x"}',
+    );
+    final requests = <http.Request>[];
+    final leaseJson =
+        '{"catalogIdentity":"catalog","ownerDeviceId":"device",'
+        '"ownerDeviceName":"Emulator","generation":"1",'
+        '"token":"device_token","issuedAt":"2026-01-01T00:00:00Z",'
+        '"expiresAt":"2099-01-01T00:00:00Z",'
+        '"lastRenewedAt":"2026-01-01T00:00:00Z"}';
+    final client = MockClient((request) async {
+      requests.add(request);
+      if (request.url.path.endsWith('/approot')) {
+        return http.Response('{"id":"app-root"}', 200);
+      }
+      if (request.url.toString() == 'https://download.example/lease') {
+        return http.Response(leaseJson, 200);
+      }
+      if (request.method == 'GET') {
+        return http.Response(
+          '{"eTag":"etag-1","@microsoft.graph.downloadUrl":"https://download.example/lease"}',
+          200,
+        );
+      }
+      if (request.method == 'PUT') {
+        expect(request.headers['if-match'], 'etag-1');
+        return http.Response('{"id":"lease"}', 200);
+      }
+      if (request.method == 'DELETE') return http.Response('', 204);
+      return http.Response('', 500);
+    });
+    final auth = OneDriveOAuthAuthenticator(
+      clientId: 'id',
+      redirectUri: Uri.parse('http://localhost/cb'),
+      browser: _Browser(),
+      callback: _Callback(),
+      tokenStore: OneDriveTokenStore(store),
+    );
+    final p = OneDriveProvider(
+      authenticator: auth,
+      tokenStore: OneDriveTokenStore(store),
+      httpClient: client,
+    );
+    const session = SyncAuthSession(accountId: 'x');
+    final lease = await p.acquireLease(
+      session,
+      const SyncRemoteTarget(id: 'bundle', name: 'bundle'),
+      'catalog',
+      deviceId: 'new-device',
+      deviceName: 'Emulator',
+      duration: Duration(minutes: 10),
+      takeover: true,
+    );
+    expect(lease.ownerDeviceId, 'new-device');
+    final write = requests.singleWhere((r) => r.method == 'PUT');
+    expect(write.url.path, contains('/items/app-root:/Realmwise/'));
+    expect(write.url.path, endsWith(':/content'));
+
+    await p.releaseLease(
+      session,
+      const SyncRemoteTarget(id: 'bundle', name: 'bundle'),
+      'catalog',
+      deviceId: 'device',
+      token: 'device_token',
+    );
+    final delete = requests.singleWhere((r) => r.method == 'DELETE');
+    expect(delete.url.path, contains('/items/app-root:/Realmwise/'));
+    expect(delete.url.path, isNot(contains('/drive/root:/')));
+  });
+  test(
+    'new lease uses If-None-Match and maps create race to lease lost',
+    () async {
+      final store = _Store();
+      await store.write(
+        'onedrive_oauth:id',
+        '{"access_token":"a","account_id":"x"}',
+      );
+      final client = MockClient((request) async {
+        if (request.url.path.endsWith('/approot')) {
+          return http.Response('{"id":"app-root"}', 200);
+        }
+        if (request.method == 'GET') return http.Response('', 404);
+        if (request.method == 'PUT') {
+          expect(request.headers['if-none-match'], '*');
+          expect(request.headers['if-match'], isNull);
+          return http.Response('', 412);
+        }
+        return http.Response('', 500);
+      });
+      final auth = OneDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost/cb'),
+        browser: _Browser(),
+        callback: _Callback(),
+        tokenStore: OneDriveTokenStore(store),
+      );
+      final p = OneDriveProvider(
+        authenticator: auth,
+        tokenStore: OneDriveTokenStore(store),
+        httpClient: client,
+      );
+      await expectLater(
+        p.acquireLease(
+          const SyncAuthSession(accountId: 'x'),
+          const SyncRemoteTarget(id: 'bundle', name: 'bundle'),
+          'catalog',
+          deviceId: 'device',
+          deviceName: 'Emulator',
+          duration: Duration(minutes: 10),
+        ),
+        throwsA(isA<SyncLeaseLostException>()),
+      );
+    },
+  );
+  test('release refuses to delete a lease without an ETag', () async {
+    final store = _Store();
+    await store.write(
+      'onedrive_oauth:id',
+      '{"access_token":"a","account_id":"x"}',
+    );
+    var deleteCalls = 0;
+    final client = MockClient((request) async {
+      if (request.url.path.endsWith('/approot')) {
+        return http.Response('{"id":"app-root"}', 200);
+      }
+      if (request.method == 'GET' &&
+          request.url.toString().contains('download')) {
+        return http.Response(
+          '{"ownerDeviceId":"device","ownerDeviceName":"Emulator",'
+          '"generation":"1","token":"token",'
+          '"issuedAt":"2026-01-01T00:00:00Z",'
+          '"expiresAt":"2099-01-01T00:00:00Z",'
+          '"lastRenewedAt":"2026-01-01T00:00:00Z"}',
+          200,
+        );
+      }
+      if (request.method == 'GET') {
+        return http.Response(
+          '{"@microsoft.graph.downloadUrl":"https://download.example/lease"}',
+          200,
+        );
+      }
+      if (request.method == 'DELETE') deleteCalls++;
+      return http.Response('', 204);
+    });
+    final auth = OneDriveOAuthAuthenticator(
+      clientId: 'id',
+      redirectUri: Uri.parse('http://localhost/cb'),
+      browser: _Browser(),
+      callback: _Callback(),
+      tokenStore: OneDriveTokenStore(store),
+    );
+    final p = OneDriveProvider(
+      authenticator: auth,
+      tokenStore: OneDriveTokenStore(store),
+      httpClient: client,
+    );
+    await expectLater(
+      p.releaseLease(
+        const SyncAuthSession(accountId: 'x'),
+        const SyncRemoteTarget(id: 'bundle', name: 'bundle'),
+        'catalog',
+        deviceId: 'device',
+        token: 'token',
+      ),
+      throwsA(isA<SyncLeaseLostException>()),
+    );
+    expect(deleteCalls, 0);
   });
   test('OAuth denial is surfaced safely', () async {
     final store = _Store();
@@ -172,63 +345,92 @@ void main() {
     expect(session.displayName, 'a@example.com');
     expect(browser.uri!.queryParameters['scope'], contains('User.Read'));
   });
-  test('OAuth preserves encoded Android redirect in authorize and token requests', () async {
-    final store = _Store();
-    final browser = _CapturingBrowser();
-    final requests = <http.Request>[];
-    final redirect = Uri.parse(
-      'msauth://com.realmwise.rpg.tracker/hu33S0PdJMD%2FBlOPVgFheEvptH8%3D',
-    );
-    final auth = OneDriveOAuthAuthenticator(
-      clientId: 'id', redirectUri: redirect, browser: browser,
-      callback: _DynamicCallback(browser), tokenStore: OneDriveTokenStore(store),
-      httpClient: MockClient((request) async {
-        requests.add(request);
-        return request.method == 'POST'
-            ? http.Response('{"access_token":"token"}', 200)
-            : http.Response('{"id":"account-1"}', 200);
-      }),
-    );
-    await auth.authenticate();
-    expect(browser.uri!.queryParameters['redirect_uri'], redirect.toString());
-    expect(requests.first.body, contains('redirect_uri=msauth%3A%2F%2Fcom.realmwise.rpg.tracker%2Fhu33S0PdJMD%252FBlOPVgFheEvptH8%253D'));
-  });
+  test(
+    'OAuth preserves encoded Android redirect in authorize and token requests',
+    () async {
+      final store = _Store();
+      final browser = _CapturingBrowser();
+      final requests = <http.Request>[];
+      final redirect = Uri.parse(
+        'msauth://com.realmwise.rpg.tracker/hu33S0PdJMD%2FBlOPVgFheEvptH8%3D',
+      );
+      final auth = OneDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: redirect,
+        browser: browser,
+        callback: _DynamicCallback(browser),
+        tokenStore: OneDriveTokenStore(store),
+        httpClient: MockClient((request) async {
+          requests.add(request);
+          return request.method == 'POST'
+              ? http.Response('{"access_token":"token"}', 200)
+              : http.Response('{"id":"account-1"}', 200);
+        }),
+      );
+      await auth.authenticate();
+      expect(browser.uri!.queryParameters['redirect_uri'], redirect.toString());
+      expect(
+        requests.first.body,
+        contains(
+          'redirect_uri=msauth%3A%2F%2Fcom.realmwise.rpg.tracker%2Fhu33S0PdJMD%252FBlOPVgFheEvptH8%253D',
+        ),
+      );
+    },
+  );
 
-  test('OAuth callback timeout cancels native wait and can be retried', () async {
-    final callback = _CancellableCallback();
-    final auth = OneDriveOAuthAuthenticator(
-      clientId: 'id', redirectUri: Uri.parse('http://localhost/cb'),
-      browser: _Browser(), callback: callback, tokenStore: OneDriveTokenStore(_Store()),
-      callbackTimeout: const Duration(milliseconds: 1),
-    );
-    await expectLater(auth.authenticate(), throwsA(isA<OneDriveAuthException>()));
-    expect(callback.cancelCount, 1);
-    callback.value = Uri.parse('http://localhost/cb?code=x');
-    // A subsequent attempt gets a clean callback lifecycle; token exchange
-    // details are outside this callback-specific regression test.
-    expect(callback.waitForCallback(), completion(isA<Uri>()));
-  });
+  test(
+    'OAuth callback timeout cancels native wait and can be retried',
+    () async {
+      final callback = _CancellableCallback();
+      final auth = OneDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost/cb'),
+        browser: _Browser(),
+        callback: callback,
+        tokenStore: OneDriveTokenStore(_Store()),
+        callbackTimeout: const Duration(milliseconds: 1),
+      );
+      await expectLater(
+        auth.authenticate(),
+        throwsA(isA<OneDriveAuthException>()),
+      );
+      expect(callback.cancelCount, 1);
+      callback.value = Uri.parse('http://localhost/cb?code=x');
+      // A subsequent attempt gets a clean callback lifecycle; token exchange
+      // details are outside this callback-specific regression test.
+      expect(callback.waitForCallback(), completion(isA<Uri>()));
+    },
+  );
 
-  test('browser failure drains callback and next authentication can retry', () async {
-    final callback = _ReusableCallback();
-    final failing = OneDriveOAuthAuthenticator(
-      clientId: 'id', redirectUri: Uri.parse('http://localhost/cb'),
-      browser: _ThrowingBrowser(), callback: callback,
-      tokenStore: OneDriveTokenStore(_Store()),
-    );
-    await expectLater(failing.authenticate(), throwsA(isA<StateError>()));
-    expect(callback.cancelCount, 1);
+  test(
+    'browser failure drains callback and next authentication can retry',
+    () async {
+      final callback = _ReusableCallback();
+      final failing = OneDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost/cb'),
+        browser: _ThrowingBrowser(),
+        callback: callback,
+        tokenStore: OneDriveTokenStore(_Store()),
+      );
+      await expectLater(failing.authenticate(), throwsA(isA<StateError>()));
+      expect(callback.cancelCount, 1);
 
-    final retry = OneDriveOAuthAuthenticator(
-      clientId: 'id', redirectUri: Uri.parse('http://localhost/cb'),
-      browser: _CompletingBrowser(callback), callback: callback,
-      tokenStore: OneDriveTokenStore(_Store()),
-      httpClient: MockClient((request) async => request.method == 'POST'
-          ? http.Response('{"access_token":"token"}', 200)
-          : http.Response('{"id":"account-1"}', 200)),
-    );
-    expect((await retry.authenticate()).accountId, 'account-1');
-  });
+      final retry = OneDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost/cb'),
+        browser: _CompletingBrowser(callback),
+        callback: callback,
+        tokenStore: OneDriveTokenStore(_Store()),
+        httpClient: MockClient(
+          (request) async => request.method == 'POST'
+              ? http.Response('{"access_token":"token"}', 200)
+              : http.Response('{"id":"account-1"}', 200),
+        ),
+      );
+      expect((await retry.authenticate()).accountId, 'account-1');
+    },
+  );
 
   test('OAuth account verification retries Graph 503', () async {
     final store = _Store();
@@ -655,16 +857,19 @@ class _CancellableCallback
 
 class _ThrowingBrowser implements OneDriveOAuthBrowser {
   @override
-  Future<void> open(Uri uri) => Future<void>.error(StateError('browser unavailable'));
+  Future<void> open(Uri uri) =>
+      Future<void>.error(StateError('browser unavailable'));
 }
 
 class _CompletingBrowser implements OneDriveOAuthBrowser {
   _CompletingBrowser(this.callback);
   final _ReusableCallback callback;
   @override
-  Future<void> open(Uri uri) async => callback.complete(Uri.parse(
-    'http://localhost/cb?state=${uri.queryParameters['state']}&code=code',
-  ));
+  Future<void> open(Uri uri) async => callback.complete(
+    Uri.parse(
+      'http://localhost/cb?state=${uri.queryParameters['state']}&code=code',
+    ),
+  );
 }
 
 class _ReusableCallback
@@ -676,6 +881,7 @@ class _ReusableCallback
     _pending = Completer<Uri>();
     return _pending!.future;
   }
+
   void complete(Uri value) => _pending?.complete(value);
   @override
   Future<void> cancel() async {

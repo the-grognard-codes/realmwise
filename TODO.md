@@ -1,5 +1,10 @@
-In the Settings > Cloud Sync tab, after selecting a Cloud provider and choosing to Connect, "Connecting to DropBox" is appears to always be displayed regardless of the Provider chosen. 
+Android UI revisions, hamburger side menu.
 
+Review UI for automatic sync, is it necessary for it to be two toggles, one to enable and another to take ownership?
+
+Sync ownership lost message on restore?  Is this due to bundle restored thinking it is primary?
+
+In the Settings > Cloud Sync tab, after selecting a Cloud provider and choosing to Connect, "Connecting to DropBox" is appears to always be displayed regardless of the Provider chosen. 
 
 The settings section will look better if we rename the categories to the following:
 Interface > Interface
