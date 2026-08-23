@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 
 /// Ten period-inspired starting colors. ColorScheme derives complementary and tertiary colors.
 const Map<String, Color> themeSeeds = {
-  'Dragon red': Color(0xFF8B1E20),
-  'Parchment gold': Color(0xFFC28E2B),
-  'Dungeon black': Color(0xFF24201C),
+  'Dragon Red': Color(0xFF8B1E20),
+  'Parchment Gold': Color(0xFFC28E2B),
+  'Dungeon Black': Color(0xFF24201C),
   'Arcane Blue': Color(0xFF254C7A),
-  'Forest green': Color(0xFF385C37),
-  'Royal purple': Color(0xFF5D3A78),
+  'Forest Green': Color(0xFF385C37),
+  'Royal Purple': Color(0xFF5D3A78),
   'Copper': Color(0xFF9A4B2A),
   'Teal sigil': Color(0xFF176B6B),
   'Greyscale': Color(0xFF666666),
