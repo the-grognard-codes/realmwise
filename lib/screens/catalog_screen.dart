@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:io';
 
@@ -115,6 +116,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
   bool _loading = true;
   String? _error;
   List<CatalogIconMapping> _icons = const [];
+  bool _drawerOpen = false;
+  final _filterFocus = FocusNode();
 
   @override
   void initState() {
@@ -128,6 +131,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
   void dispose() {
     widget.controller.removeListener(_controllerChanged);
     _filterController.dispose();
+    _filterFocus.dispose();
     super.dispose();
   }
 
@@ -215,7 +219,15 @@ class _CatalogScreenState extends State<CatalogScreen> {
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) return _ErrorPanel(message: _error!, retry: _load);
-    return LayoutBuilder(
+    return WillPopScope(
+      onWillPop: () async {
+        if (_drawerOpen) {
+          _closeDrawer();
+          return false;
+        }
+        return true;
+      },
+      child: LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 900;
         final selector = _CatalogSelector(
@@ -229,8 +241,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
           },
           onOpen: _edit,
         );
-        return Column(
+        final content = Column(
           children: [
+            _catalogHeader(wide),
             _catalogTools(),
             Expanded(
               child: _records.isEmpty
@@ -261,10 +274,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
                     )
                   : Column(
                       children: [
-                        Expanded(flex: 3, child: selector),
-                        const Divider(height: 1),
+                        _breadcrumb(),
                         Expanded(
-                          flex: 4,
                           child: _BookPreview(
                             record: _selected,
                             onEdit: _selected == null
@@ -286,7 +297,113 @@ class _CatalogScreenState extends State<CatalogScreen> {
             ),
           ],
         );
+        if (wide) return content;
+        return Stack(
+          children: [
+            content,
+            if (_drawerOpen) ...[
+              Positioned.fill(
+                child: Semantics(
+                  button: true,
+                  label: 'Close library drawer',
+                  child: GestureDetector(
+                    onTap: _closeDrawer,
+                    child: ColoredBox(color: Colors.black54),
+                  ),
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FractionallySizedBox(
+                  widthFactor: .8,
+                  heightFactor: 1,
+                  child: Material(
+                    elevation: 16,
+                    color: Theme.of(context).colorScheme.surface,
+                    child: _CatalogDrawer(
+                      controller: widget.controller,
+                      records: _shown,
+                      icons: _icons,
+                      selected: _selected,
+                      onSelected: (record) {
+                        widget.controller.clearSessionNewWork(record.work.id);
+                        setState(() => _selected = record);
+                        _closeDrawer();
+                      },
+                      onOpen: _edit,
+                      onClose: _closeDrawer,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        );
       },
+      ),
+    );
+  }
+
+  void _openDrawer() {
+    setState(() => _drawerOpen = true);
+    SemanticsService.announce('Library drawer opened', TextDirection.ltr);
+  }
+
+  void _closeDrawer() {
+    if (!_drawerOpen) return;
+    setState(() => _drawerOpen = false);
+    SemanticsService.announce('Library drawer closed', TextDirection.ltr);
+  }
+
+  Widget _catalogHeader(bool wide) => SizedBox(
+    height: 56,
+    child: Row(
+      children: [
+        Semantics(
+          button: true,
+          label: _drawerOpen ? 'Close library drawer' : 'Open library drawer',
+          child: IconButton(
+            icon: Icon(_drawerOpen ? Icons.close : Icons.menu),
+            tooltip: _drawerOpen ? 'Close library' : 'Open library',
+            onPressed: wide
+                ? null
+                : (_drawerOpen ? _closeDrawer : _openDrawer),
+          ),
+        ),
+        const Expanded(
+          child: Text('Catalog', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+        ),
+        IconButton(
+          tooltip: 'Search catalog',
+          icon: const Icon(Icons.search),
+          onPressed: () => _filterFocus.requestFocus(),
+        ),
+      ],
+    ),
+  );
+
+  Widget _breadcrumb() {
+    final record = _selected;
+    if (record == null) return const SizedBox.shrink();
+    final parts = <String>[];
+    for (final value in [
+      record.work.gameSystem,
+      record.work.gameSetting,
+      record.work.title,
+    ]) {
+      if (value.trim().isNotEmpty) parts.add(value.trim());
+    }
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+        child: Text(
+          parts.join('  ›  '),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
+      ),
     );
   }
 
@@ -297,6 +414,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
         Expanded(
           child: TextField(
             controller: _filterController,
+            focusNode: _filterFocus,
             decoration: InputDecoration(
               labelText: 'Filter catalog text',
               prefixIcon: const Icon(Icons.search),
@@ -340,6 +458,80 @@ class _CatalogScreenState extends State<CatalogScreen> {
           icon: const Icon(Icons.refresh),
         ),
       ],
+    ),
+  );
+}
+
+/// The phone navigation surface. Keeping the selector mounted in this drawer
+/// means ExpansionTile retains each node's open/closed state for the duration
+/// of the drawer session.
+class _CatalogDrawer extends StatelessWidget {
+  const _CatalogDrawer({
+    required this.controller,
+    required this.records,
+    required this.icons,
+    required this.selected,
+    required this.onSelected,
+    required this.onOpen,
+    required this.onClose,
+  });
+  final AppController controller;
+  final List<CatalogRecord> records;
+  final List<CatalogIconMapping> icons;
+  final CatalogRecord? selected;
+  final ValueChanged<CatalogRecord> onSelected;
+  final ValueChanged<CatalogRecord> onOpen;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    scopesRoute: true,
+    namesRoute: true,
+    explicitChildNodes: true,
+    label: 'Library navigation drawer',
+    child: FocusTraversalGroup(
+      policy: ReadingOrderTraversalPolicy(),
+      child: FocusScope(
+        autofocus: true,
+        child: Column(
+          children: [
+        SizedBox(
+          height: 56,
+          child: Row(
+            children: [
+              const Expanded(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  child: Text('Library', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+                ),
+              ),
+              Semantics(
+                button: true,
+                label: 'Close library drawer',
+                child: IconButton(
+                  tooltip: 'Close library',
+                  icon: const Icon(Icons.close),
+                  onPressed: onClose,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: _CatalogSelector(
+            controller: controller,
+            records: records,
+            icons: icons,
+            selected: selected,
+            onSelected: onSelected,
+            onOpen: onOpen,
+          ),
+        ),
+          ],
+        ),
+      ),
     ),
   );
 }
@@ -695,7 +887,7 @@ class _BookPreview extends StatelessWidget {
                       FilledButton.icon(
                         onPressed: onEdit,
                         icon: const Icon(Icons.edit),
-                        label: const Text('View full details / edit'),
+                        label: const Text('View/Edit Details'),
                       ),
                     ],
                   );
