@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
@@ -89,7 +88,8 @@ void main() {
       ),
     );
     expect(calls, ['wait_for_callback']);
-    channel.setMockMethodCallHandler(null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
   });
 
   test(
@@ -116,7 +116,8 @@ void main() {
       await callback.cancel();
       await waitingError;
       expect(calls, ['wait_for_callback', 'cancel_callback']);
-      channel.setMockMethodCallHandler(null);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
     },
   );
 

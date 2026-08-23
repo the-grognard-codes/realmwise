@@ -219,13 +219,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) return _ErrorPanel(message: _error!, retry: _load);
-    return WillPopScope(
-      onWillPop: () async {
-        if (_drawerOpen) {
+    return PopScope(
+      canPop: !_drawerOpen,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && _drawerOpen) {
           _closeDrawer();
-          return false;
         }
-        return true;
       },
       child: LayoutBuilder(
       builder: (context, constraints) {
@@ -346,13 +345,21 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   void _openDrawer() {
     setState(() => _drawerOpen = true);
-    SemanticsService.announce('Library drawer opened', TextDirection.ltr);
+    SemanticsService.sendAnnouncement(
+      View.of(context),
+      'Library drawer opened',
+      TextDirection.ltr,
+    );
   }
 
   void _closeDrawer() {
     if (!_drawerOpen) return;
     setState(() => _drawerOpen = false);
-    SemanticsService.announce('Library drawer closed', TextDirection.ltr);
+    SemanticsService.sendAnnouncement(
+      View.of(context),
+      'Library drawer closed',
+      TextDirection.ltr,
+    );
   }
 
   Widget _catalogHeader(bool wide) => SizedBox(

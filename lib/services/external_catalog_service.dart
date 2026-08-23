@@ -16,10 +16,9 @@ class CatalogLookupException implements Exception {
 class ExternalCatalogService {
   ExternalCatalogService(
     this._client, {
-    String? ownerName,
-    String? ownerEmail,
-  }) : _ownerName = ownerName,
-       _ownerEmail = ownerEmail;
+    this._ownerName,
+    this._ownerEmail,
+  });
   final http.Client _client;
   String? _ownerName;
   String? _ownerEmail;
