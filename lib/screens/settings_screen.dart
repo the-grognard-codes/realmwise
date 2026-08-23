@@ -727,7 +727,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       _run(() => widget.controller.setTheme(entry.key));
                     }
                   },
-            avatar: CircleAvatar(backgroundColor: entry.value, radius: 10),
+            avatar: Semantics(
+              label: '${entry.key} theme option',
+              child: Tooltip(
+                message: '${entry.key} theme option',
+                child: Icon(Icons.contrast, size: 18),
+              ),
+            ),
             label: Text(entry.key),
           );
         }).toList(),
@@ -1012,20 +1018,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   List<Widget> _cloudSyncSections() => [
     _cloudSyncSection(),
-    _Section(
-      title: 'Include Personal Images/Catalog Icons',
-      child: SwitchListTile(
-        contentPadding: EdgeInsets.zero,
-        title: const Text('Include personal images and catalog icons'),
-        subtitle: const Text(
-          'Off by default. Turn this on only when you want images included in cloud bundles; mobile data may be used.',
-        ),
-        value: widget.controller.includePersonalImagesInBundles,
-        onChanged: _busy
-            ? null
-            : widget.controller.setIncludePersonalImagesInBundles,
-      ),
-    ),
   ];
 
   Widget _cloudSyncSection() {
@@ -1231,7 +1223,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ? null
                     : () => _run(_syncNow),
                 icon: const Icon(Icons.sync),
-                label: const Text('Sync now'),
+                label: const Text('Sync Now'),
               ),
               if (widget.controller.isSyncing)
                 OutlinedButton.icon(
@@ -1248,7 +1240,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               OutlinedButton.icon(
                 onPressed: _busy || !connected ? null : _downloadRemote,
                 icon: const Icon(Icons.cloud_download_outlined),
-                label: const Text('Download remote'),
+                label: const Text('Download Remote'),
               ),
             ],
           ),
@@ -1286,22 +1278,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Include uploaded images and catalog icons'),
-          subtitle: const Text(
-            'Personal files are excluded by default. Turn this on to copy them into sync backup files.',
-          ),
-          value: widget.controller.includePersonalImagesInBundles,
-          onChanged: _busy
-              ? null
-              : (value) => _run(
-                  () => widget.controller.setIncludePersonalImagesInBundles(
-                    value,
-                  ),
-                ),
-        ),
-        const SizedBox(height: 8),
         Wrap(
           spacing: 10,
           runSpacing: 10,
@@ -1317,9 +1293,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
               label: const Text('Restore device bundle'),
             ),
             const Text(
-              'Bundles contain catalog data only; API keys, image folders, and device preferences are excluded.',
+              'Device Bundles export/import full Realmwise backups including settings and catalog items.',
             ),
           ],
+        ),
+        const SizedBox(height: 8),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Include uploaded images and catalog icons'),
+          subtitle: const Text(
+            'Off by default. Turn this on to include uploaded images and catalog icons in Device Bundles; mobile data may be used.',
+          ),
+          value: widget.controller.includePersonalImagesInBundles,
+          onChanged: _busy
+              ? null
+              : (value) => _run(
+                  () => widget.controller.setIncludePersonalImagesInBundles(
+                    value,
+                  ),
+                ),
         ),
       ],
     ),
@@ -1345,17 +1337,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               OutlinedButton.icon(
                 onPressed: _busy ? null : _newDatabase,
                 icon: const Icon(Icons.create_new_folder_outlined),
-                label: const Text('New database'),
+                label: const Text('New DB'),
               ),
               OutlinedButton.icon(
                 onPressed: _busy ? null : _openDatabase,
                 icon: const Icon(Icons.folder_open),
-                label: const Text('Open database'),
+                label: const Text('Open DB'),
               ),
               OutlinedButton.icon(
                 onPressed: _busy ? null : _restore,
                 icon: const Icon(Icons.restore),
-                label: const Text('Restore backup'),
+                label: const Text('Restore DB'),
               ),
               OutlinedButton.icon(
                 onPressed: _busy
@@ -1367,7 +1359,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         );
                       }, success: 'Backup created.'),
                 icon: const Icon(Icons.save_as_outlined),
-                label: const Text('Back up now'),
+                label: const Text('Backup DB'),
               ),
               OutlinedButton.icon(
                 onPressed: _busy ? null : _exportCsv,
