@@ -27,6 +27,8 @@ import 'sync_contract.dart';
 import 'sync_coordinator.dart';
 import 'sync_metadata.dart';
 import 'sync_debug.dart';
+import 'diagnostic_logging.dart';
+import 'diagnostic_bundle_service.dart';
 import '../theme/app_theme.dart';
 
 enum CatalogHierarchyOrder {
@@ -92,6 +94,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   final CatalogBundleService bundles = CatalogBundleService();
   late final ImportService importer = ImportService(database);
   late final ImageStorageService imageStorage = ImageStorageService(_http);
+  late final DiagnosticLogger diagnostics = DiagnosticLogger();
+  late final DiagnosticBundleService diagnosticBundles = DiagnosticBundleService(diagnostics);
   late final CatalogService catalog = CatalogService(
     database: database,
     images: imageStorage,
@@ -138,6 +142,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   CatalogHierarchyOrder hierarchyOrder =
       CatalogHierarchyOrder.gameSystemSettingBookType;
   bool includePersonalImagesInBundles = false;
+  bool diagnosticOptionsEnabled = false;
+  bool debugLoggingEnabled = false;
   Future<void>? _syncFuture;
   Timer? _automaticSyncTimer;
   Future<void>? _automaticFuture;
@@ -198,6 +204,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> initialize() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      diagnosticOptionsEnabled = prefs.getBool('diagnostic_options_enabled') ?? false;
+      debugLoggingEnabled = prefs.getBool('diagnostic_debug_logging') ?? false;
+      await diagnostics.configure(optionsEnabled: diagnosticOptionsEnabled, debugEnabled: debugLoggingEnabled);
+      SyncDebug.diagnosticLogger = diagnostics;
       deviceId = prefs.getString('realmwise.device.id') ?? '';
       if (deviceId.isEmpty) {
         deviceId = _randomDeviceId();
@@ -252,6 +262,26 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       notifyListeners();
     }
   }
+
+  Future<void> setDiagnosticOptionsEnabled(bool enabled) async {
+    diagnosticOptionsEnabled = enabled;
+    if (!enabled) debugLoggingEnabled = false;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('diagnostic_options_enabled', enabled);
+    if (!enabled) await prefs.setBool('diagnostic_debug_logging', false);
+    await diagnostics.configure(optionsEnabled: diagnosticOptionsEnabled, debugEnabled: debugLoggingEnabled);
+    notifyListeners();
+  }
+
+  Future<void> setDebugLoggingEnabled(bool enabled) async {
+    debugLoggingEnabled = diagnosticOptionsEnabled && enabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('diagnostic_debug_logging', debugLoggingEnabled);
+    await diagnostics.configure(optionsEnabled: diagnosticOptionsEnabled, debugEnabled: debugLoggingEnabled);
+    notifyListeners();
+  }
+
+  Future<void> logDiagnostic(DiagnosticSeverity severity, String event, [Map<String, Object?> fields = const {}]) => diagnostics.log(severity, event, fields);
 
   String _localHostname() {
     try {
