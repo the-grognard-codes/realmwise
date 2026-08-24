@@ -117,11 +117,10 @@ class DiagnosticEvent {
 
 class DiagnosticLogger {
   DiagnosticLogger({
-    Directory? directory,
+    this._directory,
     String? sessionId,
     this.maxBytes = 5 * 1024 * 1024,
-  }) : _directory = directory,
-       sessionId = sessionId ?? _newSession();
+  }) : sessionId = sessionId ?? _newSession();
   Directory? _directory;
   final String sessionId;
   int maxBytes;
@@ -239,7 +238,9 @@ class DiagnosticLogger {
       if (total + size > maxBytes) {
         try {
           await f.delete();
-        } on Object {}
+        } on Object {
+          continue;
+        }
       } else {
         total += size;
       }

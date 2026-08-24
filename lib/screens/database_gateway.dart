@@ -97,15 +97,16 @@ class _DatabaseGatewayState extends State<DatabaseGateway> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    body: Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 500),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(28),
-              child: Column(
+    body: SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 500),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(28),
+                child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -159,6 +160,7 @@ class _DatabaseGatewayState extends State<DatabaseGateway> {
                     ),
                 ],
               ),
+                ),
             ),
           ),
         ),
