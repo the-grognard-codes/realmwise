@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/app_controller.dart';
@@ -11,6 +12,9 @@ import '../services/sync_coordinator.dart';
 import '../services/sync_contract.dart';
 import '../services/sync_metadata.dart';
 import '../theme/app_theme.dart';
+
+const _buildName = String.fromEnvironment('FLUTTER_BUILD_NAME', defaultValue: 'unknown');
+const _buildNumber = String.fromEnvironment('FLUTTER_BUILD_NUMBER', defaultValue: 'unknown');
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
@@ -103,6 +107,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ),
     success: 'Open Library contact details saved on this device.',
   );
+
+  Future<void> _generateDiagnosticBundle() async {
+    final chosen = await FilePicker.saveFile(
+      dialogTitle: 'Save diagnostic bundle', fileName: 'realmwise-diagnostics.zip',
+      type: FileType.custom, allowedExtensions: const ['zip'],
+    );
+    if (chosen == null) return;
+    if (!mounted) return;
+    final output = chosen.toLowerCase().endsWith('.zip') ? chosen : '$chosen.zip';
+    await _run(() async {
+      var appVersion = _buildName == 'unknown' ? 'unknown' : '$_buildName+$_buildNumber';
+      try {
+        final info = await PackageInfo.fromPlatform();
+        appVersion = info.buildNumber.isEmpty ? info.version : '${info.version}+${info.buildNumber}';
+      } on Object { /* Metadata is optional on headless platforms. */ }
+      final file = await widget.controller.diagnosticBundles.create(output,
+        appVersion: appVersion,
+        environment: {'platform': Platform.operatingSystem});
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Diagnostic bundle saved to ${file.path}')));
+    });
+  }
 
   Future<void> _openRpgGeekApplications() async {
     try {
@@ -673,31 +698,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
-    return DefaultTabController(
-      length: 4,
-      child: Column(
-        children: [
-          const TabBar(
-            tabs: [
-              Tab(text: 'Interface'),
-              Tab(text: 'Database'),
-              Tab(text: 'Cloud Sync'),
-              Tab(text: 'Sources'),
-            ],
-          ),
-          Expanded(
-            child: TabBarView(
-              children: [
-                _tabContent(_interfaceSections()),
-                _tabContent(_databaseSections()),
-                _tabContent(_cloudSyncSections()),
-                _tabContent(_dataSourceSections()),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
+    return AnimatedBuilder(animation: widget.controller, builder: (context, _) {
+      final diagnostic = widget.controller.diagnosticOptionsEnabled;
+      final tabs = <Tab>[const Tab(text: 'Interface'), const Tab(text: 'Database'), const Tab(text: 'Cloud Sync'), const Tab(text: 'Sources')];
+      final views = <Widget>[_tabContent(_interfaceSections()), _tabContent(_databaseSections()), _tabContent(_cloudSyncSections()), _tabContent(_dataSourceSections())];
+      if (diagnostic) { tabs.add(const Tab(text: 'Diagnostics')); views.add(_tabContent(_diagnosticSections())); }
+      return DefaultTabController(key: ValueKey(diagnostic), length: tabs.length,
+        child: Column(children: [TabBar(tabs: tabs), Expanded(child: TabBarView(children: views))]));
+    });
   }
 
   Widget _tabContent(List<Widget> sections) => Center(
@@ -763,7 +771,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
               },
       ),
     ),
+    _Section(
+      title: 'Diagnostic Options',
+      child: SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Enable Diagnostic Options'),
+        subtitle: const Text('Shows local, privacy-preserving diagnostic tools. Bundles are created only when you request them and are never transmitted automatically.'),
+        value: widget.controller.diagnosticOptionsEnabled,
+        onChanged: _busy ? null : (value) => _run(() => widget.controller.setDiagnosticOptionsEnabled(value)),
+      ),
+    ),
     _catalogIconsSection(),
+  ];
+
+  List<Widget> _diagnosticSections() => [
+    _Section(title: 'Diagnostics', child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('Diagnostic bundles include sanitized logs and approved app/system metadata only. They never include catalog data, credentials, contact details, account information, or exact file paths, and are never uploaded automatically.'),
+      const SizedBox(height: 12),
+      SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Enable debug logging'), subtitle: const Text('Retains additional informational events locally; logs are bounded and rotated.'), value: widget.controller.debugLoggingEnabled, onChanged: _busy ? null : (value) => _run(() => widget.controller.setDebugLoggingEnabled(value))),
+      const SizedBox(height: 8),
+      FilledButton.icon(onPressed: _busy ? null : _generateDiagnosticBundle, icon: const Icon(Icons.archive_outlined), label: const Text('Generate diagnostic bundle')),
+    ])),
   ];
 
   Widget _catalogIconsSection() => _Section(
