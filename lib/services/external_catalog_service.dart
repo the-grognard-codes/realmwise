@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:xml/xml.dart';
 
 import '../models/catalog_models.dart';
+import 'diagnostic_logging.dart';
 
 class CatalogLookupException implements Exception {
   const CatalogLookupException(this.message);
@@ -14,11 +15,7 @@ class CatalogLookupException implements Exception {
 
 /// Remote lookup boundary. All callers handle failure so the catalog remains usable offline.
 class ExternalCatalogService {
-  ExternalCatalogService(
-    this._client, {
-    this._ownerName,
-    this._ownerEmail,
-  });
+  ExternalCatalogService(this._client, {this._ownerName, this._ownerEmail});
   final http.Client _client;
   String? _ownerName;
   String? _ownerEmail;
@@ -38,8 +35,14 @@ class ExternalCatalogService {
   }) async {
     final normalized = input.replaceAll(RegExp(r'[^0-9Xx]'), '');
     final isbn = _isbn13FromInput(normalized);
-    if (isbn == null)
+    if (isbn == null) {
+      DiagnosticDiagnostics.emit(
+        DiagnosticSeverity.warning,
+        'catalog.lookup.invalid',
+        const {'operation': 'isbn', 'outcome': 'failed'},
+      );
       throw const CatalogLookupException('Enter a valid 10 or 13 digit ISBN.');
+    }
     final url = Uri.https('openlibrary.org', '/api/books', {
       'bibkeys': 'ISBN:$isbn',
       'format': 'json',
@@ -163,7 +166,16 @@ class ExternalCatalogService {
       if (selected == null) return original;
       final id = selected.id;
       return _mergeRpgGeek(original, await _fetchRpgGeekDetails(id, apiKey));
-    } on Exception {
+    } on Exception catch (error) {
+      DiagnosticDiagnostics.emit(
+        DiagnosticSeverity.warning,
+        'catalog.lookup.error',
+        {
+          'operation': 'rpggeek',
+          'outcome': 'failed',
+          'errorClass': error.runtimeType.toString(),
+        },
+      );
       // RPGGeek is optional; a successful OpenLibrary record remains usable.
       return original;
     }
@@ -244,7 +256,16 @@ class ExternalCatalogService {
         }
       }
       return merged;
-    } on Exception {
+    } on Exception catch (error) {
+      DiagnosticDiagnostics.emit(
+        DiagnosticSeverity.warning,
+        'catalog.lookup.error',
+        {
+          'operation': 'rpggeek',
+          'outcome': 'failed',
+          'errorClass': error.runtimeType.toString(),
+        },
+      );
       return confirmed;
     }
   }
@@ -422,10 +443,12 @@ class ExternalCatalogService {
     };
     if (effectiveEmail?.trim().isNotEmpty == true)
       headers['From'] = effectiveEmail!.trim();
+    int? responseStatus;
     try {
       final response = await _client
           .get(url, headers: headers)
           .timeout(const Duration(seconds: 12));
+      responseStatus = response.statusCode;
       if (response.statusCode < 200 || response.statusCode >= 300)
         throw CatalogLookupException(
           'OpenLibrary returned HTTP ${response.statusCode}.',
@@ -437,8 +460,28 @@ class ExternalCatalogService {
         );
       return decoded;
     } on CatalogLookupException {
+      DiagnosticDiagnostics.emit(
+        DiagnosticSeverity.warning,
+        'catalog.lookup.error',
+        {
+          'operation': 'openlibrary',
+          'outcome': 'failed',
+          if (responseStatus != null) 'status': responseStatus,
+          if (responseStatus != null)
+            'statusFamily': '${responseStatus ~/ 100}xx',
+        },
+      );
       rethrow;
-    } on Exception {
+    } on Exception catch (error) {
+      DiagnosticDiagnostics.emit(
+        DiagnosticSeverity.warning,
+        'catalog.lookup.error',
+        {
+          'operation': 'remote',
+          'outcome': 'failed',
+          'errorClass': error.runtimeType.toString(),
+        },
+      );
       throw const CatalogLookupException(
         'Could not reach OpenLibrary. You can still add the book manually while offline.',
       );
@@ -541,9 +584,9 @@ class ExternalCatalogService {
     List<String> linkValues(String key) => links.entries
         .where(
           (entry) =>
-              entry.key == key ||
-              entry.key.endsWith(key) ||
-              entry.key.contains(key),
+              // Avoid treating seriescode/productcode/etc. as the base
+              // relation when extracting structured RPGGeek links.
+              entry.key == key || entry.key.endsWith(key),
         )
         .expand((entry) => entry.value)
         .toSet()

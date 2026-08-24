@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
+import 'diagnostic_logging.dart';
 
 /// Produces recoverable copies of the active database while the app is running.
 class BackupService {
@@ -13,7 +14,20 @@ class BackupService {
     required Database database,
   }) async {
     await stop();
-    await createBackup(databasePath: databasePath, database: database);
+    try {
+      await createBackup(databasePath: databasePath, database: database);
+    } on Object catch (error) {
+      DiagnosticDiagnostics.emit(
+        DiagnosticSeverity.error,
+        'backup.start.error',
+        {
+          'operation': 'backup_start',
+          'outcome': 'failed',
+          'errorClass': error.runtimeType.toString(),
+        },
+      );
+      rethrow;
+    }
     _timer = Timer.periodic(const Duration(minutes: 10), (_) {
       unawaited(_attemptBackup(databasePath: databasePath, database: database));
     });
@@ -25,7 +39,16 @@ class BackupService {
   }) async {
     try {
       await createBackup(databasePath: databasePath, database: database);
-    } on Exception {
+    } on Object catch (error) {
+      DiagnosticDiagnostics.emit(
+        DiagnosticSeverity.warning,
+        'backup.create.error',
+        {
+          'operation': 'backup',
+          'outcome': 'failed',
+          'errorClass': error.runtimeType.toString(),
+        },
+      );
       // A future timer tick will retry; catalog editing must never be interrupted by a backup error.
     }
   }
@@ -71,7 +94,16 @@ class BackupService {
     for (final file in files) {
       try {
         await _scrubLegacyToken(file);
-      } on Exception {
+      } on Object catch (error) {
+        DiagnosticDiagnostics.emit(
+          DiagnosticSeverity.warning,
+          'backup.scrub.error',
+          {
+            'operation': 'backup_scrub',
+            'outcome': 'failed',
+            'errorClass': error.runtimeType.toString(),
+          },
+        );
         // A damaged backup must not prevent the active catalog from opening.
       }
     }

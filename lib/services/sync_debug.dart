@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'diagnostic_logging.dart';
 
@@ -10,13 +11,35 @@ class SyncDebug {
   static DiagnosticLogger? diagnosticLogger;
 
   static void trace(String action, [Map<String, Object?> fields = const {}]) {
-    diagnosticLogger?.log(DiagnosticSeverity.debug, 'sync.$action', fields);
+    final lowered = action.toLowerCase();
+    final severity =
+        (lowered.contains('error') ||
+            lowered.contains('failed') ||
+            lowered.contains('failure') ||
+            lowered.contains('conflict') ||
+            lowered.contains('auth') ||
+            lowered.contains('transport') ||
+            lowered.contains('retry'))
+        ? (lowered.contains('error') ||
+                  lowered.contains('failed') ||
+                  lowered.contains('failure') ||
+                  lowered.contains('auth') ||
+                  lowered.contains('retry')
+              ? DiagnosticSeverity.error
+              : DiagnosticSeverity.warning)
+        : DiagnosticSeverity.debug;
+    final diagnosticSink = diagnosticLogger;
+    if (diagnosticSink != null) {
+      // Keep this call non-blocking and let the sanitizer enforce the field
+      // allowlist. Sync actions are intentionally stable event names.
+      unawaited(diagnosticSink.log(severity, 'sync.$action', fields));
+    }
     if (!kDebugMode) return;
     final details = fields.entries.map((e) => '${e.key}=${e.value}').join(' ');
     final message = details.isEmpty ? action : '$action $details';
-    final sink = logger;
-    if (sink != null) {
-      sink(message);
+    final messageSink = logger;
+    if (messageSink != null) {
+      messageSink(message);
     } else {
       debugPrint('[sync] $message');
     }

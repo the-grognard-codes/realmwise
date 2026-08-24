@@ -1,6 +1,7 @@
 import '../data/database_service.dart';
 import '../models/catalog_models.dart';
 import 'export_service.dart';
+import 'diagnostic_logging.dart';
 
 /// Validates and imports ExportService CSV snapshots.
 class ImportService {
@@ -8,6 +9,23 @@ class ImportService {
   final DatabaseService database;
 
   Future<int> importCsv(String csv) async {
+    try {
+      return await _importCsv(csv);
+    } on Object catch (error) {
+      DiagnosticDiagnostics.emit(
+        DiagnosticSeverity.warning,
+        'catalog.import.error',
+        {
+          'operation': 'csv_import',
+          'outcome': 'failed',
+          'errorClass': error.runtimeType.toString(),
+        },
+      );
+      rethrow;
+    }
+  }
+
+  Future<int> _importCsv(String csv) async {
     final rows = _parse(csv);
     if (rows.isEmpty || !_same(rows.first, ExportService.headers)) {
       throw FormatException('CSV header does not match schema v1.');

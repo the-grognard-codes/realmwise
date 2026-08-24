@@ -3,6 +3,7 @@ import 'dart:io';
 import '../data/database_service.dart';
 import '../models/catalog_models.dart';
 import 'image_storage_service.dart';
+import 'diagnostic_logging.dart';
 
 /// Coordinates database records with their local image files.
 class CatalogService {
@@ -30,7 +31,26 @@ class CatalogService {
         // Network images are optional; saved URL remains provenance for later retry.
       }
     }
-    return database.saveRecord(record);
+    try {
+      final saved = await database.saveRecord(record);
+      DiagnosticDiagnostics.emit(
+        DiagnosticSeverity.debug,
+        'catalog.save.success',
+        const {'operation': 'save', 'outcome': 'success'},
+      );
+      return saved;
+    } on Object catch (error) {
+      DiagnosticDiagnostics.emit(
+        DiagnosticSeverity.error,
+        'catalog.save.error',
+        {
+          'operation': 'save',
+          'outcome': 'failed',
+          'errorClass': error.runtimeType.toString(),
+        },
+      );
+      rethrow;
+    }
   }
 
   /// Restores local files omitted from portable bundles while retaining image
@@ -88,10 +108,23 @@ class CatalogService {
   }
 
   Future<void> delete(CatalogRecord record) async {
-    for (final image in record.images) {
-      await images.deleteImage(image);
+    try {
+      for (final image in record.images) {
+        await images.deleteImage(image);
+      }
+      if (record.work.id != null) await database.deleteRecord(record.work.id!);
+    } on Object catch (error) {
+      DiagnosticDiagnostics.emit(
+        DiagnosticSeverity.error,
+        'catalog.delete.error',
+        {
+          'operation': 'delete',
+          'outcome': 'failed',
+          'errorClass': error.runtimeType.toString(),
+        },
+      );
+      rethrow;
     }
-    if (record.work.id != null) await database.deleteRecord(record.work.id!);
   }
 
   Future<List<File>> listBackups() async {

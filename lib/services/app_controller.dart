@@ -86,7 +86,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
          if (oneDriveProvider != null) 'onedrive': oneDriveProvider,
          if (dropboxProvider != null) 'dropbox': dropboxProvider,
          if (syncProvider != null) syncProvider.provider: syncProvider,
-       };
+       } {
+    DiagnosticDiagnostics.logger = diagnostics;
+  }
 
   final DatabaseService database;
   final BackupService backups;

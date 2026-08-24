@@ -6,6 +6,7 @@ import 'package:path/path.dart' as path;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../models/catalog_models.dart';
+import '../services/diagnostic_logging.dart';
 
 /// Owns the selected SQLite database and all SQL used by the application.
 class DatabaseService {
@@ -31,65 +32,80 @@ class DatabaseService {
     }
     await Directory(path.dirname(filePath)).create(recursive: true);
     _databasePath = filePath;
-    _database = await openDatabase(
-      filePath,
-      version: 5,
-      onConfigure: (database) async =>
-          database.rawQuery('PRAGMA foreign_keys = ON'),
-      onCreate: _createSchema,
-      onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 2) {
-          await db.execute('''CREATE TABLE IF NOT EXISTS catalog_icons (
+    try {
+      _database = await openDatabase(
+        filePath,
+        version: 5,
+        onConfigure: (database) async =>
+            database.rawQuery('PRAGMA foreign_keys = ON'),
+        onCreate: _createSchema,
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 2) {
+            await db.execute('''CREATE TABLE IF NOT EXISTS catalog_icons (
             tier TEXT NOT NULL, section_name TEXT NOT NULL, local_path TEXT NOT NULL,
             alignment_x REAL NOT NULL DEFAULT 0, alignment_y REAL NOT NULL DEFAULT 0,
             PRIMARY KEY (tier, section_name)
           )''');
-        }
-        if (oldVersion < 3) {
-          await db.execute(
-            'ALTER TABLE catalog_icons ADD COLUMN zoom REAL NOT NULL DEFAULT 1',
-          );
-        }
-        if (oldVersion < 4) {
-          for (final definition in _extendedWorkColumns.entries) {
+          }
+          if (oldVersion < 3) {
+            await db.execute(
+              'ALTER TABLE catalog_icons ADD COLUMN zoom REAL NOT NULL DEFAULT 1',
+            );
+          }
+          if (oldVersion < 4) {
+            for (final definition in _extendedWorkColumns.entries) {
+              await _addColumnIfMissing(
+                db,
+                'works',
+                definition.key,
+                definition.value,
+              );
+            }
+          }
+          if (oldVersion < 5) {
             await _addColumnIfMissing(
               db,
-              'works',
-              definition.key,
-              definition.value,
+              'images',
+              'source_type',
+              "TEXT NOT NULL DEFAULT 'userImported'",
             );
-          }
-        }
-        if (oldVersion < 5) {
-          await _addColumnIfMissing(
-            db,
-            'images',
-            'source_type',
-            "TEXT NOT NULL DEFAULT 'userImported'",
-          );
-          await _addColumnIfMissing(
-            db,
-            'catalog_icons',
-            'source_type',
-            "TEXT NOT NULL DEFAULT 'userImported'",
-          );
-          // Legacy remote URLs were created exclusively by the downloader; make
-          // that historical provenance explicit before future saves occur.
-          if (await _hasTable(db, 'images')) {
-            await db.execute(
-              "UPDATE images SET source_type = 'remoteCache' "
-              "WHERE remote_url != '' AND (local_path = '' OR caption = 'Remote cover')",
+            await _addColumnIfMissing(
+              db,
+              'catalog_icons',
+              'source_type',
+              "TEXT NOT NULL DEFAULT 'userImported'",
             );
+            // Legacy remote URLs were created exclusively by the downloader; make
+            // that historical provenance explicit before future saves occur.
+            if (await _hasTable(db, 'images')) {
+              await db.execute(
+                "UPDATE images SET source_type = 'remoteCache' "
+                "WHERE remote_url != '' AND (local_path = '' OR caption = 'Remote cover')",
+              );
+            }
+            if (await _hasTable(db, 'catalog_icons')) {
+              await db.execute(
+                "UPDATE catalog_icons SET source_type = 'packagedAsset' "
+                "WHERE replace(local_path, '\\', '/') LIKE 'assets/%'",
+              );
+            }
           }
-          if (await _hasTable(db, 'catalog_icons')) {
-            await db.execute(
-              "UPDATE catalog_icons SET source_type = 'packagedAsset' "
-              "WHERE replace(local_path, '\\', '/') LIKE 'assets/%'",
-            );
-          }
-        }
-      },
-    );
+        },
+      );
+    } on Object catch (error) {
+      _database = null;
+      _databasePath = null;
+      DiagnosticDiagnostics.emit(
+        DiagnosticSeverity.error,
+        'database.open.error',
+        {
+          'operation': 'open',
+          'outcome': 'failed',
+          'errorClass': error.runtimeType.toString(),
+        },
+      );
+      rethrow;
+    }
   }
 
   Future<void> close() async {
@@ -371,44 +387,57 @@ class DatabaseService {
       );
     }
     late int workId;
-    await _db.transaction((transaction) async {
-      final row = record.work.toRow()..remove('id');
-      if (record.work.id == null) {
-        workId = await transaction.insert('works', row);
-      } else {
-        workId = record.work.id!;
-        await transaction.update(
-          'works',
-          row,
-          where: 'id = ?',
-          whereArgs: [workId],
-        );
-        await transaction.update(
-          'works',
-          {'updated_at': DateTime.now().toIso8601String()},
-          where: 'id = ?',
-          whereArgs: [workId],
-        );
-        await transaction.delete(
-          'copies',
-          where: 'work_id = ?',
-          whereArgs: [workId],
-        );
-        await transaction.delete(
-          'images',
-          where: 'work_id = ?',
-          whereArgs: [workId],
-        );
-      }
-      for (final copy in record.copies) {
-        final rowCopy = copy.toRow(workId)..remove('id');
-        await transaction.insert('copies', rowCopy);
-      }
-      for (final image in deDuplicatedImages) {
-        final imageRow = image.toRow(workId)..remove('id');
-        await transaction.insert('images', imageRow);
-      }
-    });
+    try {
+      await _db.transaction((transaction) async {
+        final row = record.work.toRow()..remove('id');
+        if (record.work.id == null) {
+          workId = await transaction.insert('works', row);
+        } else {
+          workId = record.work.id!;
+          await transaction.update(
+            'works',
+            row,
+            where: 'id = ?',
+            whereArgs: [workId],
+          );
+          await transaction.update(
+            'works',
+            {'updated_at': DateTime.now().toIso8601String()},
+            where: 'id = ?',
+            whereArgs: [workId],
+          );
+          await transaction.delete(
+            'copies',
+            where: 'work_id = ?',
+            whereArgs: [workId],
+          );
+          await transaction.delete(
+            'images',
+            where: 'work_id = ?',
+            whereArgs: [workId],
+          );
+        }
+        for (final copy in record.copies) {
+          final rowCopy = copy.toRow(workId)..remove('id');
+          await transaction.insert('copies', rowCopy);
+        }
+        for (final image in deDuplicatedImages) {
+          final imageRow = image.toRow(workId)..remove('id');
+          await transaction.insert('images', imageRow);
+        }
+      });
+    } on Object catch (error) {
+      DiagnosticDiagnostics.emit(
+        DiagnosticSeverity.error,
+        'database.save.error',
+        {
+          'operation': 'save',
+          'outcome': 'failed',
+          'errorClass': error.runtimeType.toString(),
+        },
+      );
+      rethrow;
+    }
     return getRecord(workId);
   }
 
@@ -419,68 +448,86 @@ class DatabaseService {
     Map<int, Map<String, Object?>> timestampsByWorkId = const {},
   }) async {
     final list = records.toList();
-    await _db.transaction((tx) async {
-      for (final record in list) {
-        final work = record.work;
-        final row = work.toRow()..remove('id');
-        final suppliedId = work.id;
-        late final int workId;
-        if (suppliedId == null) {
-          workId = await tx.insert('works', row);
-        } else {
-          final found = await tx.query(
-            'works',
-            columns: ['id'],
-            where: 'id = ?',
-            whereArgs: [suppliedId],
-            limit: 1,
-          );
-          workId = suppliedId;
-          if (found.isEmpty) {
-            await tx.insert('works', {...row, 'id': suppliedId});
+    try {
+      await _db.transaction((tx) async {
+        for (final record in list) {
+          final work = record.work;
+          final row = work.toRow()..remove('id');
+          final suppliedId = work.id;
+          late final int workId;
+          if (suppliedId == null) {
+            workId = await tx.insert('works', row);
           } else {
-            await tx.update('works', row, where: 'id = ?', whereArgs: [workId]);
+            final found = await tx.query(
+              'works',
+              columns: ['id'],
+              where: 'id = ?',
+              whereArgs: [suppliedId],
+              limit: 1,
+            );
+            workId = suppliedId;
+            if (found.isEmpty) {
+              await tx.insert('works', {...row, 'id': suppliedId});
+            } else {
+              await tx.update(
+                'works',
+                row,
+                where: 'id = ?',
+                whereArgs: [workId],
+              );
+            }
+          }
+          final timestamps = suppliedId == null
+              ? const <String, Object?>{}
+              : (timestampsByWorkId[suppliedId] ?? const {});
+          if (timestamps['created_at'] != null ||
+              timestamps['updated_at'] != null) {
+            final values = <String, Object?>{};
+            if (timestamps['created_at'] != null)
+              values['created_at'] = timestamps['created_at'];
+            if (timestamps['updated_at'] != null)
+              values['updated_at'] = timestamps['updated_at'];
+            await tx.update(
+              'works',
+              values,
+              where: 'id = ?',
+              whereArgs: [workId],
+            );
+          } else if (suppliedId != null) {
+            await tx.update(
+              'works',
+              {'updated_at': DateTime.now().toIso8601String()},
+              where: 'id = ?',
+              whereArgs: [workId],
+            );
+          }
+          await tx.delete('copies', where: 'work_id = ?', whereArgs: [workId]);
+          await tx.delete('images', where: 'work_id = ?', whereArgs: [workId]);
+          for (final copy in record.copies) {
+            final copyRow = copy.toRow(workId);
+            if (copy.id == null) copyRow.remove('id');
+            await tx.insert('copies', copyRow);
+          }
+          for (var i = 0; i < record.images.length; i++) {
+            final image = record.images[i].copyWith(sortOrder: i);
+            final imageRow = image.toRow(workId);
+            if (image.id == null) imageRow.remove('id');
+            await tx.insert('images', imageRow);
           }
         }
-        final timestamps = suppliedId == null
-            ? const <String, Object?>{}
-            : (timestampsByWorkId[suppliedId] ?? const {});
-        if (timestamps['created_at'] != null ||
-            timestamps['updated_at'] != null) {
-          final values = <String, Object?>{};
-          if (timestamps['created_at'] != null)
-            values['created_at'] = timestamps['created_at'];
-          if (timestamps['updated_at'] != null)
-            values['updated_at'] = timestamps['updated_at'];
-          await tx.update(
-            'works',
-            values,
-            where: 'id = ?',
-            whereArgs: [workId],
-          );
-        } else if (suppliedId != null) {
-          await tx.update(
-            'works',
-            {'updated_at': DateTime.now().toIso8601String()},
-            where: 'id = ?',
-            whereArgs: [workId],
-          );
-        }
-        await tx.delete('copies', where: 'work_id = ?', whereArgs: [workId]);
-        await tx.delete('images', where: 'work_id = ?', whereArgs: [workId]);
-        for (final copy in record.copies) {
-          final copyRow = copy.toRow(workId);
-          if (copy.id == null) copyRow.remove('id');
-          await tx.insert('copies', copyRow);
-        }
-        for (var i = 0; i < record.images.length; i++) {
-          final image = record.images[i].copyWith(sortOrder: i);
-          final imageRow = image.toRow(workId);
-          if (image.id == null) imageRow.remove('id');
-          await tx.insert('images', imageRow);
-        }
-      }
-    });
+      });
+    } on Object catch (error) {
+      DiagnosticDiagnostics.emit(
+        DiagnosticSeverity.error,
+        'database.import.error',
+        {
+          'operation': 'import',
+          'outcome': 'failed',
+          'errorClass': error.runtimeType.toString(),
+        },
+      );
+      rethrow;
+    }
   }
 
   Future<void> deleteRecord(int workId) =>

@@ -7,6 +7,7 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 
 import '../models/catalog_models.dart';
+import 'diagnostic_logging.dart';
 
 /// Optional test seam. The resolved peer is supplied by the service, so an
 /// injected transport cannot perform an independent DNS lookup.
@@ -87,25 +88,30 @@ class ImageStorageService {
     required String label,
     required bool cover,
   }) async {
-    final source = File(sourcePath);
-    if (!await source.exists())
-      throw FileSystemException(
-        'The selected image no longer exists.',
-        sourcePath,
+    try {
+      final source = File(sourcePath);
+      if (!await source.exists())
+        throw FileSystemException(
+          'The selected image no longer exists.',
+          sourcePath,
+        );
+      final extension = _extensionFor(sourcePath, fallback: '.jpg');
+      final destination = await _availableFile(
+        work: work,
+        label: label,
+        extension: extension,
+        cover: cover,
       );
-    final extension = _extensionFor(sourcePath, fallback: '.jpg');
-    final destination = await _availableFile(
-      work: work,
-      label: label,
-      extension: extension,
-      cover: cover,
-    );
-    await source.copy(destination.path);
-    return BookImage(
-      localPath: destination.path,
-      caption: _cleanLabel(label),
-      isCover: cover,
-    );
+      await source.copy(destination.path);
+      return BookImage(
+        localPath: destination.path,
+        caption: _cleanLabel(label),
+        isCover: cover,
+      );
+    } on Object catch (error) {
+      _diagnosticFailure('image.import.error', error);
+      rethrow;
+    }
   }
 
   Future<String> importCatalogIcon({
@@ -113,17 +119,22 @@ class ImageStorageService {
     required String tier,
     required String sectionName,
   }) async {
-    final source = File(sourcePath);
-    if (!await source.exists())
-      throw FileSystemException(
-        'The selected image no longer exists.',
-        sourcePath,
-      );
-    final ext = _extensionFor(sourcePath, fallback: '.png');
-    final label = _cleanLabel('${tier}_$sectionName');
-    final destination = await _uniquePath(rootPath, 'icon_$label', ext);
-    await source.copy(destination.path);
-    return destination.path;
+    try {
+      final source = File(sourcePath);
+      if (!await source.exists())
+        throw FileSystemException(
+          'The selected image no longer exists.',
+          sourcePath,
+        );
+      final ext = _extensionFor(sourcePath, fallback: '.png');
+      final label = _cleanLabel('${tier}_$sectionName');
+      final destination = await _uniquePath(rootPath, 'icon_$label', ext);
+      await source.copy(destination.path);
+      return destination.path;
+    } on Object catch (error) {
+      _diagnosticFailure('image.icon_import.error', error);
+      rethrow;
+    }
   }
 
   Future<BookImage> downloadRemoteCover({
@@ -174,7 +185,8 @@ class ImageStorageService {
         isCover: true,
         sourceType: ImageSourceType.remoteCache,
       );
-    } catch (_) {
+    } catch (error) {
+      _diagnosticFailure('image.download.error', error);
       rethrow;
     }
   }
@@ -449,5 +461,13 @@ class ImageStorageService {
         ].contains(extension)
         ? extension
         : fallback;
+  }
+
+  void _diagnosticFailure(String event, Object error) {
+    DiagnosticDiagnostics.emit(DiagnosticSeverity.warning, event, {
+      'operation': event.split('.').first,
+      'outcome': 'failed',
+      'errorClass': error.runtimeType.toString(),
+    });
   }
 }
