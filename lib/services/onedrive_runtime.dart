@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'onedrive_sync.dart';
 import 'secure_storage_service.dart';
+import 'google_drive_runtime.dart';
 
 class UrlLauncherOneDriveBrowser implements OneDriveOAuthBrowser {
   @override
@@ -58,15 +59,10 @@ class AndroidOneDriveCallback
   AndroidOneDriveCallback(this.redirectUri);
   final Uri redirectUri;
   static const _channel = MethodChannel('realmwise/onedrive_oauth');
-  static const _registeredRedirect =
-      'msauth://com.realmwise.rpg.tracker/hu33S0PdJMD%2FBlOPVgFheEvptH8%3D';
   bool _cancelled = false;
 
   @override
   Future<Uri> waitForCallback() async {
-    if (redirectUri.toString() != _registeredRedirect) {
-      throw OneDriveAuthException('Unsupported OneDrive redirect URI');
-    }
     _cancelled = false;
     final raw = await _channel.invokeMethod<String>('wait_for_callback', {
       'redirect_uri': redirectUri.toString(),
@@ -88,16 +84,19 @@ class AndroidOneDriveCallback
   }
 }
 
-const _androidOneDriveRedirect =
-    'msauth://com.realmwise.rpg.tracker/hu33S0PdJMD%2FBlOPVgFheEvptH8%3D';
-
-OneDriveProvider? createConfiguredOneDriveProvider() {
-  const id = String.fromEnvironment('MICROSOFT_ONEDRIVE_CLIENT_ID');
-  if (id.trim().isEmpty) return null;
-  const tenant = String.fromEnvironment('MICROSOFT_ONEDRIVE_TENANT');
-  const raw = String.fromEnvironment('MICROSOFT_ONEDRIVE_REDIRECT_URI');
-  final configured = raw.trim();
-  if (Platform.isAndroid && configured != _androidOneDriveRedirect) return null;
+OneDriveProvider? createConfiguredOneDriveProvider([
+  AndroidOAuthConfiguration? androidConfiguration,
+]) {
+  final android = Platform.isAndroid && androidConfiguration != null;
+  final effectiveId = android
+      ? androidConfiguration.microsoftOnedriveClientId
+      : (kReleaseMode
+            ? '1b24f572-c129-4e3c-9afa-d51781afe96c'
+            : 'f689c4d7-5fc4-4a50-aee5-da175b97e113');
+  if (effectiveId.isEmpty) return null;
+  final configured = android
+      ? androidConfiguration.microsoftOnedriveRedirectUri
+      : '';
   final uri = Uri.tryParse(
     configured.isEmpty && !Platform.isAndroid
         ? 'http://127.0.0.1:8765/oauth2callback'
@@ -107,8 +106,13 @@ OneDriveProvider? createConfiguredOneDriveProvider() {
   final store = OneDriveTokenStore(SecureStorageService());
   return OneDriveProvider(
     authenticator: OneDriveOAuthAuthenticator(
-      clientId: id.trim(),
-      tenant: tenant.trim().isEmpty ? 'common' : tenant.trim(),
+      clientId: effectiveId,
+      // Both Realmwise registrations accept personal Microsoft accounts only.
+      // Keeping the desktop authority aligned with Android also ensures the
+      // authorization and refresh requests target the same account system.
+      tenant: android && androidConfiguration.microsoftOnedriveTenant.isNotEmpty
+          ? androidConfiguration.microsoftOnedriveTenant
+          : 'consumers',
       redirectUri: uri,
       browser: UrlLauncherOneDriveBrowser(),
       callback: Platform.isAndroid
@@ -121,13 +125,7 @@ OneDriveProvider? createConfiguredOneDriveProvider() {
 }
 
 String oneDriveConfigurationState() {
-  const id = String.fromEnvironment('MICROSOFT_ONEDRIVE_CLIENT_ID');
-  const redirect = String.fromEnvironment('MICROSOFT_ONEDRIVE_REDIRECT_URI');
-  return id.trim().isEmpty
-      ? 'missing MICROSOFT_ONEDRIVE_CLIENT_ID'
-      : Platform.isAndroid && redirect.trim() != _androidOneDriveRedirect
-          ? 'invalid MICROSOFT_ONEDRIVE_REDIRECT_URI'
-      : 'configured';
+  return 'configured';
 }
 
 void logOneDriveConfiguration() {

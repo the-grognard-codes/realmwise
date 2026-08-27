@@ -682,6 +682,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
     try {
       syncMetadata = await syncCoordinator.connect(provider, identity);
+      if (_pendingConnectionCancellationRequested &&
+          identical(_pendingConnectionProvider, provider)) {
+        throw const SyncCancelledException();
+      }
       if (syncMetadata!.state == SyncState.connectedUnconfigured &&
           syncCoordinator.session != null &&
           (provider is GoogleDriveProvider ||
@@ -696,13 +700,21 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
               );
         await syncCoordinator.configureTarget(target);
         syncMetadata = syncCoordinator.metadata;
+        if (_pendingConnectionCancellationRequested &&
+            identical(_pendingConnectionProvider, provider)) {
+          throw const SyncCancelledException();
+        }
       }
       // Keep the persisted sync policy aligned with the bundle export policy.
       await setIncludePersonalImagesInBundles(includePersonalImagesInBundles);
+      if (_pendingConnectionCancellationRequested &&
+          identical(_pendingConnectionProvider, provider)) {
+        throw const SyncCancelledException();
+      }
     } catch (error) {
       if (_pendingConnectionCancellationRequested &&
           identical(_pendingConnectionProvider, provider)) {
-        await syncCoordinator.disconnect();
+        syncCoordinator.resetRuntime();
         syncMetadata = null;
       } else {
         await syncCoordinator.failConnection(error);
@@ -721,13 +733,21 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  /// Cancels only an in-flight Dropbox OAuth callback. Other connection
-  /// operations are intentionally not interrupted by this UI action.
   Future<void> cancelPendingConnection() async {
     final provider = _pendingConnectionProvider;
-    if (provider is DropboxProvider) {
-      _pendingConnectionCancellationRequested = true;
-      await provider.cancelPendingAuthentication();
+    if (provider == null) return;
+    _pendingConnectionCancellationRequested = true;
+    notifyListeners();
+    try {
+      if (provider is DropboxProvider) {
+        await provider.cancelPendingAuthentication();
+      } else if (provider is OneDriveProvider) {
+        await provider.cancelPendingAuthentication();
+      } else if (provider is GoogleDriveProvider) {
+        await provider.cancelPendingAuthentication();
+      }
+    } finally {
+      notifyListeners();
     }
   }
 

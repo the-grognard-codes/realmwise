@@ -15,22 +15,26 @@ class _Store implements TokenStorage {
   @override
   Future<String?> read(String key) async => m[key];
   @override
-  Future<void> write(String key, String value) async => m[key] = value;
+  Future<void> write(String key, String value) async {
+    // Existing provider fixtures represent legacy credentials; mark them with
+    // the scope required by the provider so tests remain focused on behavior.
+    if (key.startsWith('onedrive_oauth:') &&
+        value.contains('"access_token"') &&
+        !value.contains('"scopes"')) {
+      value = value.replaceFirst(
+        RegExp(r'\}\s*$'),
+        ',"scopes":["Files.ReadWrite.AppFolder"]}',
+      );
+    }
+    m[key] = value;
+  }
+
   @override
   Future<void> delete(String key) async => m.remove(key);
 }
 
 void main() {
-  test(
-    'Android callback rejects an unregistered redirect before channel use',
-    () async {
-      final callback = AndroidOneDriveCallback(
-        Uri.parse('msauth://com.realmwise.rpg.tracker/wrong'),
-      );
-      expect(callback.waitForCallback(), throwsA(isA<OneDriveAuthException>()));
-    },
-  );
-
+  TestWidgetsFlutterBinding.ensureInitialized();
   test('Android callback returns the native callback URI', () async {
     TestWidgetsFlutterBinding.ensureInitialized();
     final channel = const MethodChannel('realmwise/onedrive_oauth');
@@ -146,6 +150,117 @@ void main() {
     expect(delete.url.path, contains('/items/app-root:/Realmwise/'));
     expect(delete.url.path, isNot(contains('/drive/root:/')));
   });
+
+  test(
+    'initializes a missing app root through a temporary content write',
+    () async {
+      final store = _Store();
+      await store.write(
+        'onedrive_oauth:id',
+        '{"access_token":"a","account_id":"x"}',
+      );
+      var rootLookups = 0;
+      final client = MockClient((request) async {
+        if (request.url.path.endsWith('/approot') && request.method == 'GET') {
+          rootLookups++;
+          return rootLookups == 1
+              ? http.Response('', 404)
+              : http.Response('{"id":"app-root"}', 200);
+        }
+        if (request.method == 'PUT' &&
+            request.url.path.contains('/approot/children/')) {
+          expect(request.url.path, contains('.realmwise-approot-initialize'));
+          return http.Response('{"id":"bootstrap"}', 201);
+        }
+        if (request.method == 'DELETE' &&
+            request.url.path.contains('/items/app-root:/')) {
+          return http.Response('', 204);
+        }
+        if (request.url.path.endsWith('/items/app-root/children')) {
+          return http.Response(
+            '{"value":[{"id":"realmwise-folder","name":"Realmwise",'
+            '"folder":{}}]}',
+            200,
+          );
+        }
+        if (request.method == 'GET' &&
+            request.url.path.contains('/items/realmwise-folder/children')) {
+          return http.Response('{"value":[]}', 200);
+        }
+        if (request.method == 'PUT') {
+          return http.Response(
+            '{"id":"bundle","name":"Realmwise.realmwise"}',
+            201,
+          );
+        }
+        return http.Response('', 500);
+      });
+      final auth = OneDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost/cb'),
+        browser: _Browser(),
+        callback: _Callback(),
+        tokenStore: OneDriveTokenStore(store),
+      );
+      final provider = OneDriveProvider(
+        authenticator: auth,
+        tokenStore: OneDriveTokenStore(store),
+        httpClient: client,
+        delay: (_) async {},
+      );
+
+      final target = await provider.ensureBundleTarget(
+        const SyncAuthSession(accountId: 'x'),
+      );
+      expect(target.id, 'bundle');
+      expect(rootLookups, 2);
+    },
+  );
+
+  test('surfaces an app-root content bootstrap failure', () async {
+    final store = _Store();
+    await store.write(
+      'onedrive_oauth:id',
+      '{"access_token":"a","account_id":"x"}',
+    );
+    var rootLookups = 0;
+    final client = MockClient((request) async {
+      if (request.url.path.endsWith('/approot') && request.method == 'GET') {
+        rootLookups++;
+        return http.Response('', 404);
+      }
+      if (request.method == 'PUT' &&
+          request.url.path.contains('/approot/children/')) {
+        return http.Response('{"error":{"code":"itemNotFound"}}', 404);
+      }
+      return http.Response('', 500);
+    });
+    final auth = OneDriveOAuthAuthenticator(
+      clientId: 'id',
+      redirectUri: Uri.parse('http://localhost/cb'),
+      browser: _Browser(),
+      callback: _Callback(),
+      tokenStore: OneDriveTokenStore(store),
+    );
+    final provider = OneDriveProvider(
+      authenticator: auth,
+      tokenStore: OneDriveTokenStore(store),
+      httpClient: client,
+      delay: (_) async {},
+    );
+
+    await expectLater(
+      provider.ensureBundleTarget(const SyncAuthSession(accountId: 'x')),
+      throwsA(
+        isA<OneDriveException>().having(
+          (error) => error.operation,
+          'operation',
+          'OneDrive app root bootstrap write failed',
+        ),
+      ),
+    );
+    expect(rootLookups, 1);
+  });
   test(
     'new lease uses If-None-Match and maps create race to lease lost',
     () async {
@@ -258,6 +373,90 @@ void main() {
     );
     expect(() => auth.authenticate(), throwsA(isA<OneDriveAuthException>()));
   });
+  test('OAuth rejects a token without app-folder scope', () async {
+    final browser = _CapturingBrowser();
+    final auth = OneDriveOAuthAuthenticator(
+      clientId: 'id',
+      redirectUri: Uri.parse('http://localhost/cb'),
+      browser: browser,
+      callback: _DynamicCallback(browser),
+      tokenStore: OneDriveTokenStore(_Store()),
+      httpClient: MockClient(
+        (request) async => request.method == 'POST'
+            ? http.Response('{"access_token":"token","scope":"User.Read"}', 200)
+            : http.Response('{"id":"account-1"}', 200),
+      ),
+    );
+    await expectLater(
+      auth.authenticate(),
+      throwsA(
+        isA<OneDriveAuthException>().having(
+          (e) => e.message,
+          'message',
+          contains('Files.ReadWrite.AppFolder'),
+        ),
+      ),
+    );
+  });
+
+  test('403 includes the safe Graph operation context and status', () async {
+    final store = _Store();
+    await store.write(
+      'onedrive_oauth:id',
+      '{"access_token":"a","account_id":"x","scopes":["Files.ReadWrite.AppFolder"]}',
+    );
+    final provider = OneDriveProvider(
+      authenticator: OneDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost/cb'),
+        browser: _Browser(),
+        callback: _Callback(),
+        tokenStore: OneDriveTokenStore(store),
+      ),
+      tokenStore: OneDriveTokenStore(store),
+      httpClient: MockClient((_) async => http.Response('{}', 403)),
+    );
+    await expectLater(
+      provider.listRemoteTargets(const SyncAuthSession(accountId: 'x')),
+      throwsA(
+        isA<OneDriveException>()
+            .having((e) => e.statusCode, 'status', 403)
+            .having((e) => e.message, 'operation', contains('app root lookup')),
+      ),
+    );
+  });
+  test('Graph 400 exposes only the bounded top-level error code', () async {
+    final store = _Store();
+    await store.write(
+      'onedrive_oauth:id',
+      '{"access_token":"a","account_id":"x","scopes":["Files.ReadWrite.AppFolder"]}',
+    );
+    final provider = OneDriveProvider(
+      authenticator: OneDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost/cb'),
+        browser: _Browser(),
+        callback: _Callback(),
+        tokenStore: OneDriveTokenStore(store),
+      ),
+      tokenStore: OneDriveTokenStore(store),
+      httpClient: MockClient(
+        (_) async => http.Response(
+          '{"error":{"code":"invalidRequest","message":"secret"}}',
+          400,
+        ),
+      ),
+    );
+    OneDriveException? exception;
+    try {
+      await provider.listRemoteTargets(const SyncAuthSession(accountId: 'x'));
+    } on OneDriveException catch (error) {
+      exception = error;
+    }
+    expect(exception, isNotNull);
+    expect(exception!.graphErrorCode, 'invalidRequest');
+    expect(exception.message, isNot(contains('secret')));
+  });
   test('metadata maps eTag revision and hash', () async {
     final store = _Store();
     await store.write('onedrive_oauth:id', '{"access_token":"a"}');
@@ -273,7 +472,7 @@ void main() {
       tokenStore: OneDriveTokenStore(store),
       httpClient: MockClient(
         (r) async => http.Response(
-          '{"eTag":"tag","file":{"hashes":{"sha256Hash":"h"}},"lastModifiedDateTime":"2024-01-01T00:00:00Z"}',
+          '{"eTag":"tag","file":{"hashes":{"quickXorHash":"h"}},"lastModifiedDateTime":"2024-01-01T00:00:00Z"}',
           200,
         ),
       ),
@@ -302,7 +501,7 @@ void main() {
         tokenStore: OneDriveTokenStore(store),
         httpClient: MockClient(
           (_) async => http.Response(
-            '{"eTag":"very-long-etag-secret","file":{"hashes":{"sha256Hash":"hash"}}}',
+            '{"eTag":"very-long-etag-secret","file":{"hashes":{"quickXorHash":"hash"}}}',
             200,
           ),
         ),
@@ -311,10 +510,12 @@ void main() {
         const SyncAuthSession(accountId: 'x'),
         const SyncRemoteTarget(id: 'item-id', name: 'Realmwise.realmwise'),
       );
-      expect(logs.single, contains('provider.metadata'));
-      expect(logs.single, contains('etagPresent=true'));
-      expect(logs.single, isNot(contains('very-long-etag-secret')));
-      expect(logs.single, isNot(contains('secret-token')));
+      final metadataLog = logs.singleWhere(
+        (log) => log.contains('provider.metadata'),
+      );
+      expect(metadataLog, contains('etagPresent=true'));
+      expect(metadataLog, isNot(contains('very-long-etag-secret')));
+      expect(metadataLog, isNot(contains('secret-token')));
     } finally {
       SyncDebug.logger = null;
     }
@@ -331,7 +532,7 @@ void main() {
       httpClient: MockClient(
         (request) async => request.method == 'POST'
             ? http.Response(
-                '{"access_token":"token","refresh_token":"refresh"}',
+                '{"access_token":"token","refresh_token":"refresh","scope":"User.Read Files.ReadWrite.AppFolder"}',
                 200,
               )
             : http.Response(
@@ -363,7 +564,10 @@ void main() {
         httpClient: MockClient((request) async {
           requests.add(request);
           return request.method == 'POST'
-              ? http.Response('{"access_token":"token"}', 200)
+              ? http.Response(
+                  '{"access_token":"token","scope":"User.Read Files.ReadWrite.AppFolder"}',
+                  200,
+                )
               : http.Response('{"id":"account-1"}', 200);
         }),
       );
@@ -374,6 +578,10 @@ void main() {
         contains(
           'redirect_uri=msauth%3A%2F%2Fcom.realmwise.rpg.tracker%2Fhu33S0PdJMD%252FBlOPVgFheEvptH8%253D',
         ),
+      );
+      expect(
+        Uri.splitQueryString(requests.first.body)['scope'],
+        contains('Files.ReadWrite'),
       );
     },
   );
@@ -424,7 +632,10 @@ void main() {
         tokenStore: OneDriveTokenStore(_Store()),
         httpClient: MockClient(
           (request) async => request.method == 'POST'
-              ? http.Response('{"access_token":"token"}', 200)
+              ? http.Response(
+                  '{"access_token":"token","scope":"User.Read Files.ReadWrite.AppFolder"}',
+                  200,
+                )
               : http.Response('{"id":"account-1"}', 200),
         ),
       );
@@ -445,7 +656,10 @@ void main() {
       delay: (_) async {},
       httpClient: MockClient((request) async {
         if (request.method == 'POST') {
-          return http.Response('{"access_token":"token"}', 200);
+          return http.Response(
+            '{"access_token":"token","scope":"User.Read Files.ReadWrite.AppFolder"}',
+            200,
+          );
         }
         meCalls++;
         return meCalls == 1
@@ -576,7 +790,7 @@ void main() {
     final client = MockClient(
       (request) async => request.method == 'GET'
           ? http.Response(
-              '{"eTag":"tag","file":{"hashes":{"sha256Hash":"h"}}}',
+              '{"eTag":"tag","file":{"hashes":{"quickXorHash":"h"}}}',
               200,
             )
           : http.Response('', 412),
@@ -608,7 +822,8 @@ void main() {
       '{"access_token":"a","account_id":"x"}',
     );
     final payload = Uint8List.fromList([1, 2, 3]);
-    final hash = sha256.convert(payload).toString();
+    // Microsoft QuickXorHash for [1, 2, 3].
+    const hash = 'ARDAAAAAAAAAAAAAAwAAAAAAAAA=';
     var metadataCalls = 0;
     final waits = <Duration>[];
     final client = MockClient((request) async {
@@ -618,7 +833,7 @@ void main() {
       metadataCalls++;
       final tag = metadataCalls == 1 ? 'tag-1' : 'tag-2';
       return http.Response(
-        '{"eTag":"$tag","file":{"hashes":{"sha256Hash":"$hash"}}}',
+        '{"eTag":"$tag","file":{"hashes":{"quickXorHash":"$hash"}}}',
         200,
       );
     });
@@ -665,7 +880,7 @@ void main() {
           return http.Response.bytes([1], 200);
         }
         return http.Response(
-          '{"eTag":"tag","file":{"hashes":{"sha256Hash":"remote"}}}',
+          '{"eTag":"tag","file":{"hashes":{"quickXorHash":"remote"}}}',
           200,
         );
       }),

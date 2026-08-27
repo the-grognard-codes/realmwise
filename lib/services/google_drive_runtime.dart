@@ -65,21 +65,89 @@ class AndroidGoogleDriveAuthorizationBridge
   }
 
   @override
+  Future<void> cancelAuthorization() async {
+    try {
+      await _channel.invokeMethod<void>('cancel_authorize');
+    } catch (_) {
+      // Cancellation must not mask the connection operation's result.
+    }
+  }
+
+  @override
   Future<void> clearToken(String token) async {
-    await _channel.invokeMethod<void>(
-      'clear_token',
-      <String, Object?>{'token': token},
-    );
+    await _channel.invokeMethod<void>('clear_token', <String, Object?>{
+      'token': token,
+    });
   }
 }
 
-GoogleDriveProvider? createConfiguredGoogleDriveProvider() {
-  const clientId = String.fromEnvironment('GOOGLE_DRIVE_CLIENT_ID');
-  if (clientId.trim().isEmpty) return null;
-  const configuredSecret = String.fromEnvironment('GOOGLE_DRIVE_CLIENT_SECRET');
-  const configuredRedirect = String.fromEnvironment(
-    'GOOGLE_DRIVE_REDIRECT_URI',
-  );
+class AndroidOAuthConfiguration {
+  const AndroidOAuthConfiguration({
+    required this.googleDriveEnabled,
+    required this.googleDriveTokenNamespace,
+    required this.microsoftOnedriveClientId,
+    required this.microsoftOnedriveTenant,
+    required this.microsoftOnedriveRedirectUri,
+    required this.dropboxClientId,
+    required this.dropboxRedirectUri,
+  });
+
+  final bool googleDriveEnabled;
+  final String googleDriveTokenNamespace;
+  final String microsoftOnedriveClientId;
+  final String microsoftOnedriveTenant;
+  final String microsoftOnedriveRedirectUri;
+  final String dropboxClientId;
+  final String dropboxRedirectUri;
+}
+
+/// Loads configuration selected by the Android Gradle build type.
+Future<AndroidOAuthConfiguration?> loadAndroidOAuthConfiguration() async {
+  if (!Platform.isAndroid) return null;
+  try {
+    final raw = await const MethodChannel(
+      'realmwise/oauth_configuration',
+    ).invokeMethod<Map<dynamic, dynamic>>('get_configuration');
+    if (raw == null) return null;
+    String value(String key) => '${raw[key] ?? ''}'.trim();
+    return AndroidOAuthConfiguration(
+      googleDriveEnabled: raw['google_drive_enabled'] == true,
+      googleDriveTokenNamespace: value('google_drive_token_namespace'),
+      microsoftOnedriveClientId: value('microsoft_onedrive_client_id'),
+      microsoftOnedriveTenant: value('microsoft_onedrive_tenant'),
+      microsoftOnedriveRedirectUri: value('microsoft_onedrive_redirect_uri'),
+      dropboxClientId: value('dropbox_client_id'),
+      dropboxRedirectUri: value('dropbox_redirect_uri'),
+    );
+  } on MissingPluginException {
+    return null;
+  } on PlatformException {
+    return null;
+  }
+}
+
+GoogleDriveProvider? createConfiguredGoogleDriveProvider([
+  AndroidOAuthConfiguration? androidConfiguration,
+]) {
+  final android = Platform.isAndroid && androidConfiguration != null;
+  if (android && !androidConfiguration.googleDriveEnabled) return null;
+  // Android native Google authorization identifies the app from its package
+  // and signing certificate. This stable build-scoped value only namespaces
+  // the secure token-store entry; it is not a credential.
+  final effectiveClientId = android
+      ? (androidConfiguration.googleDriveTokenNamespace.isEmpty
+            ? 'android-google-drive'
+            : androidConfiguration.googleDriveTokenNamespace)
+      : (kReleaseMode
+            ? '792779271616-6cqvr19p36fh397tulce2t17euaiejur.apps.googleusercontent.com'
+            : '792779271616-rhlm36vsff8jirqroqsr1ue3lvf7t2ld.apps.googleusercontent.com');
+  // Google currently requires the installed-app client secret for desktop
+  // authorization-code exchanges even when PKCE is used. Installed-app
+  // secrets are not confidential: they ship with the native client itself.
+  const configuredSecret = kReleaseMode
+      ? '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'
+      : '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';
+  const configuredRedirect = '';
   final redirect = Uri.tryParse(
     configuredRedirect.trim().isEmpty
         ? 'http://127.0.0.1:8765/oauth2callback'
@@ -90,7 +158,7 @@ GoogleDriveProvider? createConfiguredGoogleDriveProvider() {
   final storage = GoogleDriveTokenStore(SecureStorageService());
   return GoogleDriveProvider(
     authenticator: GoogleDriveOAuthAuthenticator(
-      clientId: clientId.trim(),
+      clientId: effectiveClientId,
       clientSecret: configuredSecret.trim().isEmpty
           ? null
           : configuredSecret.trim(),
@@ -107,12 +175,6 @@ GoogleDriveProvider? createConfiguredGoogleDriveProvider() {
 }
 
 String googleDriveConfigurationState() {
-  const clientId = String.fromEnvironment('GOOGLE_DRIVE_CLIENT_ID');
-  const redirect = String.fromEnvironment('GOOGLE_DRIVE_REDIRECT_URI');
-  if (clientId.trim().isEmpty) return 'missing GOOGLE_DRIVE_CLIENT_ID';
-  if (redirect.trim().isNotEmpty && Uri.tryParse(redirect) == null) {
-    return 'invalid GOOGLE_DRIVE_REDIRECT_URI';
-  }
   return 'configured';
 }
 

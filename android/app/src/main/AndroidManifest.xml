@@ -36,7 +36,7 @@
                 <data
                     android:scheme="msauth"
                     android:host="com.realmwise.rpg.tracker"
-                    android:path="/hu33S0PdJMD/BlOPVgFheEvptH8=" />
+                    android:path="${oneDriveRedirectPath}" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

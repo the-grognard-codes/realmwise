@@ -28,11 +28,31 @@ class OneDriveAuthException implements Exception {
 }
 
 class OneDriveException implements Exception {
-  OneDriveException(this.message, {this.statusCode});
+  OneDriveException(
+    this.message, {
+    this.statusCode,
+    this.operation,
+    this.grantedScopes,
+    this.graphErrorCode,
+  });
   final String message;
   final int? statusCode;
+  final String? operation;
+  final List<String>? grantedScopes;
+  final String? graphErrorCode;
   @override
-  String toString() => 'OneDriveException($statusCode): $message';
+  String toString() {
+    final details = <String>[
+      if (operation != null) 'operation=$operation',
+      if (statusCode != null) 'status=$statusCode',
+      if (grantedScopes != null && grantedScopes!.isNotEmpty)
+        'scopes=${grantedScopes!.join(" ")}',
+      if (graphErrorCode != null) 'code=$graphErrorCode',
+    ];
+    return details.isEmpty
+        ? 'OneDriveException: $message'
+        : 'OneDriveException(${details.join(", ")}): $message';
+  }
 }
 
 class OneDriveTokenStore {
@@ -65,40 +85,177 @@ String _safe(String? e, String op) {
       : 'OAuth $op failed';
 }
 
+String? _safeOAuthErrorCode(String body) {
+  try {
+    final decoded = jsonDecode(body);
+    final error = decoded is Map ? decoded['error'] : null;
+    return error is String &&
+            error.length <= 64 &&
+            RegExp(r'^[a-z_]+$').hasMatch(error)
+        ? error
+        : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+String? _safeGraphErrorCode(String body) {
+  try {
+    final decoded = jsonDecode(body);
+    final error = decoded is Map ? decoded['error'] : null;
+    final code = error is Map && error['code'] is String
+        ? (error['code'] as String).trim()
+        : '';
+    if (code.isEmpty ||
+        code.length > 64 ||
+        !RegExp(r'^[A-Za-z0-9_.-]+$').hasMatch(code))
+      return null;
+    return code;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Microsoft Graph does not support sha256Hash for drive items.  Its documented,
+// cross-OneDrive content identity is quickXorHash (a 160-bit, base64 value).
+// This implements Microsoft's published QuickXor algorithm for an in-memory
+// bundle payload.
+String _quickXorHash(Uint8List bytes) {
+  const width = 160;
+  const shift = 11;
+  const mask64 = 0xffffffffffffffff;
+  const mask32 = 0xffffffff;
+  final data = List<int>.filled(3, 0);
+  var vectorIndex = 0;
+  var vectorOffset = 0;
+  final iterations = min(bytes.length, width);
+
+  for (var i = 0; i < iterations; i++) {
+    final lastCell = vectorIndex == data.length - 1;
+    final bits = lastCell ? 32 : 64;
+    var value = 0;
+    for (var j = i; j < bytes.length; j += width) {
+      value ^= bytes[j];
+    }
+    if (vectorOffset <= bits - 8) {
+      final mask = lastCell ? mask32 : mask64;
+      data[vectorIndex] = (data[vectorIndex] ^ (value << vectorOffset)) & mask;
+    } else {
+      final low = bits - vectorOffset;
+      final nextIndex = lastCell ? 0 : vectorIndex + 1;
+      final currentMask = lastCell ? mask32 : mask64;
+      final nextMask = nextIndex == data.length - 1 ? mask32 : mask64;
+      data[vectorIndex] =
+          (data[vectorIndex] ^ (value << vectorOffset)) & currentMask;
+      data[nextIndex] = (data[nextIndex] ^ (value >> low)) & nextMask;
+    }
+    vectorOffset += shift;
+    while (vectorOffset >= bits) {
+      vectorIndex = lastCell ? 0 : vectorIndex + 1;
+      vectorOffset -= bits;
+    }
+  }
+
+  final output = Uint8List(20);
+  for (var cell = 0; cell < data.length; cell++) {
+    final cellBytes = cell == data.length - 1 ? 4 : 8;
+    for (var byte = 0; byte < cellBytes; byte++) {
+      output[cell * 8 + byte] = (data[cell] >> (byte * 8)) & 0xff;
+    }
+  }
+  var length = bytes.length;
+  for (var byte = 0; byte < 8; byte++) {
+    output[12 + byte] ^= length & 0xff;
+    length >>= 8;
+  }
+  return base64.encode(output);
+}
+
 Never _fail(http.Response r, String op) {
+  final graphErrorCode = _safeGraphErrorCode(r.body);
+  SyncDebug.trace('provider.graph.error', {
+    'operation': op,
+    'status': r.statusCode,
+    if (graphErrorCode != null) 'code': graphErrorCode,
+  });
   if (r.statusCode == 401)
     throw OneDriveAuthException('Authentication expired or revoked');
   if (r.statusCode == 403)
     throw OneDriveException(
-      'Permission denied or quota exceeded',
+      '$op: permission denied or quota exceeded',
       statusCode: r.statusCode,
+      operation: op,
     );
   if (r.statusCode == 404)
     throw OneDriveException(
       'Remote target not found',
       statusCode: r.statusCode,
+      operation: op,
     );
   if (r.statusCode == 412)
     throw OneDriveException(
       'Remote precondition failed',
       statusCode: r.statusCode,
+      operation: op,
     );
   if (r.statusCode == 503)
     throw OneDriveException(
       'OneDrive is preparing storage; retry shortly',
       statusCode: r.statusCode,
+      operation: op,
     );
   if (r.statusCode == 429)
     throw OneDriveException(
       'OneDrive request throttled or quota exceeded; retry shortly',
       statusCode: r.statusCode,
+      operation: op,
     );
   if (r.statusCode == 504)
     throw OneDriveException(
       'OneDrive request timed out; retry shortly',
       statusCode: r.statusCode,
+      operation: op,
     );
-  throw OneDriveException(op, statusCode: r.statusCode);
+  throw OneDriveException(
+    op,
+    statusCode: r.statusCode,
+    operation: op,
+    graphErrorCode: graphErrorCode,
+  );
+}
+
+List<String> _scopeNames(Object? value) {
+  if (value is String) {
+    return value
+        .split(RegExp(r'\s+'))
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+  }
+  if (value is List) {
+    return value
+        .whereType<String>()
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+  }
+  return const [];
+}
+
+void _requireAppFolderScope(Iterable<String> scopes) {
+  final granted = scopes.toSet();
+  final appFolderPresent = granted.contains('Files.ReadWrite.AppFolder');
+  SyncDebug.trace('provider.oauth.scopes', {
+    'filesReadWriteAppFolder': appFolderPresent,
+    'scopeCount': granted.length,
+  });
+  if (!appFolderPresent) {
+    throw OneDriveAuthException(
+      'Microsoft consent did not grant Files.ReadWrite.AppFolder; revoke Realmwise consent and reconnect',
+    );
+  }
 }
 
 class OneDriveOAuthAuthenticator implements SyncAuthenticator {
@@ -201,10 +358,14 @@ class OneDriveOAuthAuthenticator implements SyncAuthenticator {
     }
     if (u.queryParameters['state'] != state)
       throw OneDriveAuthException('Invalid OAuth state');
-    if (u.queryParameters['error'] != null)
-      throw OneDriveAuthException(
-        _safe(u.queryParameters['error'], 'authorization'),
-      );
+    if (u.queryParameters['error'] != null) {
+      final error = u.queryParameters['error'];
+      SyncDebug.trace('provider.oauth.error', {
+        'phase': 'authorization',
+        if (error != null) 'code': error,
+      });
+      throw OneDriveAuthException(_safe(error, 'authorization'));
+    }
     final code = u.queryParameters['code'];
     if (code == null) throw OneDriveAuthException('Missing authorization code');
     final r = await _http.post(
@@ -219,15 +380,19 @@ class OneDriveOAuthAuthenticator implements SyncAuthenticator {
       },
     );
     if (r.statusCode ~/ 100 != 2) {
-      String? e;
-      try {
-        e = (jsonDecode(r.body) as Map)['error'] as String?;
-      } catch (_) {}
+      final e = _safeOAuthErrorCode(r.body);
+      SyncDebug.trace('provider.oauth.error', {
+        'phase': 'tokenExchange',
+        'status': r.statusCode,
+        if (e != null) 'code': e,
+      });
       throw OneDriveAuthException(_safe(e, 'token exchange'));
     }
     final j = jsonDecode(r.body) as Map;
     final access = j['access_token'] as String?;
     if (access == null) throw OneDriveAuthException('Missing access token');
+    final scopes = _scopeNames(j['scope']);
+    _requireAppFolderScope(scopes);
     final t = <String, Object?>{
       'access_token': access,
       'refresh_token': j['refresh_token'],
@@ -235,6 +400,7 @@ class OneDriveOAuthAuthenticator implements SyncAuthenticator {
           .add(Duration(seconds: (j['expires_in'] as num?)?.toInt() ?? 3600))
           .toIso8601String(),
       'account_id': 'onedrive',
+      'scopes': scopes,
     };
     final me = await _retryGraph(
       () => _http.get(
@@ -283,13 +449,13 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
     required this.authenticator,
     required this.tokenStore,
     http.Client? httpClient,
-    this._delay,
+    this.delay,
     this.maxTransientRetries = 3,
   }) : _http = httpClient ?? http.Client();
   final OneDriveOAuthAuthenticator authenticator;
   final OneDriveTokenStore tokenStore;
   final http.Client _http;
-  final Future<void> Function(Duration)? _delay;
+  final Future<void> Function(Duration)? delay;
   final int maxTransientRetries;
   final Map<String, String> _tags = {};
   // The app-root ID is account-specific.  Keep it for the lifetime of this
@@ -318,8 +484,8 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
         'backoffMs': wait.inMilliseconds,
         'status': response.statusCode,
       });
-      if (_delay != null) {
-        await _delay(wait);
+      if (delay != null) {
+        await delay!(wait);
       } else {
         await Future<void>.delayed(wait);
       }
@@ -333,8 +499,8 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
       'attempt': attempt + 1,
       'backoffMs': wait.inMilliseconds,
     });
-    if (_delay != null) {
-      await _delay(wait);
+    if (delay != null) {
+      await delay!(wait);
     } else {
       await Future<void>.delayed(wait);
     }
@@ -522,6 +688,18 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
 
   @override
   Future<SyncAuthSession> authenticate() => authenticator.authenticate();
+
+  Future<void> cancelPendingAuthentication() async {
+    final cancellable = authenticator.callback;
+    if (cancellable is OneDriveOAuthCallbackCancellation) {
+      try {
+        await (cancellable as OneDriveOAuthCallbackCancellation).cancel();
+      } catch (_) {
+        // Cancellation must not mask the connection operation's result.
+      }
+    }
+  }
+
   Future<String> _access(SyncAuthSession s) async {
     final k = authenticator._key, t = await tokenStore.read(k);
     final storedAccount = t['account_id'] as String?;
@@ -536,8 +714,10 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
     final e = DateTime.tryParse(t['expires_at'] as String? ?? '');
     if (a != null &&
         (e == null ||
-            e.isAfter(DateTime.now().add(const Duration(minutes: 1)))))
+            e.isAfter(DateTime.now().add(const Duration(minutes: 1))))) {
+      _requireAppFolderScope(_scopeNames(t['scopes']));
       return a;
+    }
     final ref = t['refresh_token'] as String?;
     if (ref == null) throw OneDriveAuthException('Not authenticated');
     final authority = authenticator.tenant.trim().isEmpty
@@ -555,6 +735,11 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
     if (r.statusCode ~/ 100 != 2)
       throw OneDriveAuthException('OAuth token refresh failed');
     final j = jsonDecode(r.body) as Map;
+    final refreshedScopes = _scopeNames(j['scope']);
+    if (refreshedScopes.isNotEmpty) {
+      t['scopes'] = refreshedScopes;
+    }
+    _requireAppFolderScope(_scopeNames(t['scopes']));
     t['access_token'] = j['access_token'];
     if (j['refresh_token'] is String) t['refresh_token'] = j['refresh_token'];
     t['expires_at'] = DateTime.now()
@@ -565,12 +750,58 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
   }
 
   Future<Map<String, String>> _root(SyncAuthSession s) async {
-    final r = await _retryTransient(
+    Future<http.Response> readRoot() => _retryTransient(
       () async => _http.get(
         Uri.parse('https://graph.microsoft.com/v1.0/me/drive/special/approot'),
         headers: await _authHeaders(s),
       ),
     );
+
+    var r = await readRoot();
+    if (r.statusCode == 404) {
+      // A content write through the special-folder namespace is the documented
+      // first-use operation for Files.ReadWrite.AppFolder. Unlike the generic
+      // /children folder endpoint, it does not require Files.ReadWrite.
+      const markerName = '.realmwise-approot-initialize';
+      final bootstrap = await _retryTransient(
+        () async => _http.put(
+          Uri.parse(
+            'https://graph.microsoft.com/v1.0/me/drive/special/approot/children/$markerName/content',
+          ),
+          headers: {
+            ...(await _authHeaders(s)),
+            'Content-Type': 'application/octet-stream',
+          },
+          body: Uint8List(0),
+        ),
+      );
+      if (bootstrap.statusCode ~/ 100 != 2) {
+        _fail(bootstrap, 'OneDrive app root bootstrap write failed');
+      }
+
+      // Materialization can still be briefly asynchronous on personal drives.
+      for (var attempt = 0; attempt < 3; attempt++) {
+        r = await readRoot();
+        if (r.statusCode != 404) break;
+        if (attempt < 2) await _waitForConsistency(attempt);
+      }
+
+      if (r.statusCode == 200) {
+        // Do not leave an implementation marker in the user's app folder.
+        // Cleanup is best effort: a successful root lookup is sufficient to
+        // continue, and a later retry can remove a stale zero-byte marker.
+        final root = jsonDecode(r.body) as Map;
+        final rootId = root['id'] as String;
+        await _retryTransient(
+          () async => _http.delete(
+            Uri.parse(
+              'https://graph.microsoft.com/v1.0/me/drive/items/$rootId:/$markerName',
+            ),
+            headers: await _authHeaders(s),
+          ),
+        );
+      }
+    }
     if (r.statusCode != 200) _fail(r, 'OneDrive app root lookup failed');
     final j = jsonDecode(r.body) as Map;
     return {'id': j['id'] as String};
@@ -704,7 +935,7 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
     final h = (j['file'] as Map?)?['hashes'];
     final metadata = SyncRemoteMetadata(
       revision: SyncRevision(tag),
-      contentHash: (h is Map ? h['sha256Hash'] : null) as String? ?? '',
+      contentHash: (h is Map ? h['quickXorHash'] : null) as String? ?? '',
       updatedAt: DateTime.tryParse(j['lastModifiedDateTime'] ?? ''),
     );
     SyncDebug.trace('provider.metadata', {
@@ -772,7 +1003,7 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
           m ??
           SyncRemoteMetadata(
             revision: const SyncRevision(''),
-            contentHash: sha256.convert(payload).toString(),
+            contentHash: _quickXorHash(payload),
           ),
     );
   }
@@ -812,7 +1043,7 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
       final b = Uint8List.fromList(r.bodyBytes);
       final latest = await metadata(s, t);
       if (latest == null) throw OneDriveException('Remote target missing');
-      final hash = sha256.convert(b).toString();
+      final hash = _quickXorHash(b);
       if (precondition?.revision != null &&
           precondition!.revision!.value != latest.revision.value) {
         throw SyncConflictException(latest);
