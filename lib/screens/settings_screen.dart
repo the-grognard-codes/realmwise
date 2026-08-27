@@ -13,8 +13,14 @@ import '../services/sync_contract.dart';
 import '../services/sync_metadata.dart';
 import '../theme/app_theme.dart';
 
-const _buildName = String.fromEnvironment('FLUTTER_BUILD_NAME', defaultValue: 'unknown');
-const _buildNumber = String.fromEnvironment('FLUTTER_BUILD_NUMBER', defaultValue: 'unknown');
+const _buildName = String.fromEnvironment(
+  'FLUTTER_BUILD_NAME',
+  defaultValue: 'unknown',
+);
+const _buildNumber = String.fromEnvironment(
+  'FLUTTER_BUILD_NUMBER',
+  defaultValue: 'unknown',
+);
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
@@ -61,6 +67,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _load() async {
+    // During a restore, the active database is briefly closed while the
+    // replacement file is swapped in. Settings may be mounted or rebuilt in
+    // that interval; defer database-backed values until it is available.
+    if (!widget.controller.isOpen) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
     try {
       final key = await widget.controller.rpgGeekKey();
       final backups = await widget.controller.catalog.listBackups();
@@ -110,22 +123,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _generateDiagnosticBundle() async {
     final chosen = await FilePicker.saveFile(
-      dialogTitle: 'Save diagnostic bundle', fileName: 'realmwise-diagnostics.zip',
-      type: FileType.custom, allowedExtensions: const ['zip'],
+      dialogTitle: 'Save diagnostic bundle',
+      fileName: 'realmwise-diagnostics.zip',
+      type: FileType.custom,
+      allowedExtensions: const ['zip'],
     );
     if (chosen == null) return;
     if (!mounted) return;
-    final output = chosen.toLowerCase().endsWith('.zip') ? chosen : '$chosen.zip';
+    final output = chosen.toLowerCase().endsWith('.zip')
+        ? chosen
+        : '$chosen.zip';
     await _run(() async {
-      var appVersion = _buildName == 'unknown' ? 'unknown' : '$_buildName+$_buildNumber';
+      var appVersion = _buildName == 'unknown'
+          ? 'unknown'
+          : '$_buildName+$_buildNumber';
       try {
         final info = await PackageInfo.fromPlatform();
-        appVersion = info.buildNumber.isEmpty ? info.version : '${info.version}+${info.buildNumber}';
-      } on Object { /* Metadata is optional on headless platforms. */ }
-      final file = await widget.controller.diagnosticBundles.create(output,
+        appVersion = info.buildNumber.isEmpty
+            ? info.version
+            : '${info.version}+${info.buildNumber}';
+      } on Object {
+        /* Metadata is optional on headless platforms. */
+      }
+      final file = await widget.controller.diagnosticBundles.create(
+        output,
         appVersion: appVersion,
-        environment: {'platform': Platform.operatingSystem});
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Diagnostic bundle saved to ${file.path}')));
+        environment: {'platform': Platform.operatingSystem},
+      );
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Diagnostic bundle saved to ${file.path}')),
+        );
     });
   }
 
@@ -698,14 +726,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
-    return AnimatedBuilder(animation: widget.controller, builder: (context, _) {
-      final diagnostic = widget.controller.diagnosticOptionsEnabled;
-      final tabs = <Tab>[const Tab(text: 'Interface'), const Tab(text: 'Database'), const Tab(text: 'Cloud Sync'), const Tab(text: 'Sources')];
-      final views = <Widget>[_tabContent(_interfaceSections()), _tabContent(_databaseSections()), _tabContent(_cloudSyncSections()), _tabContent(_dataSourceSections())];
-      if (diagnostic) { tabs.add(const Tab(text: 'Diagnostics')); views.add(_tabContent(_diagnosticSections())); }
-      return DefaultTabController(key: ValueKey(diagnostic), length: tabs.length,
-        child: Column(children: [TabBar(tabs: tabs), Expanded(child: TabBarView(children: views))]));
-    });
+    return AnimatedBuilder(
+      animation: widget.controller,
+      builder: (context, _) {
+        final diagnostic = widget.controller.diagnosticOptionsEnabled;
+        final tabs = <Tab>[
+          const Tab(text: 'Interface'),
+          const Tab(text: 'Database'),
+          const Tab(text: 'Cloud Sync'),
+          const Tab(text: 'Sources'),
+        ];
+        final views = <Widget>[
+          _tabContent(_interfaceSections()),
+          _tabContent(_databaseSections()),
+          _tabContent(_cloudSyncSections()),
+          _tabContent(_dataSourceSections()),
+        ];
+        if (diagnostic) {
+          tabs.add(const Tab(text: 'Diagnostics'));
+          views.add(_tabContent(_diagnosticSections()));
+        }
+        return DefaultTabController(
+          key: ValueKey(diagnostic),
+          length: tabs.length,
+          child: Column(
+            children: [
+              TabBar(tabs: tabs),
+              Expanded(child: TabBarView(children: views)),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Widget _tabContent(List<Widget> sections) => Center(
@@ -776,179 +828,225 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: SwitchListTile(
         contentPadding: EdgeInsets.zero,
         title: const Text('Enable Diagnostic Options'),
-        subtitle: const Text('Shows local, privacy-preserving diagnostic tools. Bundles are created only when you request them and are never transmitted automatically.'),
+        subtitle: const Text(
+          'Shows local, privacy-preserving diagnostic tools. Bundles are created only when you request them and are never transmitted automatically.',
+        ),
         value: widget.controller.diagnosticOptionsEnabled,
-        onChanged: _busy ? null : (value) => _run(() => widget.controller.setDiagnosticOptionsEnabled(value)),
+        onChanged: _busy
+            ? null
+            : (value) => _run(
+                () => widget.controller.setDiagnosticOptionsEnabled(value),
+              ),
       ),
     ),
     _catalogIconsSection(),
   ];
 
   List<Widget> _diagnosticSections() => [
-    _Section(title: 'Diagnostics', child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('Diagnostic bundles include sanitized logs and approved app/system metadata only. They never include catalog data, credentials, contact details, account information, or exact file paths, and are never uploaded automatically.'),
-      const SizedBox(height: 12),
-      SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Enable debug logging'), subtitle: const Text('Retains additional informational events locally; logs are bounded and rotated.'), value: widget.controller.debugLoggingEnabled, onChanged: _busy ? null : (value) => _run(() => widget.controller.setDebugLoggingEnabled(value))),
-      const SizedBox(height: 8),
-      FilledButton.icon(onPressed: _busy ? null : _generateDiagnosticBundle, icon: const Icon(Icons.archive_outlined), label: const Text('Generate diagnostic bundle')),
-    ])),
+    _Section(
+      title: 'Diagnostics',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Diagnostic bundles include sanitized logs and approved app/system metadata only. They never include catalog data, credentials, contact details, account information, or exact file paths, and are never uploaded automatically.',
+          ),
+          const SizedBox(height: 12),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Enable debug logging'),
+            subtitle: const Text(
+              'Retains additional informational events locally; logs are bounded and rotated.',
+            ),
+            value: widget.controller.debugLoggingEnabled,
+            onChanged: _busy
+                ? null
+                : (value) => _run(
+                    () => widget.controller.setDebugLoggingEnabled(value),
+                  ),
+          ),
+          const SizedBox(height: 8),
+          FilledButton.icon(
+            onPressed: _busy ? null : _generateDiagnosticBundle,
+            icon: const Icon(Icons.archive_outlined),
+            label: const Text('Generate diagnostic bundle'),
+          ),
+        ],
+      ),
+    ),
   ];
 
-  Widget _catalogIconsSection() => _Section(
-    title: 'Custom Catalog Icons',
-    child: FutureBuilder<List<String>>(
-      future: widget.controller.database.listCatalogTierSections(_iconTier),
-      builder: (context, snap) => LayoutBuilder(
-        builder: (context, constraints) {
-          final controls = Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              DropdownButtonFormField<String>(
-                initialValue: _iconTier,
-                decoration: const InputDecoration(labelText: 'Icon category'),
-                isExpanded: true,
-                items: const [
-                  DropdownMenuItem(
-                    value: 'gameSystem',
-                    child: Text('Game system'),
+  Widget _catalogIconsSection() {
+    // A remote restore briefly closes the active database while its contents
+    // are swapped. Settings can rebuild during that interval, so do not start
+    // a catalog query until the replacement database is open.
+    if (!widget.controller.isOpen) {
+      return const _Section(
+        title: 'Custom Catalog Icons',
+        child: Text(
+          'Catalog icons will be available when the database is open.',
+        ),
+      );
+    }
+    return _Section(
+      title: 'Custom Catalog Icons',
+      child: FutureBuilder<List<String>>(
+        future: widget.controller.database.listCatalogTierSections(_iconTier),
+        builder: (context, snap) => LayoutBuilder(
+          builder: (context, constraints) {
+            final controls = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: _iconTier,
+                  decoration: const InputDecoration(labelText: 'Icon category'),
+                  isExpanded: true,
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'gameSystem',
+                      child: Text('Game system'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'gameSetting',
+                      child: Text('Game setting'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'bookType',
+                      child: Text('Book type'),
+                    ),
+                  ],
+                  onChanged: (value) => setState(() {
+                    _iconTier = value!;
+                    _iconSection = null;
+                    _iconPreviewPath = null;
+                    _iconSourcePath = null;
+                    _iconX = 0;
+                    _iconY = 0;
+                    _iconZoom = 1;
+                  }),
+                ),
+                DropdownButtonFormField<String>(
+                  initialValue: snap.data?.contains(_iconSection) == true
+                      ? _iconSection
+                      : null,
+                  decoration: const InputDecoration(labelText: 'Category'),
+                  isExpanded: true,
+                  items: (snap.data ?? const [])
+                      .map(
+                        (section) => DropdownMenuItem(
+                          value: section,
+                          child: Text(section),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _selectIconSection,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Game systems and settings use a rounded-square frame; book types remain circular.',
+                ),
+                if (_iconSection != null) ...[
+                  _slider(
+                    'Horizontal focus',
+                    _iconX,
+                    (value) => setState(() => _iconX = value),
+                    -1,
+                    1,
                   ),
-                  DropdownMenuItem(
-                    value: 'gameSetting',
-                    child: Text('Game setting'),
+                  _slider(
+                    'Vertical focus',
+                    _iconY,
+                    (value) => setState(() => _iconY = value),
+                    -1,
+                    1,
                   ),
-                  DropdownMenuItem(value: 'bookType', child: Text('Book type')),
+                  _slider(
+                    'Zoom',
+                    _iconZoom,
+                    (value) => setState(() => _iconZoom = value),
+                    1,
+                    3,
+                  ),
                 ],
-                onChanged: (value) => setState(() {
-                  _iconTier = value!;
-                  _iconSection = null;
-                  _iconPreviewPath = null;
-                  _iconSourcePath = null;
-                  _iconX = 0;
-                  _iconY = 0;
-                  _iconZoom = 1;
-                }),
-              ),
-              DropdownButtonFormField<String>(
-                initialValue: snap.data?.contains(_iconSection) == true
-                    ? _iconSection
-                    : null,
-                decoration: const InputDecoration(labelText: 'Category'),
-                isExpanded: true,
-                items: (snap.data ?? const [])
-                    .map(
-                      (section) => DropdownMenuItem(
-                        value: section,
-                        child: Text(section),
-                      ),
-                    )
-                    .toList(),
-                onChanged: _selectIconSection,
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Game systems and settings use a rounded-square frame; book types remain circular.',
-              ),
-              if (_iconSection != null) ...[
-                _slider(
-                  'Horizontal focus',
-                  _iconX,
-                  (value) => setState(() => _iconX = value),
-                  -1,
-                  1,
+                Wrap(
+                  spacing: 10,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _busy || _iconSection == null
+                          ? null
+                          : _chooseCatalogIcon,
+                      icon: const Icon(Icons.image),
+                      label: const Text('Choose icon'),
+                    ),
+                    FilledButton.icon(
+                      onPressed: _busy || _iconSourcePath == null
+                          ? null
+                          : _saveCatalogIcon,
+                      icon: const Icon(Icons.save),
+                      label: const Text('Save icon'),
+                    ),
+                  ],
                 ),
-                _slider(
-                  'Vertical focus',
-                  _iconY,
-                  (value) => setState(() => _iconY = value),
-                  -1,
-                  1,
-                ),
-                _slider(
-                  'Zoom',
-                  _iconZoom,
-                  (value) => setState(() => _iconZoom = value),
-                  1,
-                  3,
-                ),
+                if (_iconSection != null)
+                  TextButton(
+                    onPressed: _busy ? null : _removeCatalogIcon,
+                    child: const Text('Remove icon'),
+                  ),
               ],
-              Wrap(
-                spacing: 10,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: _busy || _iconSection == null
-                        ? null
-                        : _chooseCatalogIcon,
-                    icon: const Icon(Icons.image),
-                    label: const Text('Choose icon'),
-                  ),
-                  FilledButton.icon(
-                    onPressed: _busy || _iconSourcePath == null
-                        ? null
-                        : _saveCatalogIcon,
-                    icon: const Icon(Icons.save),
-                    label: const Text('Save icon'),
-                  ),
-                ],
-              ),
-              if (_iconSection != null)
-                TextButton(
-                  onPressed: _busy ? null : _removeCatalogIcon,
-                  child: const Text('Remove icon'),
-                ),
-            ],
-          );
-          final preview = Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_iconSection == null)
-                const Text('Choose a section to preview its custom icon.')
-              else if (_iconPreviewPath == null ||
-                  !File(_iconPreviewPath!).existsSync())
-                const Text('No saved icon for this section.')
-              else
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(
-                    _iconTier == 'bookType' ? 48 : 14,
-                  ),
-                  child: SizedBox(
-                    width: 96,
-                    height: 96,
-                    child: ClipRect(
-                      child: Transform.scale(
-                        scale: _iconZoom,
-                        child: Image.file(
-                          File(_iconPreviewPath!),
-                          width: 96,
-                          height: 96,
-                          fit: BoxFit.contain,
-                          alignment: Alignment(_iconX, _iconY),
+            );
+            final preview = Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_iconSection == null)
+                  const Text('Choose a section to preview its custom icon.')
+                else if (_iconPreviewPath == null ||
+                    !File(_iconPreviewPath!).existsSync())
+                  const Text('No saved icon for this section.')
+                else
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(
+                      _iconTier == 'bookType' ? 48 : 14,
+                    ),
+                    child: SizedBox(
+                      width: 96,
+                      height: 96,
+                      child: ClipRect(
+                        child: Transform.scale(
+                          scale: _iconZoom,
+                          child: Image.file(
+                            File(_iconPreviewPath!),
+                            width: 96,
+                            height: 96,
+                            fit: BoxFit.contain,
+                            alignment: Alignment(_iconX, _iconY),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-            ],
-          );
-          return constraints.maxWidth >= 560
-              ? Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: controls),
-                    const SizedBox(width: 24),
-                    Expanded(child: Center(child: preview)),
-                  ],
-                )
-              : Column(
-                  children: [
-                    controls,
-                    const SizedBox(height: 16),
-                    Center(child: preview),
-                  ],
-                );
-        },
+              ],
+            );
+            return constraints.maxWidth >= 560
+                ? Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: controls),
+                      const SizedBox(width: 24),
+                      Expanded(child: Center(child: preview)),
+                    ],
+                  )
+                : Column(
+                    children: [
+                      controls,
+                      const SizedBox(height: 16),
+                      Center(child: preview),
+                    ],
+                  );
+          },
+        ),
       ),
-    ),
-  );
+    );
+  }
 
   List<Widget> _dataSourceSections() => [
     _Section(
@@ -1044,9 +1142,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _databaseRecoverySection(),
   ];
 
-  List<Widget> _cloudSyncSections() => [
-    _cloudSyncSection(),
-  ];
+  List<Widget> _cloudSyncSections() => [_cloudSyncSection()];
 
   Widget _cloudSyncSection() {
     return AnimatedBuilder(
@@ -1287,6 +1383,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
+    final bundleContentSection = _Section(
+      title: 'Bundle Content',
+      child: _includePersonalImagesInBundlesSwitch(),
+    );
     // Keep every Cloud Sync card aligned to the tab's available content width.
     // Without an explicit width, the cards can size themselves to their
     // individual contents when the surrounding tab is centered.
@@ -1297,9 +1397,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
         SizedBox(width: double.infinity, child: automaticSection),
         SizedBox(width: double.infinity, child: providerSection),
         SizedBox(width: double.infinity, child: infoSection),
+        SizedBox(width: double.infinity, child: bundleContentSection),
       ],
     );
   }
+
+  Widget _includePersonalImagesInBundlesSwitch() => SwitchListTile(
+    contentPadding: EdgeInsets.zero,
+    title: const Text('Include uploaded images and catalog icons'),
+    subtitle: const Text(
+      'Off by default. Turn this on to include uploaded images and catalog icons in Device Bundles; mobile data may be used.',
+    ),
+    value: widget.controller.includePersonalImagesInBundles,
+    onChanged: _busy
+        ? null
+        : (value) => _run(
+            () => widget.controller.setIncludePersonalImagesInBundles(value),
+          ),
+  );
 
   Widget _deviceSyncSection() => _Section(
     title: 'Manual Device Sync',
@@ -1326,21 +1441,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
         ),
         const SizedBox(height: 8),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Include uploaded images and catalog icons'),
-          subtitle: const Text(
-            'Off by default. Turn this on to include uploaded images and catalog icons in Device Bundles; mobile data may be used.',
-          ),
-          value: widget.controller.includePersonalImagesInBundles,
-          onChanged: _busy
-              ? null
-              : (value) => _run(
-                  () => widget.controller.setIncludePersonalImagesInBundles(
-                    value,
-                  ),
-                ),
-        ),
+        _includePersonalImagesInBundlesSwitch(),
       ],
     ),
   );

@@ -52,10 +52,20 @@ void main() {
     expect(find.textContaining('single-device backup'), findsOneWidget);
     expect(find.text('Sync Providers'), findsOneWidget);
     expect(find.text('Sync Information'), findsOneWidget);
-    expect(find.text('Include Personal Images/Catalog Icons'), findsOneWidget);
+    expect(
+      find.text('Include uploaded images and catalog icons'),
+      findsNWidgets(2),
+    );
     expect(find.textContaining('isolated Realmspace section'), findsOneWidget);
     expect(find.textContaining('Destination:'), findsNothing);
 
     await controller.closeDatabase();
+    await tester.pump();
+
+    expect(
+      find.text('Catalog icons will be available when the database is open.'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
   });
 }

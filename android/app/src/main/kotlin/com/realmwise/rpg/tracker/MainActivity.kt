@@ -15,6 +15,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private lateinit var authorizationClient: AuthorizationClient
     private var pendingResult: MethodChannel.Result? = null
+    private var googleAuthorizationCancelled = false
     private var dropboxResult: MethodChannel.Result? = null
     private var oneDriveResult: MethodChannel.Result? = null
 
@@ -23,6 +24,14 @@ class MainActivity : FlutterActivity() {
         authorizationClient = Identity.getAuthorizationClient(this)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
+                if (call.method == "cancel_authorize") {
+                    googleAuthorizationCancelled = true
+                    val callback = pendingResult
+                    pendingResult = null
+                    callback?.error("authorization_cancelled", "Google authorization was cancelled", null)
+                    result.success(null)
+                    return@setMethodCallHandler
+                }
                 if (call.method == "clear_token") {
                     val token = call.argument<String>("token")
                     if (token.isNullOrEmpty()) {
@@ -46,6 +55,7 @@ class MainActivity : FlutterActivity() {
                     return@setMethodCallHandler
                 }
                 pendingResult = result
+                googleAuthorizationCancelled = false
                 val request = AuthorizationRequest.builder()
                     .setRequestedScopes(listOf(
                         Scope(DRIVE_APPDATA_SCOPE),
@@ -55,6 +65,7 @@ class MainActivity : FlutterActivity() {
                     .build()
                 authorizationClient.authorize(request)
                     .addOnSuccessListener { authorizationResult ->
+                        if (googleAuthorizationCancelled || pendingResult == null) return@addOnSuccessListener
                         if (authorizationResult.hasResolution()) {
                             try {
                                 startIntentSenderForResult(
@@ -71,9 +82,26 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                     .addOnFailureListener { throwable ->
+                        if (googleAuthorizationCancelled || pendingResult == null) return@addOnFailureListener
                         pendingResult = null
                         result.error("authorization_failed", safeMessage(throwable), null)
                     }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, OAUTH_CONFIG_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                if (call.method != "get_configuration") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                result.success(mapOf(
+                    "google_drive_enabled" to true,
+                    "google_drive_token_namespace" to BuildConfig.GOOGLE_DRIVE_CLIENT_ID,
+                    "microsoft_onedrive_client_id" to BuildConfig.MICROSOFT_ONEDRIVE_CLIENT_ID,
+                    "microsoft_onedrive_tenant" to BuildConfig.MICROSOFT_ONEDRIVE_TENANT,
+                    "microsoft_onedrive_redirect_uri" to BuildConfig.MICROSOFT_ONEDRIVE_REDIRECT_URI,
+                    "dropbox_client_id" to BuildConfig.DROPBOX_CLIENT_ID,
+                    "dropbox_redirect_uri" to DROPBOX_REDIRECT_URI,
+                ))
             }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DROPBOX_CHANNEL)
             .setMethodCallHandler { call, result ->
@@ -155,8 +183,8 @@ class MainActivity : FlutterActivity() {
                 callback.success(raw)
             }
         } else if (uri.scheme == "msauth" && uri.host == "com.realmwise.rpg.tracker" &&
-            (uri.path == "/hu33S0PdJMD/BlOPVgFheEvptH8=" ||
-                uri.encodedPath == "/hu33S0PdJMD%2FBlOPVgFheEvptH8%3D")) {
+            (uri.toString() == BuildConfig.MICROSOFT_ONEDRIVE_REDIRECT_URI ||
+                uri.path == android.net.Uri.parse(BuildConfig.MICROSOFT_ONEDRIVE_REDIRECT_URI).path)) {
             val callback = oneDriveResult
             if (callback != null) {
                 oneDriveResult = null
@@ -171,6 +199,7 @@ class MainActivity : FlutterActivity() {
         if (requestCode != REQUEST_CODE) return
         val callback = pendingResult ?: return
         pendingResult = null
+        if (googleAuthorizationCancelled) return
         if (resultCode != Activity.RESULT_OK || data == null) {
             callback.error("authorization_cancelled", "Google authorization was cancelled", null)
             return
@@ -205,7 +234,9 @@ class MainActivity : FlutterActivity() {
         private const val CHANNEL = "realmwise/google_drive"
         private const val DROPBOX_CHANNEL = "realmwise/dropbox_oauth"
         private const val ONEDRIVE_CHANNEL = "realmwise/onedrive_oauth"
-        private const val ONEDRIVE_REDIRECT_URI = "msauth://com.realmwise.rpg.tracker/hu33S0PdJMD%2FBlOPVgFheEvptH8%3D"
+        private const val OAUTH_CONFIG_CHANNEL = "realmwise/oauth_configuration"
+        private val ONEDRIVE_REDIRECT_URI = BuildConfig.MICROSOFT_ONEDRIVE_REDIRECT_URI
+        private const val DROPBOX_REDIRECT_URI = "com.realmwise.rpg.tracker://oauth2redirect/dropbox"
         private const val DRIVE_APPDATA_SCOPE = "https://www.googleapis.com/auth/drive.appdata"
         private const val REQUEST_CODE = 4207
     }

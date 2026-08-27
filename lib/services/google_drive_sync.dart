@@ -22,6 +22,7 @@ abstract interface class OAuthCallback {
 /// secret or stores a refresh token.
 abstract interface class AndroidGoogleDriveAuthorization {
   Future<Map<String, Object?>> authorize({required String clientId});
+  Future<void> cancelAuthorization();
   Future<void> clearToken(String token);
 }
 
@@ -54,8 +55,12 @@ String _safeOAuthError(String? error, String operation) {
   const allowed = {
     'invalid_grant',
     'invalid_client',
+    'invalid_request',
+    'invalid_scope',
     'unauthorized_client',
     'access_denied',
+    'unsupported_grant_type',
+    'redirect_uri_mismatch',
   };
   final code = error?.trim();
   return code != null && allowed.contains(code)
@@ -76,6 +81,12 @@ Never _tokenFailure(http.Response response, String operation) {
   } catch (_) {
     // Fall through to a generic, safe message for non-JSON responses.
   }
+  SyncDebug.trace('provider.google.oauth.error', {
+    'phase': 'tokenExchange',
+    'status': response.statusCode,
+    if (error != null && _safeOAuthError(error, operation).contains('($error)'))
+      'code': error,
+  });
   throw GoogleDriveAuthException(_safeOAuthError(error, operation));
 }
 
@@ -189,8 +200,14 @@ class GoogleDriveOAuthAuthenticator implements SyncAuthenticator {
     if (result.queryParameters['state'] != state)
       throw GoogleDriveAuthException('Invalid OAuth state');
     final error = result.queryParameters['error'];
-    if (error != null)
+    if (error != null) {
+      SyncDebug.trace('provider.google.oauth.error', {
+        'phase': 'authorization',
+        if (_safeOAuthError(error, 'authorization').contains('($error)'))
+          'code': error,
+      });
       throw GoogleDriveAuthException(_safeOAuthError(error, 'authorization'));
+    }
     final code = result.queryParameters['code'];
     if (code == null)
       throw GoogleDriveAuthException('Missing authorization code');
@@ -250,6 +267,10 @@ class GoogleDriveOAuthAuthenticator implements SyncAuthenticator {
     );
   }
 
+  Future<void> cancelPendingAuthentication() async {
+    await androidAuthorization?.cancelAuthorization();
+  }
+
   static String _random(int n) {
     final r = Random.secure();
     const chars =
@@ -279,7 +300,9 @@ class _GoogleDriveHttpClient extends http.BaseClient {
       ..bodyBytes = request.bodyBytes;
     final rejected = request.headers['authorization'];
     if (rejected != null && clearToken != null) {
-      await clearToken!(rejected.replaceFirst(RegExp(r'^Bearer\s+', caseSensitive: false), ''));
+      await clearToken!(
+        rejected.replaceFirst(RegExp(r'^Bearer\s+', caseSensitive: false), ''),
+      );
     }
     final access = await reauthorize!();
     if (access != null && access.isNotEmpty) {
@@ -523,6 +546,9 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
 
   @override
   Future<SyncAuthSession> authenticate() => authenticator.authenticate();
+
+  Future<void> cancelPendingAuthentication() =>
+      authenticator.cancelPendingAuthentication();
   Future<String> _access(SyncAuthSession session) async {
     final key = authenticator._key;
     final t = await tokenStore.read(key);

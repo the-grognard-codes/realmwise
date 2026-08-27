@@ -20,39 +20,62 @@ class RealmwiseBootstrap extends StatefulWidget {
 }
 
 class _RealmwiseBootstrapState extends State<RealmwiseBootstrap> {
-  late final AppController _controller = AppController(
-    googleDriveProvider: createConfiguredGoogleDriveProvider(),
-    oneDriveProvider: createConfiguredOneDriveProvider(),
-    dropboxProvider: createConfiguredDropboxProvider(),
-  );
+  AppController? _controller;
   ApiDebugHarness? _debugHarness;
   Future<ApiDebugHarness>? _debugStart;
   bool _disposed = false;
   bool _cleanupStarted = false;
+  Object? _bootstrapError;
 
   @override
   void initState() {
     super.initState();
-    logGoogleDriveConfiguration();
-    logOneDriveConfiguration();
-    logDropboxConfiguration();
-    final readiness = _controller.initialize();
-    if (apiDebugHarnessEnabled()) {
-      _debugStart = ApiDebugHarness.start(_controller, readiness: readiness);
-      unawaited(
-        _debugStart!.then<void>(
-          (harness) {
-            if (!_disposed) {
-              _debugHarness = harness;
-            }
-          },
-          onError: (Object error, StackTrace stack) {
-            debugPrint('API debug harness failed to start: $error');
-          },
+    unawaited(_bootstrap());
+  }
+
+  Future<void> _bootstrap() async {
+    try {
+      final androidConfiguration = await loadAndroidOAuthConfiguration();
+      if (_disposed) return;
+      final controller = AppController(
+        googleDriveProvider: createConfiguredGoogleDriveProvider(
+          androidConfiguration,
         ),
+        oneDriveProvider: createConfiguredOneDriveProvider(
+          androidConfiguration,
+        ),
+        dropboxProvider: createConfiguredDropboxProvider(androidConfiguration),
       );
+      _controller = controller;
+      if (mounted) setState(() {});
+      logGoogleDriveConfiguration();
+      logOneDriveConfiguration();
+      logDropboxConfiguration();
+      final readiness = controller.initialize();
+      if (apiDebugHarnessEnabled()) {
+        _debugStart = ApiDebugHarness.start(controller, readiness: readiness);
+        unawaited(
+          _debugStart!.then<void>(
+            (harness) {
+              if (!_disposed) _debugHarness = harness;
+            },
+            onError: (Object error, StackTrace stack) {
+              debugPrint('API debug harness failed to start: $error');
+            },
+          ),
+        );
+      }
+      controller.addListener(_refresh);
+    } catch (error) {
+      if (_disposed) return;
+      _bootstrapError = error;
+      if (mounted) setState(() {});
     }
-    _controller.addListener(_refresh);
+  }
+
+  void _retryBootstrap() {
+    setState(() => _bootstrapError = null);
+    unawaited(_bootstrap());
   }
 
   void _refresh() {
@@ -62,7 +85,12 @@ class _RealmwiseBootstrapState extends State<RealmwiseBootstrap> {
   @override
   void dispose() {
     _disposed = true;
-    _controller.removeListener(_refresh);
+    final controller = _controller;
+    controller?.removeListener(_refresh);
+    if (controller == null) {
+      super.dispose();
+      return;
+    }
     if (_cleanupStarted) {
       super.dispose();
       return;
@@ -71,9 +99,9 @@ class _RealmwiseBootstrapState extends State<RealmwiseBootstrap> {
     final harness = _debugHarness;
     _debugHarness = null;
     if (harness != null) {
-      harness.close().whenComplete(_controller.dispose);
+      harness.close().whenComplete(controller.dispose);
     } else if (_debugStart == null) {
-      _controller.dispose();
+      controller.dispose();
     } else {
       unawaited(
         _debugStart!.then(
@@ -81,10 +109,10 @@ class _RealmwiseBootstrapState extends State<RealmwiseBootstrap> {
             try {
               await started.close();
             } catch (_) {}
-            _controller.dispose();
+            controller.dispose();
           },
           onError: (_) {
-            _controller.dispose();
+            controller.dispose();
           },
         ),
       );
@@ -93,22 +121,53 @@ class _RealmwiseBootstrapState extends State<RealmwiseBootstrap> {
   }
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: 'Realmwise RPG Tracker',
-    debugShowCheckedModeBanner: false,
-    theme: buildRpgTheme(_controller.seedName, Brightness.light),
-    darkTheme: buildRpgTheme(_controller.seedName, Brightness.dark),
-    themeMode:
-        _controller.seedName == highContrastDarkThemeName ||
-            _controller.seedName == dungeonBlackThemeName
-        ? ThemeMode.dark
-        : ThemeMode.system,
-    home: _controller.loading
-        ? const _LoadingScreen()
-        : _controller.isOpen && _controller.error == null
-        ? CatalogShell(controller: _controller)
-        : DatabaseGateway(controller: _controller, error: _controller.error),
-  );
+  Widget build(BuildContext context) {
+    final controller = _controller;
+    if (controller == null) {
+      final error = _bootstrapError;
+      if (error != null) {
+        return MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Unable to initialize cloud configuration.'),
+                    const SizedBox(height: 8),
+                    Text('$error', textAlign: TextAlign.center),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: _retryBootstrap,
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+      return const MaterialApp(home: _LoadingScreen());
+    }
+    return MaterialApp(
+      title: 'Realmwise RPG Tracker',
+      debugShowCheckedModeBanner: false,
+      theme: buildRpgTheme(controller.seedName, Brightness.light),
+      darkTheme: buildRpgTheme(controller.seedName, Brightness.dark),
+      themeMode:
+          controller.seedName == highContrastDarkThemeName ||
+              controller.seedName == dungeonBlackThemeName
+          ? ThemeMode.dark
+          : ThemeMode.system,
+      home: controller.loading
+          ? const _LoadingScreen()
+          : controller.isOpen && controller.error == null
+          ? CatalogShell(controller: controller)
+          : DatabaseGateway(controller: controller, error: controller.error),
+    );
+  }
 }
 
 class _LoadingScreen extends StatelessWidget {

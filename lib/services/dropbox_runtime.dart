@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dropbox_sync.dart';
 import 'secure_storage_service.dart';
+import 'google_drive_runtime.dart';
 
 class UrlLauncherDropboxBrowser implements DropboxOAuthBrowser {
   @override
@@ -93,20 +94,29 @@ class AndroidDropboxCallback
   }
 }
 
-DropboxProvider? createConfiguredDropboxProvider() {
-  const id = String.fromEnvironment('DROPBOX_CLIENT_ID');
-  if (id.trim().isEmpty) return null;
-  const raw = String.fromEnvironment('DROPBOX_REDIRECT_URI');
+DropboxProvider? createConfiguredDropboxProvider([
+  AndroidOAuthConfiguration? androidConfiguration,
+]) {
+  final android = Platform.isAndroid && androidConfiguration != null;
+  final effectiveId = android
+      ? androidConfiguration.dropboxClientId
+      : (kReleaseMode ? 'pujnhj60xv194u6' : 'qiiuadba0azgtr7');
+  if (effectiveId.isEmpty) return null;
+  final configured = android
+      ? androidConfiguration.dropboxRedirectUri
+      : '';
   final uri = Uri.tryParse(
-    raw.trim().isEmpty && Platform.isAndroid
+    configured.isEmpty && Platform.isAndroid
         ? 'com.realmwise.rpg.tracker://oauth2redirect/dropbox'
-        : (raw.trim().isEmpty ? 'http://127.0.0.1:8766/oauth2callback' : raw),
+        : (configured.isEmpty
+              ? 'http://127.0.0.1:8766/oauth2callback'
+              : configured),
   );
   if (uri == null || !uri.hasScheme || uri.host.isEmpty) return null;
   final store = DropboxTokenStore(SecureStorageService());
   return DropboxProvider(
     authenticator: DropboxOAuthAuthenticator(
-      clientId: id.trim(),
+      clientId: effectiveId,
       redirectUri: uri,
       browser: UrlLauncherDropboxBrowser(),
       callback: Platform.isAndroid
@@ -119,8 +129,7 @@ DropboxProvider? createConfiguredDropboxProvider() {
 }
 
 String dropboxConfigurationState() {
-  const id = String.fromEnvironment('DROPBOX_CLIENT_ID');
-  return id.trim().isEmpty ? 'missing DROPBOX_CLIENT_ID' : 'configured';
+  return 'configured';
 }
 
 void logDropboxConfiguration() {

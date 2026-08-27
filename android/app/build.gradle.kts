@@ -1,7 +1,38 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android Gradle plugin.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+val signingPropertiesFile = rootProject.file("key.properties")
+val signingProperties = Properties()
+val hasSigningProperties = signingPropertiesFile.isFile
+if (hasSigningProperties) {
+    signingPropertiesFile.inputStream().use(signingProperties::load)
+}
+
+fun signingProperty(name: String): String? = signingProperties.getProperty(name)?.takeIf { it.isNotBlank() }
+
+gradle.taskGraph.whenReady {
+    val releaseTaskRequested = allTasks.any { task ->
+        task.name.contains("release", ignoreCase = true) || task.name.startsWith("bundle", ignoreCase = true)
+    }
+    if (releaseTaskRequested) {
+        if (!hasSigningProperties) {
+            throw GradleException("Missing ${signingPropertiesFile.path}; release builds require signing credentials.")
+        }
+        val missingProperty = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+            .firstOrNull { signingProperty(it) == null }
+        if (missingProperty != null) {
+            throw GradleException("Missing or blank '$missingProperty' in ${signingPropertiesFile.path}; release builds require all signing credentials.")
+        }
+        val configuredStoreFile = file(signingProperty("storeFile")!!)
+        if (!configuredStoreFile.isFile) {
+            throw GradleException("Signing keystore not found: ${configuredStoreFile.path}; check 'storeFile' in ${signingPropertiesFile.path}.")
+        }
+    }
 }
 
 android {
@@ -25,11 +56,40 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            signingProperty("storeFile")?.let { storeFile = file(it) }
+            storePassword = signingProperty("storePassword")
+            keyAlias = signingProperty("keyAlias")
+            keyPassword = signingProperty("keyPassword")
+        }
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
     buildTypes {
+        debug {
+            // Android Google authorization uses package/signing identity; this
+            // is only a stable token-store namespace, not an OAuth client ID.
+            buildConfigField("String", "GOOGLE_DRIVE_CLIENT_ID", "\"android-debug\"")
+            buildConfigField("String", "MICROSOFT_ONEDRIVE_CLIENT_ID", "\"f689c4d7-5fc4-4a50-aee5-da175b97e113\"")
+            buildConfigField("String", "MICROSOFT_ONEDRIVE_TENANT", "\"consumers\"")
+            buildConfigField("String", "MICROSOFT_ONEDRIVE_REDIRECT_URI", "\"msauth://com.realmwise.rpg.tracker/lQr%2BytyRuU%2BDmVt6MLoUjjTG9wo%3D\"")
+            buildConfigField("String", "DROPBOX_CLIENT_ID", "\"qiiuadba0azgtr7\"")
+            manifestPlaceholders["oneDriveRedirectPath"] = "/lQr+ytyRuU+DmVt6MLoUjjTG9wo="
+        }
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
+            // Android Google authorization uses package/signing identity; this
+            // is only a stable token-store namespace, not an OAuth client ID.
+            buildConfigField("String", "GOOGLE_DRIVE_CLIENT_ID", "\"android-release\"")
+            buildConfigField("String", "MICROSOFT_ONEDRIVE_CLIENT_ID", "\"1b24f572-c129-4e3c-9afa-d51781afe96c\"")
+            buildConfigField("String", "MICROSOFT_ONEDRIVE_TENANT", "\"consumers\"")
+            buildConfigField("String", "MICROSOFT_ONEDRIVE_REDIRECT_URI", "\"msauth://com.realmwise.rpg.tracker/hu33S0PdJMD%2FBlOPVgFheEvptH8%3D\"")
+            buildConfigField("String", "DROPBOX_CLIENT_ID", "\"pujnhj60xv194u6\"")
+            manifestPlaceholders["oneDriveRedirectPath"] = "/hu33S0PdJMD/BlOPVgFheEvptH8="
         }
     }
 }

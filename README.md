@@ -37,13 +37,7 @@ The generated Windows executable is under `build/windows/.../runner/Release`, Li
 
 ## Google Drive manual sync
 
-Google Drive sync is enabled only in builds configured with an OAuth client ID. In the Google Cloud project, enable the Google Drive API, configure the OAuth consent screen (including test users while the app is in testing), and create a **Desktop app** OAuth client. Realmwise's Windows/Linux flow listens on a loopback address; the default is `http://127.0.0.1:8765/oauth2callback`. Desktop OAuth clients support loopback redirects and do not require you to add that URI in the Cloud Console. If you override `GOOGLE_DRIVE_REDIRECT_URI`, use a loopback URI that Realmwise can bind locally (including its port and path).
-
-```sh
-flutter run -d windows --dart-define=GOOGLE_DRIVE_CLIENT_ID=your-client-id --dart-define=GOOGLE_DRIVE_REDIRECT_URI=http://127.0.0.1:8765/oauth2callback
-```
-
-`GOOGLE_DRIVE_CLIENT_SECRET` may optionally be supplied with `--dart-define` for OAuth clients that require a secret. Desktop OAuth with PKCE normally works without one; a value embedded in a desktop build is not a security boundary.
+Google Drive sync uses the credentials bundled for the selected build mode. `flutter run --debug` and debug APKs use the DEV registrations; `flutter run --release` and release APKs use the PROD registrations. No OAuth `--dart-define` flags are required. In the Google Cloud project, enable the Google Drive API and configure the OAuth consent screen (including test users while the app is in testing). Desktop builds use the corresponding DEV/PROD desktop client and a loopback redirect; the default is `http://127.0.0.1:8765/oauth2callback`.
 
 The app requests the `drive.appdata` scope and stores its sync bundle in Drive's hidden `appDataFolder`; it does not create or use a visible Realmwise folder. This private app-data area is only available to this app, so the same OAuth client/account and app configuration must be used on every device that should share a catalog. Disconnecting removes local credentials and sync settings but does not delete the remote app-data bundle.
 
@@ -51,7 +45,7 @@ For an External consent screen in **Testing**, add every tester explicitly. Goog
 
 Automatic sync is a single-device backup and controlled handoff mechanism, not a real-time multi-device merge or replacement for local backups. The active device owns the remote bundle lease; edits made offline on a previous owner are not merged automatically and may need a deliberate export/restore or handoff. Keep the local database and image backups, and use **Settings → Database** export/restore when moving to a different account, OAuth client, or device configuration. Before restoring or switching devices, make sure the target device can authenticate with the same Google account and matching client/redirect settings; otherwise its hidden app-data bundle will not be discoverable.
 
-On Android, configure the provider's Android OAuth application and supported browser/app redirect flow; the desktop loopback instructions above are only for Windows/Linux builds. Provider authentication and account access remain subject to the provider's policies.
+On Android, configure both the DEV and PROD Android OAuth applications for package `com.realmwise.rpg.tracker`, with the exact signing certificate SHA-1 for each build. Register the matching provider redirect/app-link values as well. Debug uses the DEV signing identity; release uses the PROD signing identity. If distributing through Google Play, register the Play App Signing certificate (not only the local upload key). The desktop loopback instructions above are only for Windows/Linux builds. Provider authentication and account access remain subject to the provider's policies.
 
 ## Manual cloud sync
 
@@ -59,21 +53,13 @@ Cloud sync is an optional automatic copy/recovery mechanism. In **Settings → S
 
 ### Microsoft OneDrive
 
-Register an application in Microsoft Entra ID with delegated Microsoft Graph app-folder permissions (`Files.ReadWrite.AppFolder`) and configure a loopback redirect URI. Realmwise defaults to `http://127.0.0.1:8765/oauth2callback`; pass `MICROSOFT_ONEDRIVE_CLIENT_ID`, and optionally `MICROSOFT_ONEDRIVE_TENANT` (defaults to `common`) or `MICROSOFT_ONEDRIVE_REDIRECT_URI`:
-
-```sh
-flutter run -d windows --dart-define=MICROSOFT_ONEDRIVE_CLIENT_ID=your-client-id
-```
+Register both the DEV and PROD applications in Microsoft Entra ID with delegated Microsoft Graph app-folder permissions (`Files.ReadWrite.AppFolder`). Realmwise selects the matching client automatically for debug and release builds. Desktop builds use the loopback redirect `http://127.0.0.1:8765/oauth2callback`; Android builds require the exact package/signing redirect registered for each build mode.
 
 The bundle is stored in OneDrive's app-root area as `Realmwise.realmwise`.
 
 ### Dropbox
 
-Create a Dropbox app with offline access and add the loopback redirect URI `http://127.0.0.1:8766/oauth2callback` (or your chosen loopback URI). Supply the app key with `DROPBOX_CLIENT_ID` and, if needed, override `DROPBOX_REDIRECT_URI`:
-
-```sh
-flutter run -d windows --dart-define=DROPBOX_CLIENT_ID=your-app-key
-```
+Create both DEV and PROD Dropbox apps with offline access and register the redirect URI used by the target platform. Realmwise selects the matching app key automatically for debug and release builds; no `DROPBOX_CLIENT_ID` or `DROPBOX_REDIRECT_URI` flags are required. Desktop builds use the loopback redirect `http://127.0.0.1:8766/oauth2callback`.
 
 Dropbox stores the bundle as `/Realmwise.realmwise` in the connected account. OAuth credentials for all providers are kept in platform secure storage; disconnecting removes local credentials but does not delete the remote bundle.
 
