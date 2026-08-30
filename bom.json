@@ -1,0 +1,3034 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:realmwise-1.0.0-1",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-08-27T00:00:00Z",
+    "component": {
+      "type": "application",
+      "bom-ref": "realmwise",
+      "name": "realmwise",
+      "version": "1.0.0+1",
+      "description": "A local-first catalog for tabletop role-playing game books."
+    },
+    "properties": [
+      {
+        "name": "package-manager",
+        "value": "Dart Pub / Flutter"
+      },
+      {
+        "name": "lockfile",
+        "value": "pubspec.lock"
+      },
+      {
+        "name": "dart-sdk-constraint",
+        "value": ">=3.12.0 <4.0.0"
+      },
+      {
+        "name": "flutter-sdk-constraint",
+        "value": ">=3.44.0"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "archive",
+      "version": "3.6.1",
+      "scope": "required",
+      "purl": "pkg:dart/archive@3.6.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/archive"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "cb6a278ef2dbb298455e1a713bda08524a175630ec643a242c399c932a0a1f7d"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "xdg_directories",
+      "version": "1.1.0",
+      "scope": "required",
+      "purl": "pkg:dart/xdg_directories@1.1.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/xdg_directories"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "7a3f37b05d989967cdddcbb571f1ea834867ae2faa29725fd085180e0883aa15"
+        }
+      ]
+    },
+    {
+      "type": "framework",
+      "name": "flutter",
+      "version": "0.0.0",
+      "scope": "required",
+      "purl": "pkg:generic/flutter@0.0.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "sdk"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "web",
+      "version": "1.1.1",
+      "scope": "required",
+      "purl": "pkg:dart/web@1.1.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/web"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "868d88a33d8a87b18ffc05f9f030ba328ffefba92d6c127917a2ba740f9cfe4a"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "string_scanner",
+      "version": "1.4.1",
+      "scope": "required",
+      "purl": "pkg:dart/string_scanner@1.4.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/string_scanner"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "921cd31725b72fe181906c6a94d987c78e3b98c2e205b397ea399d4054872b43"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "code_assets",
+      "version": "1.2.1",
+      "scope": "required",
+      "purl": "pkg:dart/code_assets@1.2.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/code_assets"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "bf394f466ba9205f1812a0433b392d6af280f155f56651eda7c18cc32ed493b8"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "vm_service",
+      "version": "15.2.0",
+      "scope": "required",
+      "purl": "pkg:dart/vm_service@15.2.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/vm_service"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "0016aef94fc66495ac78af5859181e3f3bf2026bd8eecc72b9565601e19ab360"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sqflite_common_ffi",
+      "version": "2.4.2",
+      "scope": "required",
+      "purl": "pkg:dart/sqflite_common_ffi@2.4.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/sqflite_common_ffi"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5ccd38136edb9beb3213f6927775d52db70dfdadcdb28dad1f625ca9f2b9824f"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "url_launcher_macos",
+      "version": "3.2.5",
+      "scope": "required",
+      "purl": "pkg:dart/url_launcher_macos@3.2.5",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/url_launcher_macos"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "368adf46f71ad3c21b8f06614adb38346f193f3a59ba8fe9a2fd74133070ba18"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "package_info_plus",
+      "version": "8.3.1",
+      "scope": "required",
+      "purl": "pkg:dart/package_info_plus@8.3.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/package_info_plus"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "16eee997588c60225bda0488b6dcfac69280a6b7a3cf02c741895dd370a02968"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "package_info_plus_platform_interface",
+      "version": "3.2.1",
+      "scope": "required",
+      "purl": "pkg:dart/package_info_plus_platform_interface@3.2.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/package_info_plus_platform_interface"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "202a487f08836a592a6bd4f901ac69b3a8f146af552bbd14407b6b41e1c3f086"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hooks",
+      "version": "2.0.2",
+      "scope": "required",
+      "purl": "pkg:dart/hooks@2.0.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/hooks"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "9a62a50b50b769a737bc0a8ff381f333529df3ab746b2f6b02e83760231455ba"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "stack_trace",
+      "version": "1.12.1",
+      "scope": "required",
+      "purl": "pkg:dart/stack_trace@1.12.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/stack_trace"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "8b27215b45d22309b5cddda1aa2b19bdfec9df0e765f2de506401c071d38d1b1"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "permission_handler_windows",
+      "version": "0.2.1",
+      "scope": "required",
+      "purl": "pkg:dart/permission_handler_windows@0.2.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/permission_handler_windows"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1a790728016f79a41216d88672dbc5df30e686e811ad4e698bfc51f76ad91f1e"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "platform",
+      "version": "3.1.6",
+      "scope": "required",
+      "purl": "pkg:dart/platform@3.1.6",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/platform"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5d6b1b0036a5f331ebc77c850ebc8506cbc1e9416c27e59b439f917a902a4984"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sqlite3",
+      "version": "3.4.0",
+      "scope": "required",
+      "purl": "pkg:dart/sqlite3@3.4.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/sqlite3"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "61c7930bebf32c552ac5808c91bf33802e66711c9216090d3b5579c9f862e80c"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sqflite_darwin",
+      "version": "2.4.3+1",
+      "scope": "required",
+      "purl": "pkg:dart/sqflite_darwin@2.4.3+1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/sqflite_darwin"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c86ca18b8f666bbf903924687fe21cc16fc385d086005067e26619ca530bef9f"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "flutter_lints",
+      "version": "5.0.0",
+      "scope": "optional",
+      "purl": "pkg:dart/flutter_lints@5.0.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct dev"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/flutter_lints"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5398f14efa795ffb7a33e9b6a08798b26a180edac4ad7db3f231e40f82ce11e1"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "term_glyph",
+      "version": "1.2.2",
+      "scope": "required",
+      "purl": "pkg:dart/term_glyph@1.2.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/term_glyph"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "7f554798625ea768a7518313e58f83891c7f5024f88e46e7182a4558850a4b8e"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "shared_preferences_foundation",
+      "version": "2.5.6",
+      "scope": "required",
+      "purl": "pkg:dart/shared_preferences_foundation@2.5.6",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/shared_preferences_foundation"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "4e7eaffc2b17ba398759f1151415869a34771ba11ebbccd1b0145472a619a64f"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "shared_preferences_linux",
+      "version": "2.4.1",
+      "scope": "required",
+      "purl": "pkg:dart/shared_preferences_linux@2.4.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/shared_preferences_linux"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "580abfd40f415611503cae30adf626e6656dfb2f0cee8f465ece7b6defb40f2f"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "path_provider_foundation",
+      "version": "2.6.0",
+      "scope": "required",
+      "purl": "pkg:dart/path_provider_foundation@2.6.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/path_provider_foundation"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2a376b7d6392d80cd3705782d2caa734ca4727776db0b6ec36ef3f1855197699"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "typed_data",
+      "version": "1.4.0",
+      "scope": "required",
+      "purl": "pkg:dart/typed_data@1.4.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/typed_data"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f9049c039ebfeb4cf7a7104a675823cd72dba8297f264b6637062516699fa006"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "args",
+      "version": "2.7.0",
+      "scope": "required",
+      "purl": "pkg:dart/args@2.7.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/args"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d0481093c50b1da8910eb0bb301626d4d8eb7284aa739614d2b394ee09e3ea04"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "url_launcher_linux",
+      "version": "3.2.2",
+      "scope": "required",
+      "purl": "pkg:dart/url_launcher_linux@3.2.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/url_launcher_linux"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d5e14138b3bc193a0f63c10a53c94b91d399df0512b1f29b94a043db7482384a"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "jni_flutter",
+      "version": "1.0.1",
+      "scope": "required",
+      "purl": "pkg:dart/jni_flutter@1.0.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/jni_flutter"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "8b59e590786050b1cd866677dddaf76b1ade5e7bc751abe04b86e84d379d3ba6"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "native_toolchain_c",
+      "version": "0.19.2",
+      "scope": "required",
+      "purl": "pkg:dart/native_toolchain_c@0.19.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/native_toolchain_c"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f9c168717100ae6d9fee9ffb0be379bf1f8b26b0f6bcbd4fdddcd931993a6a72"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cross_file",
+      "version": "0.3.5+4",
+      "scope": "required",
+      "purl": "pkg:dart/cross_file@0.3.5+4",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/cross_file"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "92c9c43c383bfa1c32079d3bc492d55d6d4318044b7b47edaff8971cbb555c51"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "leak_tracker_flutter_testing",
+      "version": "3.0.10",
+      "scope": "required",
+      "purl": "pkg:dart/leak_tracker_flutter_testing@3.0.10",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/leak_tracker_flutter_testing"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1dbc140bb5a23c75ea9c4811222756104fbcd1a27173f0c34ca01e16bea473c1"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "path_provider",
+      "version": "2.1.6",
+      "scope": "required",
+      "purl": "pkg:dart/path_provider@2.1.6",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/path_provider"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a7f4874f987173da295a61c181b8ee71dab59b332a486b391babf26a1b884825"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sqflite_common",
+      "version": "2.5.11",
+      "scope": "required",
+      "purl": "pkg:dart/sqflite_common@2.5.11",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/sqflite_common"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5bf6a55c166e73bf651ba7ec3ed486e577620e3dc8f3a9c6a258a8031b624590"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "flutter_secure_storage_windows",
+      "version": "3.1.2",
+      "scope": "required",
+      "purl": "pkg:dart/flutter_secure_storage_windows@3.1.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/flutter_secure_storage_windows"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b20b07cb5ed4ed74fc567b78a72936203f587eba460af1df11281c9326cd3709"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "permission_handler_apple",
+      "version": "9.4.10",
+      "scope": "required",
+      "purl": "pkg:dart/permission_handler_apple@9.4.10",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/permission_handler_apple"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "79dfa1df734798aa3cfdad166d3a3698c206d8813de13516ea1071b5d7e2f420"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "leak_tracker_testing",
+      "version": "3.0.2",
+      "scope": "required",
+      "purl": "pkg:dart/leak_tracker_testing@3.0.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/leak_tracker_testing"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "8d5a2d49f4a66b49744b23b018848400d23e54caf9463f4eb20df3eb8acb2eb1"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "boolean_selector",
+      "version": "2.1.2",
+      "scope": "required",
+      "purl": "pkg:dart/boolean_selector@2.1.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/boolean_selector"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "8aab1771e1243a5063b8b0ff68042d67334e3feab9e95b9490f9a6ebf73b42ea"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "win32",
+      "version": "5.15.0",
+      "scope": "required",
+      "purl": "pkg:dart/win32@5.15.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/win32"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d7cb55e04cd34096cd3a79b3330245f54cb96a370a1c27adb3c84b917de8b08e"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "flutter_secure_storage",
+      "version": "9.2.4",
+      "scope": "required",
+      "purl": "pkg:dart/flutter_secure_storage@9.2.4",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/flutter_secure_storage"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "9cad52d75ebc511adfae3d447d5d13da15a55a92c9410e50f67335b6d21d16ea"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ffi",
+      "version": "2.2.0",
+      "scope": "required",
+      "purl": "pkg:dart/ffi@2.2.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/ffi"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "6d7fd89431262d8f3125e81b50d3847a091d846eafcd4fdb88dd06f36d705a45"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sqflite",
+      "version": "2.4.3",
+      "scope": "required",
+      "purl": "pkg:dart/sqflite@2.4.3",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/sqflite"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "58a799e6ac17dd32fbab93813d39ed835a75ccc0f8f85b8955fe318c6712b082"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "stream_channel",
+      "version": "2.1.4",
+      "scope": "required",
+      "purl": "pkg:dart/stream_channel@2.1.4",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/stream_channel"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "969e04c80b8bcdf826f8f16579c7b14d780458bd97f56d107d3950fdbeef059d"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "shared_preferences_windows",
+      "version": "2.4.1",
+      "scope": "required",
+      "purl": "pkg:dart/shared_preferences_windows@2.4.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/shared_preferences_windows"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "94ef0f72b2d71bc3e700e025db3710911bd51a71cefb65cc609dd0d9a982e3c1"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "synchronized",
+      "version": "3.4.1",
+      "scope": "required",
+      "purl": "pkg:dart/synchronized@3.4.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/synchronized"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "93b153dcb6a26dcddee6ca087dd634b53e38c10b5aa163e8e49501a776456153"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pub_semver",
+      "version": "2.2.0",
+      "scope": "required",
+      "purl": "pkg:dart/pub_semver@2.2.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/pub_semver"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5bfcf68ca79ef689f8990d1160781b4bad40a3bd5e5218ad4076ddb7f4081585"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "package_config",
+      "version": "2.2.0",
+      "scope": "required",
+      "purl": "pkg:dart/package_config@2.2.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/package_config"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f096c55ebb7deb7e384101542bfba8c52696c1b56fca2eb62827989ef2353bbc"
+        }
+      ]
+    },
+    {
+      "type": "framework",
+      "name": "flutter_test",
+      "version": "0.0.0",
+      "scope": "optional",
+      "purl": "pkg:generic/flutter_test@0.0.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct dev"
+        },
+        {
+          "name": "pub:source",
+          "value": "sdk"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cupertino_icons",
+      "version": "1.0.9",
+      "scope": "required",
+      "purl": "pkg:dart/cupertino_icons@1.0.9",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/cupertino_icons"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "41e005c33bd814be4d3096aff55b1908d419fde52ca656c8c47719ec745873cd"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "xml",
+      "version": "6.6.1",
+      "scope": "required",
+      "purl": "pkg:dart/xml@6.6.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/xml"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "971043b3a0d3da28727e40ed3e0b5d18b742fa5a68665cca88e74b7876d5e025"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "path_provider_windows",
+      "version": "2.3.0",
+      "scope": "required",
+      "purl": "pkg:dart/path_provider_windows@2.3.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/path_provider_windows"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "bd6f00dbd873bfb70d0761682da2b3a2c2fccc2b9e84c495821639601d81afe7"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "logging",
+      "version": "1.3.0",
+      "scope": "required",
+      "purl": "pkg:dart/logging@1.3.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/logging"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c8245ada5f1717ed44271ed1c26b8ce85ca3228fd2ffdb75468ab01979309d61"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fake_async",
+      "version": "1.3.3",
+      "scope": "required",
+      "purl": "pkg:dart/fake_async@1.3.3",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/fake_async"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5368f224a74523e8d2e7399ea1638b37aecfca824a3cc4dfdf77bf1fa905ac44"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "dbus",
+      "version": "0.7.14",
+      "scope": "required",
+      "purl": "pkg:dart/dbus@0.7.14",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/dbus"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "0ce9b0a839e6dee59a37a623d2fc26a35bbbe6404213e419b0d6411023d62645"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "flutter_secure_storage_macos",
+      "version": "3.1.3",
+      "scope": "required",
+      "purl": "pkg:dart/flutter_secure_storage_macos@3.1.3",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/flutter_secure_storage_macos"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "6c0a2795a2d1de26ae202a0d78527d163f4acbb11cde4c75c670f3a0fc064247"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "jni",
+      "version": "1.0.0",
+      "scope": "required",
+      "purl": "pkg:dart/jni@1.0.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/jni"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c2230682d5bc2362c1c9e8d3c7f406d9cbba23ab3f2e203a025dd47e0fb2e68f"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "path_provider_linux",
+      "version": "2.2.2",
+      "scope": "required",
+      "purl": "pkg:dart/path_provider_linux@2.2.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/path_provider_linux"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "58c2005f147315b11e9b4a7bc889cd5203e250cba8e3f012dae259b4972b5c16"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "js",
+      "version": "0.6.7",
+      "scope": "required",
+      "purl": "pkg:dart/js@0.6.7",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/js"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f2c445dce49627136094980615a031419f7f3eb393237e4ecd97ac15dea343f3"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "url_launcher_android",
+      "version": "6.3.32",
+      "scope": "required",
+      "purl": "pkg:dart/url_launcher_android@6.3.32",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/url_launcher_android"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b413d49b73867ac08dd2f9890efd3cc11f2a0e577618d50843440a1fb3776c32"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "crypto",
+      "version": "3.0.7",
+      "scope": "required",
+      "purl": "pkg:dart/crypto@3.0.7",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/crypto"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c8ea0233063ba03258fbcf2ca4d6dadfefe14f02fab57702265467a19f27fadf"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "shared_preferences_android",
+      "version": "2.4.27",
+      "scope": "required",
+      "purl": "pkg:dart/shared_preferences_android@2.4.27",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/shared_preferences_android"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "0634e64bd719f89c012f392938e173521f535d3ecaf66558fa94a056d22b5cc7"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "shared_preferences_platform_interface",
+      "version": "2.4.2",
+      "scope": "required",
+      "purl": "pkg:dart/shared_preferences_platform_interface@2.4.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/shared_preferences_platform_interface"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "649dc798a33931919ea356c4305c2d1f81619ea6e92244070b520187b5140ef9"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "flutter_plugin_android_lifecycle",
+      "version": "2.0.35",
+      "scope": "required",
+      "purl": "pkg:dart/flutter_plugin_android_lifecycle@2.0.35",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/flutter_plugin_android_lifecycle"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "3854fe5e3bff0b113c658f260b90c95dea17c92db0f2addeac2e343dd9969785"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "test_api",
+      "version": "0.7.11",
+      "scope": "required",
+      "purl": "pkg:dart/test_api@0.7.11",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/test_api"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "949a932224383300f01be9221c39180316445ecb8e7547f70a41a35bf421fb9e"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "flutter_secure_storage_web",
+      "version": "1.2.1",
+      "scope": "required",
+      "purl": "pkg:dart/flutter_secure_storage_web@1.2.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/flutter_secure_storage_web"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f4ebff989b4f07b2656fb16b47852c0aab9fed9b4ec1c70103368337bc1886a9"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "objective_c",
+      "version": "9.4.1",
+      "scope": "required",
+      "purl": "pkg:dart/objective_c@9.4.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/objective_c"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "6cb691c686fa2838c6deb34980d426145c2a5d537491cb83d463c33cdbc726ed"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "http_parser",
+      "version": "4.1.2",
+      "scope": "required",
+      "purl": "pkg:dart/http_parser@4.1.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/http_parser"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "178d74305e7866013777bab2c3d8726205dc5a4dd935297175b19a23a2e66571"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "http",
+      "version": "1.6.0",
+      "scope": "required",
+      "purl": "pkg:dart/http@1.6.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/http"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "87721a4a50b19c7f1d49001e51409bddc46303966ce89a65af4f4e6004896412"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sqflite_platform_interface",
+      "version": "2.4.1",
+      "scope": "required",
+      "purl": "pkg:dart/sqflite_platform_interface@2.4.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/sqflite_platform_interface"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f84939f84350d92d04416f8bc4dc52d3896aec7716cc9e80cf0146342139dc50"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "permission_handler_android",
+      "version": "12.1.0",
+      "scope": "required",
+      "purl": "pkg:dart/permission_handler_android@12.1.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/permission_handler_android"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d3971dcdd76182a0c198c096b5db2f0884b0d4196723d21a866fc4cdea057ebc"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "source_span",
+      "version": "1.10.2",
+      "scope": "required",
+      "purl": "pkg:dart/source_span@1.10.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/source_span"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "56a02f1f4cd1a2d96303c0144c93bd6d909eea6bee6bf5a0e0b685edbd4c47ab"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "shared_preferences_web",
+      "version": "2.4.3",
+      "scope": "required",
+      "purl": "pkg:dart/shared_preferences_web@2.4.3",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/shared_preferences_web"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c49bd060261c9a3f0ff445892695d6212ff603ef3115edbb448509d407600019"
+        }
+      ]
+    },
+    {
+      "type": "framework",
+      "name": "sky_engine",
+      "version": "0.0.0",
+      "scope": "required",
+      "purl": "pkg:generic/sky_engine@0.0.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "sdk"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "file_picker",
+      "version": "11.0.2",
+      "scope": "required",
+      "purl": "pkg:dart/file_picker@11.0.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/file_picker"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f13a03000d942e476bc1ff0a736d2e9de711d2f89a95cd4c1d88f861c3348387"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "file",
+      "version": "7.0.1",
+      "scope": "required",
+      "purl": "pkg:dart/file@7.0.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/file"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a3b4f84adafef897088c160faf7dfffb7696046cb13ae90b508c2cbc95d3b8d4"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "flutter_secure_storage_platform_interface",
+      "version": "1.1.2",
+      "scope": "required",
+      "purl": "pkg:dart/flutter_secure_storage_platform_interface@1.1.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/flutter_secure_storage_platform_interface"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "cf91ad32ce5adef6fba4d736a542baca9daf3beac4db2d04be350b87f69ac4a8"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "path_provider_platform_interface",
+      "version": "2.1.3",
+      "scope": "optional",
+      "purl": "pkg:dart/path_provider_platform_interface@2.1.3",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct dev"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/path_provider_platform_interface"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "484838772624c3a4b94f1e44a3e19897fee738f2d5c4ce448443b0417f7c9dda"
+        }
+      ]
+    },
+    {
+      "type": "framework",
+      "name": "flutter_web_plugins",
+      "version": "0.0.0",
+      "scope": "required",
+      "purl": "pkg:generic/flutter_web_plugins@0.0.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "sdk"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "clock",
+      "version": "1.1.2",
+      "scope": "required",
+      "purl": "pkg:dart/clock@1.1.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/clock"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "fddb70d9b5277016c77a80201021d40a2247104d9f4aa7bab7157b7e3f05b84b"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "meta",
+      "version": "1.18.0",
+      "scope": "required",
+      "purl": "pkg:dart/meta@1.18.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/meta"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1741988757a65eb6b36abe716829688cf01910bbf91c34354ff7ec1c3de2b349"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "plugin_platform_interface",
+      "version": "2.1.8",
+      "scope": "required",
+      "purl": "pkg:dart/plugin_platform_interface@2.1.8",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/plugin_platform_interface"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "4820fbfdb9478b1ebae27888254d445073732dae3d6ea81f0b7e06d5dedc3f02"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "url_launcher_web",
+      "version": "2.4.3",
+      "scope": "required",
+      "purl": "pkg:dart/url_launcher_web@2.4.3",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/url_launcher_web"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "85c81589622fbc87c1c683aaea164d3604a7777495a79d91e39ffcdec39ddb34"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lints",
+      "version": "5.1.1",
+      "scope": "required",
+      "purl": "pkg:dart/lints@5.1.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/lints"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c35bb79562d980e9a453fc715854e1ed39e24e7d0297a880ef54e17f9874a9d7"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "yaml",
+      "version": "3.1.3",
+      "scope": "required",
+      "purl": "pkg:dart/yaml@3.1.3",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/yaml"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b9da305ac7c39faa3f030eccd175340f968459dae4af175130b3fc47e40d76ce"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "glob",
+      "version": "2.1.3",
+      "scope": "required",
+      "purl": "pkg:dart/glob@2.1.3",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/glob"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c3f1ee72c96f8f78935e18aa8cecced9ab132419e8625dc187e1c2408efc20de"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "petitparser",
+      "version": "7.0.2",
+      "scope": "required",
+      "purl": "pkg:dart/petitparser@7.0.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/petitparser"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "91bd59303e9f769f108f8df05e371341b15d59e995e6806aefab827b58336675"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "collection",
+      "version": "1.19.1",
+      "scope": "required",
+      "purl": "pkg:dart/collection@1.19.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/collection"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2f5709ae4d3d59dd8f7cd309b4e023046b57d8a6c82130785d2b0e5868084e76"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "matcher",
+      "version": "0.12.19",
+      "scope": "required",
+      "purl": "pkg:dart/matcher@0.12.19",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/matcher"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "dc0b7dc7651697ea4ff3e69ef44b0407ea32c487a39fff6a4004fa585e901861"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "vector_math",
+      "version": "2.2.0",
+      "scope": "required",
+      "purl": "pkg:dart/vector_math@2.2.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/vector_math"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d530bd74fea330e6e364cda7a85019c434070188383e1cd8d9777ee586914c5b"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "async",
+      "version": "2.13.1",
+      "scope": "required",
+      "purl": "pkg:dart/async@2.13.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/async"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e2eb0491ba5ddb6177742d2da23904574082139b07c1e33b8503b9f46f3e1a37"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "url_launcher",
+      "version": "6.3.2",
+      "scope": "required",
+      "purl": "pkg:dart/url_launcher@6.3.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/url_launcher"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f6a7e5c4835bb4e3026a04793a4199ca2d14c739ec378fdfe23fc8075d0439f8"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "permission_handler_html",
+      "version": "0.1.3+5",
+      "scope": "required",
+      "purl": "pkg:dart/permission_handler_html@0.1.3+5",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/permission_handler_html"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "38f000e83355abb3392140f6bc3030660cfaef189e1f87824facb76300b4ff24"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sqflite_android",
+      "version": "2.4.3",
+      "scope": "required",
+      "purl": "pkg:dart/sqflite_android@2.4.3",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/sqflite_android"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d0548f9d7422a2dae99ec6f8b0a3074463b132d216fa5ba0d230eeefc901983b"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "record_use",
+      "version": "0.6.0",
+      "scope": "required",
+      "purl": "pkg:dart/record_use@0.6.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/record_use"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2551bd8eecfe95d14ae75f6021ad0248be5c27f138c2ec12fcb52b500b3ba1ed"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "mobile_scanner",
+      "version": "5.2.3",
+      "scope": "required",
+      "purl": "pkg:dart/mobile_scanner@5.2.3",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/mobile_scanner"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d234581c090526676fd8fab4ada92f35c6746e3fb4f05a399665d75a399fb760"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "intl",
+      "version": "0.19.0",
+      "scope": "required",
+      "purl": "pkg:dart/intl@0.19.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/intl"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d6f56758b7d3014a48af9701c085700aac781a92a87a62b1333b46d8879661cf"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "characters",
+      "version": "1.4.1",
+      "scope": "required",
+      "purl": "pkg:dart/characters@1.4.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/characters"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "faf38497bda5ead2a8c7615f4f7939df04333478bf32e4173fcb06d428b5716b"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "permission_handler_platform_interface",
+      "version": "4.3.0",
+      "scope": "required",
+      "purl": "pkg:dart/permission_handler_platform_interface@4.3.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/permission_handler_platform_interface"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "eb99b295153abce5d683cac8c02e22faab63e50679b937fa1bf67d58bb282878"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "url_launcher_windows",
+      "version": "3.1.5",
+      "scope": "required",
+      "purl": "pkg:dart/url_launcher_windows@3.1.5",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/url_launcher_windows"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "712c70ab1b99744ff066053cbe3e80c73332b38d46e5e945c98689b2e66fc15f"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "path",
+      "version": "1.9.1",
+      "scope": "required",
+      "purl": "pkg:dart/path@1.9.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/path"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "75cca69d1490965be98c73ceaea117e8a04dd21217b37b292c9ddbec0d955bc5"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "leak_tracker",
+      "version": "11.0.2",
+      "scope": "required",
+      "purl": "pkg:dart/leak_tracker@11.0.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/leak_tracker"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "33e2e26bdd85a0112ec15400c8cbffea70d0f9c3407491f672a2fad47915e2de"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "flutter_secure_storage_linux",
+      "version": "1.2.3",
+      "scope": "required",
+      "purl": "pkg:dart/flutter_secure_storage_linux@1.2.3",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/flutter_secure_storage_linux"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "be76c1d24a97d0b98f8b54bce6b481a380a6590df992d0098f868ad54dc8f688"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "url_launcher_platform_interface",
+      "version": "2.3.2",
+      "scope": "required",
+      "purl": "pkg:dart/url_launcher_platform_interface@2.3.2",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/url_launcher_platform_interface"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "552f8a1e663569be95a8190206a38187b531910283c3e982193e4f2733f01029"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "shared_preferences",
+      "version": "2.5.5",
+      "scope": "required",
+      "purl": "pkg:dart/shared_preferences@2.5.5",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/shared_preferences"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c3025c5534b01739267eb7d76959bbc25a6d10f6988e1c2a3036940133dd10bf"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "material_color_utilities",
+      "version": "0.13.0",
+      "scope": "required",
+      "purl": "pkg:dart/material_color_utilities@0.13.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/material_color_utilities"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "9c337007e82b1889149c82ed242ed1cb24a66044e30979c44912381e9be4c48b"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "permission_handler",
+      "version": "11.4.0",
+      "scope": "required",
+      "purl": "pkg:dart/permission_handler@11.4.0",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "direct main"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/permission_handler"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "59adad729136f01ea9e35a48f5d1395e25cba6cea552249ddbe9cf950f5d7849"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "url_launcher_ios",
+      "version": "6.4.1",
+      "scope": "required",
+      "purl": "pkg:dart/url_launcher_ios@6.4.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/url_launcher_ios"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "580fe5dfb51671ae38191d316e027f6b76272b026370708c2d898799750a02b0"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "path_provider_android",
+      "version": "2.3.1",
+      "scope": "required",
+      "purl": "pkg:dart/path_provider_android@2.3.1",
+      "properties": [
+        {
+          "name": "pub:dependency",
+          "value": "transitive"
+        },
+        {
+          "name": "pub:source",
+          "value": "hosted"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pub.dev/packages/path_provider_android"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "69cbd515a62b94d32a7944f086b2f82b4ac40a1d45bebfc00813a430ab2dabcd"
+        }
+      ]
+    }
+  ]
+}
+

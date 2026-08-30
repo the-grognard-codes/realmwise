@@ -1,0 +1,58 @@
+name: Linux Release Build
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.44.7'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes ninja-build libgtk-3-dev
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed .
+      - name: Analyze
+        run: flutter analyze
+      - name: Run tests
+        run: flutter test
+      - name: Build Linux release
+        run: flutter build linux --release
+      - name: Package Linux tarball and checksum
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.release_tag }}
+        run: |
+          output_dir="$RUNNER_TEMP/realmwise-linux-release"
+          mkdir -p "$output_dir"
+          version="${RELEASE_VERSION#v}"
+          tar -C build/linux/x64/release -czf "$output_dir/Realmwise-$version-linux-x64.tar.gz" bundle
+          (
+            cd "$output_dir"
+            sha256sum Realmwise-*.tar.gz > SHA256SUMS-linux.txt
+          )
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: realmwise-release-linux
+          path: ${{ runner.temp }}/realmwise-linux-release
+          if-no-files-found: error
