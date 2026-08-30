@@ -1,0 +1,79 @@
+name: Windows Release Build
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.44.7'
+  GOOGLE_DRIVE_CLIENT_ID: ${{ vars.GOOGLE_DRIVE_CLIENT_ID }}
+  GOOGLE_DRIVE_REDIRECT_URI: ${{ vars.GOOGLE_DRIVE_REDIRECT_URI }}
+  MICROSOFT_ONEDRIVE_CLIENT_ID: ${{ vars.MICROSOFT_ONEDRIVE_CLIENT_ID }}
+  MICROSOFT_ONEDRIVE_TENANT: ${{ vars.MICROSOFT_ONEDRIVE_TENANT }}
+  MICROSOFT_ONEDRIVE_REDIRECT_URI: ${{ vars.MICROSOFT_ONEDRIVE_REDIRECT_URI }}
+  DROPBOX_CLIENT_ID: ${{ vars.DROPBOX_CLIENT_ID }}
+  DROPBOX_REDIRECT_URI: ${{ vars.DROPBOX_REDIRECT_URI }}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+      - name: Validate production OAuth configuration
+        shell: pwsh
+        run: |
+          $required = @('GOOGLE_DRIVE_CLIENT_ID','GOOGLE_DRIVE_REDIRECT_URI','MICROSOFT_ONEDRIVE_CLIENT_ID','MICROSOFT_ONEDRIVE_TENANT','MICROSOFT_ONEDRIVE_REDIRECT_URI','DROPBOX_CLIENT_ID','DROPBOX_REDIRECT_URI')
+          $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) })
+          if ($missing.Count -gt 0) { throw "Missing required repository Actions variables: $($missing -join ', ')." }
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed .
+      - name: Analyze
+        run: flutter analyze
+      - name: Run tests
+        run: flutter test
+      - name: Build Windows release
+        shell: pwsh
+        run: |
+          flutter build windows --release `
+            --dart-define="GOOGLE_DRIVE_CLIENT_ID=$env:GOOGLE_DRIVE_CLIENT_ID" `
+            --dart-define="GOOGLE_DRIVE_REDIRECT_URI=$env:GOOGLE_DRIVE_REDIRECT_URI" `
+            --dart-define="MICROSOFT_ONEDRIVE_CLIENT_ID=$env:MICROSOFT_ONEDRIVE_CLIENT_ID" `
+            --dart-define="MICROSOFT_ONEDRIVE_TENANT=$env:MICROSOFT_ONEDRIVE_TENANT" `
+            --dart-define="MICROSOFT_ONEDRIVE_REDIRECT_URI=$env:MICROSOFT_ONEDRIVE_REDIRECT_URI" `
+            --dart-define="DROPBOX_CLIENT_ID=$env:DROPBOX_CLIENT_ID" `
+            --dart-define="DROPBOX_REDIRECT_URI=$env:DROPBOX_REDIRECT_URI"
+      - name: Package release and checksum
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.release_tag }}
+        run: |
+          $releaseDir = Join-Path $env:GITHUB_WORKSPACE 'build\windows\x64\runner\Release'
+          if (-not (Test-Path -LiteralPath $releaseDir -PathType Container)) { throw "Release directory missing: $releaseDir" }
+          $outputDir = Join-Path $env:RUNNER_TEMP 'realmwise-windows-release'
+          New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+          $version = $env:RELEASE_VERSION.Substring(1)
+          $zipName = "Realmwise-$version-windows-x64.zip"
+          Compress-Archive -Path (Join-Path $releaseDir '*') -DestinationPath (Join-Path $outputDir $zipName) -CompressionLevel Optimal
+          $hash = (Get-FileHash -LiteralPath (Join-Path $outputDir $zipName) -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $zipName" | Set-Content -LiteralPath (Join-Path $outputDir 'SHA256SUMS-windows.txt') -Encoding ascii
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: realmwise-release-windows
+          path: ${{ runner.temp }}/realmwise-windows-release
+          if-no-files-found: error

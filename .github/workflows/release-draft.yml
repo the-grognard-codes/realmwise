@@ -1,0 +1,126 @@
+name: Release Draft
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing v* tag to build into a draft release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-draft-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+      version: ${{ steps.metadata.outputs.version }}
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+      - name: Verify release tag and main ancestry
+        shell: bash
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]
+          git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"
+          git fetch origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$RELEASE_TAG^{commit}" origin/main
+      - name: Verify package version matches tag
+        id: metadata
+        shell: python
+        run: |
+          import os
+          import re
+          from pathlib import Path
+
+          tag = os.environ['RELEASE_TAG']
+          version = tag[1:]
+          text = Path('pubspec.yaml').read_text(encoding='utf-8')
+          match = re.search(r'^version:\s*([^\s#]+)', text, re.MULTILINE)
+          if not match:
+              raise SystemExit('Could not read version from pubspec.yaml.')
+          package_version = match.group(1).split('+', 1)[0]
+          if package_version != version:
+              raise SystemExit(f'pubspec.yaml version {package_version!r} does not match tag {tag!r}.')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'release_tag={tag}\nversion={version}\n')
+
+  sbom:
+    needs: validate-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.validate-release.outputs.release_tag }}
+      - name: Validate SBOM matches lockfile
+        run: python3 .github/scripts/validate_sbom.py
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: realmwise-release-metadata
+          path: |
+            bom.json
+            THIRD_PARTY_NOTICES.md
+          if-no-files-found: error
+
+  windows:
+    needs: validate-release
+    uses: ./.github/workflows/windows-release.yml
+    with:
+      release_tag: ${{ needs.validate-release.outputs.release_tag }}
+    secrets: inherit
+
+  android:
+    needs: validate-release
+    uses: ./.github/workflows/android-release.yml
+    with:
+      release_tag: ${{ needs.validate-release.outputs.release_tag }}
+    secrets: inherit
+
+  linux:
+    needs: validate-release
+    uses: ./.github/workflows/linux-release.yml
+    with:
+      release_tag: ${{ needs.validate-release.outputs.release_tag }}
+    secrets: inherit
+
+  create-draft:
+    needs: [validate-release, sbom, windows, android, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ needs.validate-release.outputs.release_tag }}
+      RELEASE_VERSION: ${{ needs.validate-release.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: realmwise-release-*
+          path: ${{ runner.temp }}/realmwise-release
+          merge-multiple: true
+      - name: Create or update draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_dir="$RUNNER_TEMP/realmwise-release"
+          if gh release view "$RELEASE_TAG" --json isDraft,isPrerelease > "$RUNNER_TEMP/release.json"; then
+            if [[ "$(jq -r '.isDraft' "$RUNNER_TEMP/release.json")" != 'true' || "$(jq -r '.isPrerelease' "$RUNNER_TEMP/release.json")" == 'true' ]]; then
+              echo "Release $RELEASE_TAG is already public or is a prerelease; refusing to replace assets." >&2
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" "$release_dir"/* --clobber
+          else
+            gh release create "$RELEASE_TAG" "$release_dir"/* --title "Realmwise $RELEASE_VERSION" --generate-notes --draft
+          fi
