@@ -4,10 +4,13 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/app_controller.dart';
 import '../services/catalog_bundle_service.dart';
+import '../services/diagnostic_bundle_exporter.dart';
 import '../services/sync_coordinator.dart';
 import '../services/sync_contract.dart';
 import '../services/sync_metadata.dart';
@@ -122,18 +125,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
   );
 
   Future<void> _generateDiagnosticBundle() async {
-    final chosen = await FilePicker.saveFile(
-      dialogTitle: 'Save diagnostic bundle',
-      fileName: 'realmwise-diagnostics.zip',
-      type: FileType.custom,
-      allowedExtensions: const ['zip'],
-    );
-    if (chosen == null) return;
-    if (!mounted) return;
-    final output = chosen.toLowerCase().endsWith('.zip')
-        ? chosen
-        : '$chosen.zip';
     await _run(() async {
+      String? output;
+      String? androidUri;
+      File? temporary;
+      if (Platform.isAndroid) {
+        androidUri = await const DiagnosticBundleExporter().chooseDestination();
+        if (androidUri == null) return;
+        final temporaryDirectory = await getTemporaryDirectory();
+        temporary = File(
+          p.join(
+            temporaryDirectory.path,
+            'realmwise-diagnostics-${DateTime.now().microsecondsSinceEpoch}.zip',
+          ),
+        );
+        output = temporary.path;
+      } else {
+        final chosen = await FilePicker.saveFile(
+          dialogTitle: 'Save diagnostic bundle',
+          fileName: 'realmwise-diagnostics.zip',
+          type: FileType.custom,
+          allowedExtensions: const ['zip'],
+        );
+        if (chosen == null) return;
+        output = chosen.toLowerCase().endsWith('.zip') ? chosen : '$chosen.zip';
+      }
       var appVersion = _buildName == 'unknown'
           ? 'unknown'
           : '$_buildName+$_buildNumber';
@@ -145,15 +161,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
       } on Object {
         /* Metadata is optional on headless platforms. */
       }
-      final file = await widget.controller.diagnosticBundles.create(
-        output,
-        appVersion: appVersion,
-        environment: {'platform': Platform.operatingSystem},
-      );
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Diagnostic bundle saved to ${file.path}')),
+      try {
+        final file = await widget.controller.diagnosticBundles.create(
+          output!,
+          appVersion: appVersion,
+          environment: {'platform': Platform.operatingSystem},
         );
+        if (Platform.isAndroid) {
+          await const DiagnosticBundleExporter().copyFileToDestination(
+            path: file.path,
+            uri: androidUri!,
+          );
+          if (mounted)
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Diagnostic bundle saved.')),
+            );
+        } else if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Diagnostic bundle saved to ${file.path}')),
+          );
+        }
+      } catch (_) {
+        if (Platform.isAndroid && androidUri != null) {
+          try {
+            await const DiagnosticBundleExporter().deleteDestination(
+              androidUri!,
+            );
+          } on Object {
+            // Cleanup is best effort; preserve the original export failure.
+          }
+        }
+        rethrow;
+      } finally {
+        if (Platform.isAndroid && temporary != null) {
+          try {
+            await temporary.delete();
+          } on FileSystemException {
+            // Cleanup is best effort; the OS may remove temporary files later.
+          }
+        }
+      }
     });
   }
 
@@ -493,22 +540,77 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _exportDeviceBundle() async {
-    final chosen = await FilePicker.saveFile(
-      dialogTitle: 'Export portable device bundle',
-      fileName: 'realmwise.realmwise',
-      type: FileType.custom,
-      allowedExtensions: const ['realmwise', 'zip'],
-    );
-    if (chosen == null) return;
-    final output =
-        chosen.toLowerCase().endsWith('.realmwise') ||
-            chosen.toLowerCase().endsWith('.zip')
-        ? chosen
-        : '$chosen.realmwise';
-    await _run(
-      () => widget.controller.exportDeviceBundle(output),
-      success: 'Portable device bundle exported to $output',
-    );
+    await _run(() async {
+      String? output;
+      String? androidUri;
+      File? temporary;
+      if (Platform.isAndroid) {
+        androidUri = await const DiagnosticBundleExporter().chooseDestination(
+          fileName: 'realmwise.realmwise',
+          mimeType: 'application/zip',
+        );
+        if (androidUri == null) return;
+        final temporaryDirectory = await getTemporaryDirectory();
+        temporary = File(
+          p.join(
+            temporaryDirectory.path,
+            'realmwise-${DateTime.now().microsecondsSinceEpoch}.realmwise',
+          ),
+        );
+        output = temporary.path;
+      } else {
+        final chosen = await FilePicker.saveFile(
+          dialogTitle: 'Export portable device bundle',
+          fileName: 'realmwise.realmwise',
+          type: FileType.custom,
+          allowedExtensions: const ['realmwise', 'zip'],
+        );
+        if (chosen == null) return;
+        output =
+            chosen.toLowerCase().endsWith('.realmwise') ||
+                chosen.toLowerCase().endsWith('.zip')
+            ? chosen
+            : '$chosen.realmwise';
+      }
+      try {
+        await widget.controller.exportDeviceBundle(output!);
+        if (Platform.isAndroid) {
+          await const DiagnosticBundleExporter().copyFileToDestination(
+            path: output!,
+            uri: androidUri!,
+          );
+          if (mounted)
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Portable device bundle exported.')),
+            );
+        } else if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Portable device bundle exported to $output'),
+            ),
+          );
+        }
+      } catch (_) {
+        if (Platform.isAndroid && androidUri != null) {
+          try {
+            await const DiagnosticBundleExporter().deleteDestination(
+              androidUri!,
+            );
+          } on Object {
+            // Cleanup is best effort; preserve the original export failure.
+          }
+        }
+        rethrow;
+      } finally {
+        if (Platform.isAndroid && temporary != null) {
+          try {
+            await temporary.delete();
+          } on FileSystemException {
+            // Cleanup is best effort; the OS may remove temporary files later.
+          }
+        }
+      }
+    });
   }
 
   Future<void> _restoreDeviceBundle() async {
@@ -562,20 +664,71 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _exportCsv() async {
-    final chosen = await FilePicker.saveFile(
-      dialogTitle: 'Export catalog as CSV',
-      fileName: 'realmwise_export.csv',
-      type: FileType.custom,
-      allowedExtensions: const ['csv'],
-    );
-    if (chosen == null) return;
-    final output = chosen.toLowerCase().endsWith('.csv')
-        ? chosen
-        : '$chosen.csv';
-    await _run(
-      () => widget.controller.exportDatabaseCsv(output),
-      success: 'Catalog CSV exported to $output',
-    );
+    await _run(() async {
+      String? output;
+      String? androidUri;
+      File? temporary;
+      if (Platform.isAndroid) {
+        androidUri = await const DiagnosticBundleExporter().chooseDestination(
+          fileName: 'realmwise_export.csv',
+          mimeType: 'text/csv',
+        );
+        if (androidUri == null) return;
+        final temporaryDirectory = await getTemporaryDirectory();
+        temporary = File(
+          p.join(
+            temporaryDirectory.path,
+            'realmwise-${DateTime.now().microsecondsSinceEpoch}.csv',
+          ),
+        );
+        output = temporary.path;
+      } else {
+        final chosen = await FilePicker.saveFile(
+          dialogTitle: 'Export catalog as CSV',
+          fileName: 'realmwise_export.csv',
+          type: FileType.custom,
+          allowedExtensions: const ['csv'],
+        );
+        if (chosen == null) return;
+        output = chosen.toLowerCase().endsWith('.csv') ? chosen : '$chosen.csv';
+      }
+      try {
+        await widget.controller.exportDatabaseCsv(output!);
+        if (Platform.isAndroid) {
+          await const DiagnosticBundleExporter().copyFileToDestination(
+            path: output!,
+            uri: androidUri!,
+          );
+          if (mounted)
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Catalog CSV exported.')),
+            );
+        } else if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Catalog CSV exported to $output')),
+          );
+        }
+      } catch (_) {
+        if (Platform.isAndroid && androidUri != null) {
+          try {
+            await const DiagnosticBundleExporter().deleteDestination(
+              androidUri!,
+            );
+          } on Object {
+            // Cleanup is best effort; preserve the original export failure.
+          }
+        }
+        rethrow;
+      } finally {
+        if (Platform.isAndroid && temporary != null) {
+          try {
+            await temporary.delete();
+          } on FileSystemException {
+            // Cleanup is best effort; the OS may remove temporary files later.
+          }
+        }
+      }
+    });
   }
 
   Future<void> _importCsv() async {
