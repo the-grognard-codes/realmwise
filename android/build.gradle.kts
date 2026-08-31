@@ -49,19 +49,19 @@ subprojects {
     }
 }
 
-// Ensure all Android library/application subprojects compile against API 36
+// Ensure all Android library/application subprojects compile against API 37.
 // This helps avoid AAR metadata mismatches from plugins compiled with older SDKs.
 subprojects {
     plugins.withId("com.android.library") {
         extensions.configure<com.android.build.api.dsl.LibraryExtension>("android") {
-            compileSdk = 36
+            compileSdk = 37
         }
     }
     plugins.withId("com.android.application") {
         extensions.configure<com.android.build.api.dsl.ApplicationExtension>("android") {
             try {
                 // AppExtension uses setCompileSdkVersion API
-                this.javaClass.getMethod("setCompileSdkVersion", Int::class.java).invoke(this, 36)
+                this.javaClass.getMethod("setCompileSdkVersion", Int::class.java).invoke(this, 37)
             } catch (_: Exception) {
                 // ignore; best-effort
             }
@@ -69,7 +69,7 @@ subprojects {
     }
 }
 
-// Keep the app on JVM 17 while matching mobile_scanner's Java 1.8 target.
+// Keep the app and mobile_scanner on JVM 17.
 subprojects {
     if (project.name == "app") {
         plugins.withId("org.jetbrains.kotlin.jvm") {
@@ -91,14 +91,14 @@ subprojects {
         plugins.withId("org.jetbrains.kotlin.jvm") {
             tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class.java).configureEach {
                 compilerOptions {
-                    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
+                    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
                 }
             }
         }
         plugins.withId("org.jetbrains.kotlin.android") {
             tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class.java).configureEach {
                 compilerOptions {
-                    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
+                    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
                 }
             }
         }

@@ -46,7 +46,7 @@ void main() {
       )
       ..addFile(ArchiveFile('catalog.db', database.length, database));
     final path = '${dir.path}/bundle.zip';
-    await File(path).writeAsBytes(ZipEncoder().encode(archive)!);
+    await File(path).writeAsBytes(ZipEncoder().encode(archive));
     return path;
   }
 
@@ -208,7 +208,7 @@ void main() {
   test('missing manifest is rejected', () async {
     final a = Archive()..addFile(ArchiveFile('catalog.db', 3, [1, 2, 3]));
     final p = '${dir.path}/missing.zip';
-    await File(p).writeAsBytes(ZipEncoder().encode(a)!);
+    await File(p).writeAsBytes(ZipEncoder().encode(a));
     expect(() => service.validateBundle(p), throwsFormatException);
   });
   test('unsupported format is rejected', () async {

@@ -85,10 +85,14 @@ void main() {
     expect(find.byTooltip('Open library'), findsOneWidget);
   }
 
-  Future<void> pumpInteraction(WidgetTester tester) =>
-      tester.pump(const Duration(milliseconds: 400));
+  Future<void> pumpInteraction(WidgetTester tester) async {
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
 
-  testWidgets('opens the phone drawer and closes from its scrim', (tester) async {
+  testWidgets('opens the phone drawer and closes from its scrim', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(400, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -104,7 +108,9 @@ void main() {
     expect(find.text('Library'), findsNothing);
   });
 
-  testWidgets('Android Back and close control dismiss the drawer', (tester) async {
+  testWidgets('Android Back and close control dismiss the drawer', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(400, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -134,23 +140,22 @@ void main() {
     await tester.tap(find.byTooltip('Open library'));
     await pumpInteraction(tester);
     final system = find
-        .ancestor(
-          of: find.text('RIFTS').last,
-          matching: find.byType(ExpansionTile),
-        )
+        .ancestor(of: find.text('RIFTS').last, matching: find.byType(ListTile))
         .last;
     await tester.ensureVisible(system);
     await tester.tap(system);
     await pumpInteraction(tester);
+    expect(find.text('Rifts Earth'), findsOneWidget);
     final setting = find
         .ancestor(
           of: find.text('Rifts Earth').last,
-          matching: find.byType(ExpansionTile),
+          matching: find.byType(ListTile),
         )
         .last;
     await tester.ensureVisible(setting);
     await tester.tap(setting);
     await pumpInteraction(tester);
+    expect(find.text('Core Rulebook'), findsWidgets);
     final leaf = find
         .ancestor(
           of: find.text('Core Rulebook').last,

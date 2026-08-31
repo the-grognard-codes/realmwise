@@ -47,6 +47,7 @@ void main() {
       backups.listSync().where((e) => e.path.endsWith('.backup.db')),
       isNotEmpty,
     );
+    await controller.closeDatabase();
     controller.dispose();
   });
 
@@ -74,6 +75,7 @@ void main() {
         )).single['title'],
         'Keep',
       );
+      await controller.closeDatabase();
       controller.dispose();
     },
   );
@@ -112,6 +114,7 @@ void main() {
       expect(controller.selectedProvider, isNull);
       expect(controller.syncMetadata, isNull);
       expect(controller.syncCoordinator.isConnected, isFalse);
+      await controller.closeDatabase();
       controller.dispose();
     },
   );
@@ -160,7 +163,9 @@ void main() {
     expect(applied, isTrue);
     expect(identical(controller.selectedProvider, provider), isTrue);
     expect(controller.syncCoordinator.isConnected, isTrue);
+    await source.closeDatabase();
     source.dispose();
+    await controller.closeDatabase();
     controller.dispose();
   });
 
@@ -208,7 +213,9 @@ void main() {
     expect(applied, isTrue);
     expect(controller.selectedProvider, isNull);
     expect(controller.syncCoordinator.isConnected, isFalse);
+    await source.closeDatabase();
     source.dispose();
+    await controller.closeDatabase();
     controller.dispose();
   });
 }

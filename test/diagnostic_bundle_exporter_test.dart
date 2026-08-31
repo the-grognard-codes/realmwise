@@ -6,14 +6,18 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('realmwise/diagnostics');
 
-  tearDown(() => channel.setMockMethodCallHandler(null));
+  tearDown(
+    () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null),
+  );
 
   test('chooses a destination without sending archive bytes', () async {
     MethodCall? received;
-    channel.setMockMethodCallHandler((call) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
       received = call;
       return 'content://downloads/diagnostics.zip';
-    });
+        });
 
     final uri = await const DiagnosticBundleExporter(
       channel: channel,
@@ -29,10 +33,11 @@ void main() {
 
   test('copies a temporary path to the selected destination', () async {
     MethodCall? received;
-    channel.setMockMethodCallHandler((call) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
       received = call;
       return null;
-    });
+        });
 
     await const DiagnosticBundleExporter(
       channel: channel,
@@ -50,10 +55,11 @@ void main() {
 
   test('deletes a selected destination during export cleanup', () async {
     MethodCall? received;
-    channel.setMockMethodCallHandler((call) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
       received = call;
       return null;
-    });
+        });
 
     await const DiagnosticBundleExporter(
       channel: channel,

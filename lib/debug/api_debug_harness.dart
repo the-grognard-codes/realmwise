@@ -46,9 +46,9 @@ class ApiDebugHarness {
   ) async {
     try {
       if (request.method == 'GET' && request.uri.path == '/')
-        return _html(request);
+        return await _html(request);
       if (request.method == 'GET' && request.uri.path == '/openapi.json')
-        return _json(request, _openApi, 200);
+        return await _json(request, _openApi, 200);
       if (request.method == 'GET' &&
           request.uri.path == '/lookup/openlibrary') {
         if (readiness != null) await readiness;
@@ -59,7 +59,7 @@ class ApiDebugHarness {
         final title = q['title']?.trim() ?? '';
         final author = q['author']?.trim() ?? '';
         if (isbn.isEmpty && title.isEmpty && author.isEmpty) {
-          return _json(
+          return await _json(
             request,
             safeDebugError(
               const CatalogLookupException('Provide isbn, title, or author.'),
@@ -81,7 +81,7 @@ class ApiDebugHarness {
                 ownerName: name,
                 ownerEmail: email,
               );
-        return _json(request, {
+        return await _json(request, {
           'ok': true,
           'results': result.map(_candidateJson).toList(),
         }, 200);
@@ -92,7 +92,7 @@ class ApiDebugHarness {
         final key = _bearer(request);
         if (query.length < 2 || key.isEmpty) throw const CatalogLookupException('Provide query and Authorization Bearer token.');
         final results = rpgGeekSearch != null ? await rpgGeekSearch(query, key) : await _requireController(controller).lookup.searchRpgGeek(query, key);
-        return _json(request, {
+        return await _json(request, {
           'ok': true,
           'results': results.map(_candidateJson).toList(),
         }, 200);
@@ -103,12 +103,12 @@ class ApiDebugHarness {
         final key = _bearer(request);
         if (id.isEmpty || key.isEmpty) throw const CatalogLookupException('Provide item id and Authorization Bearer token.');
         final result = rpgGeekThing != null ? await rpgGeekThing(id, key) : await _requireController(controller).lookup.fetchRpgGeekItem(id, key);
-        return _json(request, {
+        return await _json(request, {
           'ok': true,
           'result': _candidateJson(result),
         }, 200);
       }
-      return _json(request, {'ok': false, 'error': 'Not found'}, 404);
+      return await _json(request, {'ok': false, 'error': 'Not found'}, 404);
     } on CatalogLookupException catch (error) {
       final invalid =
           error.message == 'Enter a 13-digit ISBN.' ||

@@ -37,7 +37,7 @@ gradle.taskGraph.whenReady {
 
 android {
     namespace = "com.realmwise.rpg.tracker"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

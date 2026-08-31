@@ -201,7 +201,6 @@ class CatalogBundleService {
         ArchiveFile(manifestEntry, manifestBytes.length, manifestBytes),
       );
       final encoded = ZipEncoder().encode(archive);
-      if (encoded == null) throw StateError('Could not encode catalog bundle.');
       await File(outputPath).writeAsBytes(encoded, flush: true);
     } finally {
       if (await temp.exists()) await temp.delete();

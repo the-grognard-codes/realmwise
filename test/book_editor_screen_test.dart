@@ -9,42 +9,52 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  sqfliteFfiInit();
+  databaseFactory = databaseFactoryFfi;
 
   testWidgets('edits and saves Product code from the book editor', (
     tester,
   ) async {
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
-    final folder = await Directory.systemTemp.createTemp('realmwise_editor_');
-    final databasePath = '${folder.path}${Platform.pathSeparator}catalog.db';
-    final imagePath = '${folder.path}${Platform.pathSeparator}images';
     final controller = AppController();
+    Directory? folder;
 
     try {
-      await controller.database.open(databasePath);
-      await controller.imageStorage.initialize(imagePath);
-      final saved = await controller.database.saveRecord(
-        const CatalogRecord(
-          work: BookWork(title: 'Product Code Test', productCode: 'OLD-1'),
-        ),
-      );
+      final saved = (await tester.runAsync<CatalogRecord>(() async {
+        folder = await Directory.systemTemp.createTemp('realmwise_editor_');
+        final databasePath =
+            '${folder!.path}${Platform.pathSeparator}catalog.db';
+        await controller.database.open(databasePath);
+        return controller.database.saveRecord(
+          const CatalogRecord(
+            work: BookWork(title: 'Product Code Test', productCode: 'OLD-1'),
+          ),
+        );
+      }))!;
 
       await tester.pumpWidget(
         MaterialApp(
           home: BookEditorScreen(controller: controller, record: saved),
         ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
 
       await tester.enterText(find.bySemanticsLabel('Product code'), 'NEW-2');
       await tester.tap(find.text('Save'));
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
 
-      final loaded = await controller.database.getRecord(saved.work.id!);
+      final loaded = (await tester.runAsync(
+        () => controller.database.getRecord(saved.work.id!),
+      ))!;
       expect(loaded.work.productCode, 'NEW-2');
     } finally {
-      await controller.database.close();
-      await folder.delete(recursive: true);
+      await tester.runAsync(() => controller.database.close());
+      controller.dispose();
+      final fixtureFolder = folder;
+      if (fixtureFolder != null) {
+        await tester.runAsync(() => fixtureFolder.delete(recursive: true));
+      }
     }
   });
 }
