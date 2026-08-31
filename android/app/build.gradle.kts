@@ -16,8 +16,13 @@ if (hasSigningProperties) {
 fun signingProperty(name: String): String? = signingProperties.getProperty(name)?.takeIf { it.isNotBlank() }
 
 gradle.taskGraph.whenReady {
-    val releaseTaskRequested = allTasks.any { task ->
-        task.name.contains("release", ignoreCase = true) || task.name.startsWith("bundle", ignoreCase = true)
+    // Resolved task graphs for debug builds can include auxiliary release-named
+    // tasks (such as lint-model generation). Gate signing only on an explicitly
+    // requested release build, so debug CI and CodeQL builds need no secrets.
+    val releaseTaskRequested = gradle.startParameter.taskNames.any { taskName ->
+        taskName.contains("release", ignoreCase = true) ||
+            taskName.substringAfterLast(':').equals("assemble", ignoreCase = true) ||
+            taskName.substringAfterLast(':').equals("bundle", ignoreCase = true)
     }
     if (releaseTaskRequested) {
         if (!hasSigningProperties) {

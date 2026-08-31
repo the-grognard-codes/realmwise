@@ -102,9 +102,7 @@ DropboxProvider? createConfiguredDropboxProvider([
       ? androidConfiguration.dropboxClientId
       : (kReleaseMode ? 'pujnhj60xv194u6' : 'qiiuadba0azgtr7');
   if (effectiveId.isEmpty) return null;
-  final configured = android
-      ? androidConfiguration.dropboxRedirectUri
-      : '';
+  final configured = android ? androidConfiguration.dropboxRedirectUri : '';
   final uri = Uri.tryParse(
     configured.isEmpty && Platform.isAndroid
         ? 'com.realmwise.rpg.tracker://oauth2redirect/dropbox'

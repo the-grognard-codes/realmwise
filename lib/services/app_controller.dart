@@ -104,7 +104,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   late final ImportService importer = ImportService(database);
   late final ImageStorageService imageStorage = ImageStorageService(_http);
   late final DiagnosticLogger diagnostics = DiagnosticLogger();
-  late final DiagnosticBundleService diagnosticBundles = DiagnosticBundleService(diagnostics);
+  late final DiagnosticBundleService diagnosticBundles =
+      DiagnosticBundleService(diagnostics);
   late final CatalogService catalog = CatalogService(
     database: database,
     images: imageStorage,
@@ -213,9 +214,13 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> initialize() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      diagnosticOptionsEnabled = prefs.getBool('diagnostic_options_enabled') ?? false;
+      diagnosticOptionsEnabled =
+          prefs.getBool('diagnostic_options_enabled') ?? false;
       debugLoggingEnabled = prefs.getBool('diagnostic_debug_logging') ?? false;
-      await diagnostics.configure(optionsEnabled: diagnosticOptionsEnabled, debugEnabled: debugLoggingEnabled);
+      await diagnostics.configure(
+        optionsEnabled: diagnosticOptionsEnabled,
+        debugEnabled: debugLoggingEnabled,
+      );
       SyncDebug.diagnosticLogger = diagnostics;
       deviceId = prefs.getString('realmwise.device.id') ?? '';
       if (deviceId.isEmpty) {
@@ -278,7 +283,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('diagnostic_options_enabled', enabled);
     if (!enabled) await prefs.setBool('diagnostic_debug_logging', false);
-    await diagnostics.configure(optionsEnabled: diagnosticOptionsEnabled, debugEnabled: debugLoggingEnabled);
+    await diagnostics.configure(
+      optionsEnabled: diagnosticOptionsEnabled,
+      debugEnabled: debugLoggingEnabled,
+    );
     notifyListeners();
   }
 
@@ -286,11 +294,18 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     debugLoggingEnabled = diagnosticOptionsEnabled && enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('diagnostic_debug_logging', debugLoggingEnabled);
-    await diagnostics.configure(optionsEnabled: diagnosticOptionsEnabled, debugEnabled: debugLoggingEnabled);
+    await diagnostics.configure(
+      optionsEnabled: diagnosticOptionsEnabled,
+      debugEnabled: debugLoggingEnabled,
+    );
     notifyListeners();
   }
 
-  Future<void> logDiagnostic(DiagnosticSeverity severity, String event, [Map<String, Object?> fields = const {}]) => diagnostics.log(severity, event, fields);
+  Future<void> logDiagnostic(
+    DiagnosticSeverity severity,
+    String event, [
+    Map<String, Object?> fields = const {},
+  ]) => diagnostics.log(severity, event, fields);
 
   String _localHostname() {
     try {
@@ -468,10 +483,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     if (trimmedName.isEmpty) {
       await prefs.remove('realmwise.openlibrary.contact.name');
     } else {
-      await prefs.setString(
-        'realmwise.openlibrary.contact.name',
-        trimmedName,
-      );
+      await prefs.setString('realmwise.openlibrary.contact.name', trimmedName);
     }
     if (trimmedEmail.isEmpty) {
       await prefs.remove('realmwise.openlibrary.contact.email');

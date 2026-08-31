@@ -112,7 +112,10 @@ void main() {
         Uri.parse('com.realmwise.rpg.tracker://oauth2redirect/dropbox'),
       );
       final waiting = callback.waitForCallback();
-      final waitingError = expectLater(waiting, throwsA(isA<PlatformException>()));
+      final waitingError = expectLater(
+        waiting,
+        throwsA(isA<PlatformException>()),
+      );
       await callback.cancel();
       await waitingError;
       expect(calls, ['wait_for_callback', 'cancel_callback']);

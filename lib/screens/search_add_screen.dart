@@ -46,6 +46,7 @@ class SearchAddScreen extends StatefulWidget {
   });
   final AppController controller;
   final VoidCallback onSaved;
+
   /// When true, selecting a remote result returns the enriched candidate
   /// instead of opening a new editor route.
   final bool selectionOnly;
@@ -71,8 +72,8 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
     _mode = widget.initialIsbn?.trim().isNotEmpty == true
         ? LookupMode.isbn
         : widget.initialTitle?.trim().isNotEmpty == true
-            ? LookupMode.title
-            : LookupMode.author;
+        ? LookupMode.title
+        : LookupMode.author;
     _query.text = _queryForMode(_mode);
     if (_isAndroid) _loadCameraPermission();
   }
@@ -99,8 +100,10 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
       return;
     }
     if (!mounted) return;
-    setState(() => _cameraPermissionDenied =
-        status.isPermanentlyDenied || status.isRestricted);
+    setState(
+      () => _cameraPermissionDenied =
+          status.isPermanentlyDenied || status.isRestricted,
+    );
   }
 
   @override
@@ -119,7 +122,10 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
     try {
       final key = await widget.controller.rpgGeekKey();
       final results = switch (_mode) {
-        LookupMode.isbn => await widget.controller.lookup.searchByIsbn(_query.text, apiKey: key),
+        LookupMode.isbn => await widget.controller.lookup.searchByIsbn(
+          _query.text,
+          apiKey: key,
+        ),
         LookupMode.title =>
           await widget.controller.lookup.searchByTitleOrAuthor(
             term: _query.text,
@@ -270,138 +276,141 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(
-          leading: BackButton(onPressed: () => Navigator.pop(context)),
-          title: const Text('Find a work'),
-        ),
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 860),
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(18, 22, 18, 40),
-              children: [
-              Text('Find a work',
-                  style: Theme.of(context).textTheme.headlineSmall),
-              const SizedBox(height: 6),
-              const Text(
-                'OpenLibrary is searched first. If an RPGGeek key is saved in Settings, its returned details are used preferentially. Manual entry always works offline.',
-              ),
-              const SizedBox(height: 18),
-              SegmentedButton<LookupMode>(
-                segments: const [
-                  ButtonSegment(
-                    value: LookupMode.isbn,
-                    label: Text('ISBN-10/13'),
-                    icon: Icon(Icons.numbers),
-                  ),
-                  ButtonSegment(
-                    value: LookupMode.title,
-                    label: Text('Title'),
-                    icon: Icon(Icons.title),
-                  ),
-                  ButtonSegment(
-                    value: LookupMode.author,
-                    label: Text('Author'),
-                    icon: Icon(Icons.person),
-                  ),
-                ],
-                selected: {_mode},
-                onSelectionChanged: (selection) => setState(() {
-                    _mode = selection.first;
-                    _query.text = _queryForMode(_mode);
-                  _results = const [];
-                  _message = null;
-                }),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: _query,
-                keyboardType: _mode == LookupMode.isbn
-                    ? TextInputType.number
-                    : TextInputType.text,
-                textInputAction: TextInputAction.search,
-                onSubmitted: (_) => _search(),
-                decoration: InputDecoration(
-                  labelText: _mode == LookupMode.isbn
-                      ? '10 or 13 digit ISBN'
-                      : (_mode == LookupMode.title
-                          ? 'Book title'
-                          : 'Author name'),
-                  suffixIcon: IconButton(
-                    onPressed: _searching ? null : _search,
-                    tooltip: 'Search OpenLibrary',
-                    icon: const Icon(Icons.search),
-                  ),
+    appBar: AppBar(
+      leading: BackButton(onPressed: () => Navigator.pop(context)),
+      title: const Text('Find a work'),
+    ),
+    body: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 860),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(18, 22, 18, 40),
+          children: [
+            Text(
+              'Find a work',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'OpenLibrary is searched first. If an RPGGeek key is saved in Settings, its returned details are used preferentially. Manual entry always works offline.',
+            ),
+            const SizedBox(height: 18),
+            SegmentedButton<LookupMode>(
+              segments: const [
+                ButtonSegment(
+                  value: LookupMode.isbn,
+                  label: Text('ISBN-10/13'),
+                  icon: Icon(Icons.numbers),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 12,
-                runSpacing: 8,
-                children: [
-                  FilledButton.icon(
-                    onPressed: _searching ? null : _search,
-                    icon: const Icon(Icons.travel_explore),
-                    label: const Text('Search OpenLibrary'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: _searching ? null : _manual,
-                    icon: const Icon(Icons.edit_note),
-                    label: const Text('Add manually'),
-                  ),
-                  if (_isAndroid && !_cameraPermissionDenied)
-                    OutlinedButton.icon(
-                      onPressed: _searching ? null : _scanWithCamera,
-                      icon: const Icon(Icons.camera_alt_outlined),
-                      label: const Text('Scan with Camera'),
-                    ),
-                ],
-              ),
-              if (_searching)
-                const Padding(
-                  padding: EdgeInsets.all(28),
-                  child: Center(child: CircularProgressIndicator()),
+                ButtonSegment(
+                  value: LookupMode.title,
+                  label: Text('Title'),
+                  icon: Icon(Icons.title),
                 ),
-              if (_message != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 24),
-                  child: Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Text(_message!),
-                    ),
-                  ),
-                ),
-              if (_results.isNotEmpty) ...[
-                const SizedBox(height: 28),
-                Text(
-                  'Top ${_results.length} match${_results.length == 1 ? '' : 'es'}',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                ..._results.map(
-                  (candidate) => Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.menu_book_outlined),
-                      title: Text(_title(candidate)),
-                      subtitle: Text(_subtitle(candidate)),
-                      trailing: FilledButton(
-                        onPressed: _searching ? null : () => _select(candidate),
-                        child: const Text('Select'),
-                      ),
-                    ),
-                  ),
+                ButtonSegment(
+                  value: LookupMode.author,
+                  label: Text('Author'),
+                  icon: Icon(Icons.person),
                 ),
               ],
+              selected: {_mode},
+              onSelectionChanged: (selection) => setState(() {
+                _mode = selection.first;
+                _query.text = _queryForMode(_mode);
+                _results = const [];
+                _message = null;
+              }),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _query,
+              keyboardType: _mode == LookupMode.isbn
+                  ? TextInputType.number
+                  : TextInputType.text,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => _search(),
+              decoration: InputDecoration(
+                labelText: _mode == LookupMode.isbn
+                    ? '10 or 13 digit ISBN'
+                    : (_mode == LookupMode.title
+                          ? 'Book title'
+                          : 'Author name'),
+                suffixIcon: IconButton(
+                  onPressed: _searching ? null : _search,
+                  tooltip: 'Search OpenLibrary',
+                  icon: const Icon(Icons.search),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: _searching ? null : _search,
+                  icon: const Icon(Icons.travel_explore),
+                  label: const Text('Search OpenLibrary'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _searching ? null : _manual,
+                  icon: const Icon(Icons.edit_note),
+                  label: const Text('Add manually'),
+                ),
+                if (_isAndroid && !_cameraPermissionDenied)
+                  OutlinedButton.icon(
+                    onPressed: _searching ? null : _scanWithCamera,
+                    icon: const Icon(Icons.camera_alt_outlined),
+                    label: const Text('Scan with Camera'),
+                  ),
+              ],
+            ),
+            if (_searching)
+              const Padding(
+                padding: EdgeInsets.all(28),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            if (_message != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 24),
+                child: Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(_message!),
+                  ),
+                ),
+              ),
+            if (_results.isNotEmpty) ...[
+              const SizedBox(height: 28),
+              Text(
+                'Top ${_results.length} match${_results.length == 1 ? '' : 'es'}',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              ..._results.map(
+                (candidate) => Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.menu_book_outlined),
+                    title: Text(_title(candidate)),
+                    subtitle: Text(_subtitle(candidate)),
+                    trailing: FilledButton(
+                      onPressed: _searching ? null : () => _select(candidate),
+                      child: const Text('Select'),
+                    ),
+                  ),
+                ),
+              ),
             ],
-          ),
+          ],
         ),
       ),
-    );
+    ),
+  );
 
   String _subtitle(WorkCandidate candidate) {
     final pieces = <String>[
-      if (candidate.rpgGeekId.isNotEmpty) 'RPGGeek candidate — confirm to load details',
+      if (candidate.rpgGeekId.isNotEmpty)
+        'RPGGeek candidate — confirm to load details',
       if (candidate.authors.isNotEmpty) candidate.authors.join(', '),
       if (candidate.isbn13.isNotEmpty) 'ISBN ${candidate.isbn13}',
       if (candidate.publicationDate.isNotEmpty) candidate.publicationDate,
@@ -412,7 +421,9 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
   }
 
   String _title(WorkCandidate candidate) {
-    final year = RegExp(r'\b(\d{4})\b').firstMatch(candidate.publicationDate)?.group(1);
+    final year = RegExp(
+      r'\b(\d{4})\b',
+    ).firstMatch(candidate.publicationDate)?.group(1);
     return year == null ? candidate.title : '${candidate.title} ($year)';
   }
 }

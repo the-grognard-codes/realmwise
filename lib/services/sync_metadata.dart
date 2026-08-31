@@ -83,9 +83,14 @@ class SyncMetadata {
   final bool includePersonalImages;
   final int retainedRevisionCount;
   final bool automaticSyncEnabled;
-  final String? deviceId, deviceName, ownershipGeneration, leaseToken,
+  final String? deviceId,
+      deviceName,
+      ownershipGeneration,
+      leaseToken,
       automaticSchedulerState;
-  final DateTime? leaseExpiresAt, lastLeaseRenewedAt, lastAutomaticAttemptAt,
+  final DateTime? leaseExpiresAt,
+      lastLeaseRenewedAt,
+      lastAutomaticAttemptAt,
       lastAutomaticSuccessAt;
 
   Map<String, Object?> toJson() => {
@@ -163,21 +168,38 @@ class SyncMetadata {
     String? automaticSchedulerState,
     bool clearLease = false,
   }) => SyncMetadata(
-    catalogIdentity: catalogIdentity, provider: provider, accountId: accountId,
-    accountDisplayName: accountDisplayName, remoteTargetId: remoteTargetId,
-    remoteTargetName: remoteTargetName, revision: revision,
-    contentHash: contentHash, lastSuccessfulLocalFingerprint: lastSuccessfulLocalFingerprint,
-    createdAt: createdAt, updatedAt: DateTime.now().toUtc(), state: state, error: error,
-    includePersonalImages: includePersonalImages, retainedRevisionCount: retainedRevisionCount,
+    catalogIdentity: catalogIdentity,
+    provider: provider,
+    accountId: accountId,
+    accountDisplayName: accountDisplayName,
+    remoteTargetId: remoteTargetId,
+    remoteTargetName: remoteTargetName,
+    revision: revision,
+    contentHash: contentHash,
+    lastSuccessfulLocalFingerprint: lastSuccessfulLocalFingerprint,
+    createdAt: createdAt,
+    updatedAt: DateTime.now().toUtc(),
+    state: state,
+    error: error,
+    includePersonalImages: includePersonalImages,
+    retainedRevisionCount: retainedRevisionCount,
     automaticSyncEnabled: automaticSyncEnabled ?? this.automaticSyncEnabled,
-    deviceId: deviceId ?? this.deviceId, deviceName: deviceName ?? this.deviceName,
-    ownershipGeneration: clearLease ? null : ownershipGeneration ?? this.ownershipGeneration,
+    deviceId: deviceId ?? this.deviceId,
+    deviceName: deviceName ?? this.deviceName,
+    ownershipGeneration: clearLease
+        ? null
+        : ownershipGeneration ?? this.ownershipGeneration,
     leaseToken: clearLease ? null : leaseToken ?? this.leaseToken,
     leaseExpiresAt: clearLease ? null : leaseExpiresAt ?? this.leaseExpiresAt,
-    lastLeaseRenewedAt: clearLease ? null : lastLeaseRenewedAt ?? this.lastLeaseRenewedAt,
-    lastAutomaticAttemptAt: lastAutomaticAttemptAt ?? this.lastAutomaticAttemptAt,
-    lastAutomaticSuccessAt: lastAutomaticSuccessAt ?? this.lastAutomaticSuccessAt,
-    automaticSchedulerState: automaticSchedulerState ?? this.automaticSchedulerState,
+    lastLeaseRenewedAt: clearLease
+        ? null
+        : lastLeaseRenewedAt ?? this.lastLeaseRenewedAt,
+    lastAutomaticAttemptAt:
+        lastAutomaticAttemptAt ?? this.lastAutomaticAttemptAt,
+    lastAutomaticSuccessAt:
+        lastAutomaticSuccessAt ?? this.lastAutomaticSuccessAt,
+    automaticSchedulerState:
+        automaticSchedulerState ?? this.automaticSchedulerState,
   );
 
   static DateTime? _date(Object? value) =>

@@ -12,27 +12,42 @@ void main() {
   test('RPGGeek GET search and thing routes propagate bearer auth', () async {
     String? searchKey;
     String? thingKey;
-    final harness = await ApiDebugHarness.start(null, port: 0,
+    final harness = await ApiDebugHarness.start(
+      null,
+      port: 0,
       rpgGeekSearch: (query, key) async {
-        expect(query, 'Dragon Quest'); searchKey = key;
+        expect(query, 'Dragon Quest');
+        searchKey = key;
         return [const WorkCandidate(title: 'Dragon Quest', rpgGeekId: '42')];
       },
       rpgGeekThing: (id, key) async {
-        expect(id, '42'); thingKey = key;
+        expect(id, '42');
+        thingKey = key;
         return const WorkCandidate(title: 'Dragon Quest', rpgGeekId: '42');
-      });
+      },
+    );
     addTearDown(harness.close);
-    final client = http.Client(); addTearDown(client.close);
+    final client = http.Client();
+    addTearDown(client.close);
     final base = '127.0.0.1:${harness.port}';
     final headers = {'Authorization': 'Bearer secret-token'};
-    final search = await client.get(Uri.http(base, '/lookup/rpggeek/search', {'query': 'Dragon Quest'}), headers: headers);
+    final search = await client.get(
+      Uri.http(base, '/lookup/rpggeek/search', {'query': 'Dragon Quest'}),
+      headers: headers,
+    );
     expect(search.statusCode, 200);
     expect(jsonDecode(search.body)['results'][0]['rpgGeekId'], '42');
-    final detail = await client.get(Uri.http(base, '/lookup/rpggeek/thing/42'), headers: headers);
+    final detail = await client.get(
+      Uri.http(base, '/lookup/rpggeek/thing/42'),
+      headers: headers,
+    );
     expect(detail.statusCode, 200);
     expect(jsonDecode(detail.body)['result']['title'], 'Dragon Quest');
-    expect(searchKey, 'secret-token'); expect(thingKey, 'secret-token');
-    final invalid = await client.get(Uri.http(base, '/lookup/rpggeek/search', {'query': 'x'}));
+    expect(searchKey, 'secret-token');
+    expect(thingKey, 'secret-token');
+    final invalid = await client.get(
+      Uri.http(base, '/lookup/rpggeek/search', {'query': 'x'}),
+    );
     expect(invalid.statusCode, 400);
     final old = await client.post(Uri.http(base, '/lookup/rpggeek'));
     expect(old.statusCode, 404);
@@ -107,14 +122,21 @@ void main() {
         isTrue,
       );
       expect(document['paths']['/lookup/rpggeek'], isNull);
-      expect(document['paths']['/lookup/rpggeek/search']['get']['security'], isNotNull);
-      expect(document['paths']['/lookup/rpggeek/thing/{id}']['get']['parameters'], isNotEmpty);
+      expect(
+        document['paths']['/lookup/rpggeek/search']['get']['security'],
+        isNotNull,
+      );
+      expect(
+        document['paths']['/lookup/rpggeek/thing/{id}']['get']['parameters'],
+        isNotEmpty,
+      );
       final candidateSchema =
-          document['components']['schemas']['Candidate'] as Map<String, dynamic>;
+          document['components']['schemas']['Candidate']
+              as Map<String, dynamic>;
       expect(candidateSchema['description'], contains('publicationDate'));
       expect(
-        (candidateSchema['properties'] as Map<String, dynamic>)['rpgGeekUrl']
-            ['readOnly'],
+        (candidateSchema['properties']
+            as Map<String, dynamic>)['rpgGeekUrl']['readOnly'],
         isTrue,
       );
       final landing = await client.get(
@@ -125,20 +147,35 @@ void main() {
       expect(landing.body, contains('swagger-ui.css'));
       expect(landing.body, contains('swagger-ui-bundle.js'));
       expect(landing.body, contains('swagger-ui-standalone-preset.js'));
-      expect(landing.body, contains('presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset]'));
-      expect(landing.body, isNot(contains('SwaggerUIBundle.SwaggerUIStandalonePreset')));
+      expect(
+        landing.body,
+        contains(
+          'presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset]',
+        ),
+      );
+      expect(
+        landing.body,
+        isNot(contains('SwaggerUIBundle.SwaggerUIStandalonePreset')),
+      );
       expect(landing.body, contains('swagger-ui-dist@5.11.10'));
       expect(landing.body, contains('integrity="sha256-'));
       expect(landing.body, contains('crossorigin="anonymous"'));
       expect(landing.body, contains('viewport'));
       expect(landing.body, contains('url: "/openapi.json"'));
-      expect(landing.headers['content-security-policy'], contains("default-src 'none'"));
+      expect(
+        landing.headers['content-security-policy'],
+        contains("default-src 'none'"),
+      );
       expect(landing.body, isNot(contains('super-secret-token')));
       final operation =
-          document['paths']['/lookup/openlibrary']['get'] as Map<String, dynamic>;
+          document['paths']['/lookup/openlibrary']['get']
+              as Map<String, dynamic>;
       expect(operation['summary'], 'Search Open Library');
       expect(operation['description'], contains('ISBN'));
-      expect(document['components']['securitySchemes']['bearerAuth']['scheme'], 'bearer');
+      expect(
+        document['components']['securitySchemes']['bearerAuth']['scheme'],
+        'bearer',
+      );
     },
   );
 

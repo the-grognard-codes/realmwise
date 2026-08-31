@@ -227,118 +227,118 @@ class _CatalogScreenState extends State<CatalogScreen> {
         }
       },
       child: LayoutBuilder(
-      builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 900;
-        final selector = _CatalogSelector(
-          controller: widget.controller,
-          records: _shown,
-          icons: _icons,
-          selected: _selected,
-          onSelected: (record) {
-            widget.controller.clearSessionNewWork(record.work.id);
-            setState(() => _selected = record);
-          },
-          onOpen: _edit,
-        );
-        final content = Column(
-          children: [
-            _catalogHeader(wide),
-            _catalogTools(),
-            Expanded(
-              child: _records.isEmpty
-                  ? const _EmptyCatalog()
-                  : wide
-                  ? Row(
-                      children: [
-                        SizedBox(width: 370, child: selector),
-                        const VerticalDivider(width: 1),
-                        Expanded(
-                          child: _BookPreview(
-                            record: _selected,
-                            onEdit: _selected == null
-                                ? null
-                                : () => _edit(_selected!),
-                            onPrevious: _selectedIndex > 0
-                                ? () => _selectRelative(-1)
-                                : null,
-                            onNext:
-                                _selectedIndex >= 0 &&
-                                    _selectedIndex <
-                                        _navigationRecords.length - 1
-                                ? () => _selectRelative(1)
-                                : null,
+        builder: (context, constraints) {
+          final wide = constraints.maxWidth >= 900;
+          final selector = _CatalogSelector(
+            controller: widget.controller,
+            records: _shown,
+            icons: _icons,
+            selected: _selected,
+            onSelected: (record) {
+              widget.controller.clearSessionNewWork(record.work.id);
+              setState(() => _selected = record);
+            },
+            onOpen: _edit,
+          );
+          final content = Column(
+            children: [
+              _catalogHeader(wide),
+              _catalogTools(),
+              Expanded(
+                child: _records.isEmpty
+                    ? const _EmptyCatalog()
+                    : wide
+                    ? Row(
+                        children: [
+                          SizedBox(width: 370, child: selector),
+                          const VerticalDivider(width: 1),
+                          Expanded(
+                            child: _BookPreview(
+                              record: _selected,
+                              onEdit: _selected == null
+                                  ? null
+                                  : () => _edit(_selected!),
+                              onPrevious: _selectedIndex > 0
+                                  ? () => _selectRelative(-1)
+                                  : null,
+                              onNext:
+                                  _selectedIndex >= 0 &&
+                                      _selectedIndex <
+                                          _navigationRecords.length - 1
+                                  ? () => _selectRelative(1)
+                                  : null,
+                            ),
                           ),
-                        ),
-                      ],
-                    )
-                  : Column(
-                      children: [
-                        _breadcrumb(),
-                        Expanded(
-                          child: _BookPreview(
-                            record: _selected,
-                            onEdit: _selected == null
-                                ? null
-                                : () => _edit(_selected!),
-                            onPrevious: _selectedIndex > 0
-                                ? () => _selectRelative(-1)
-                                : null,
-                            onNext:
-                                _selectedIndex >= 0 &&
-                                    _selectedIndex <
-                                        _navigationRecords.length - 1
-                                ? () => _selectRelative(1)
-                                : null,
+                        ],
+                      )
+                    : Column(
+                        children: [
+                          _breadcrumb(),
+                          Expanded(
+                            child: _BookPreview(
+                              record: _selected,
+                              onEdit: _selected == null
+                                  ? null
+                                  : () => _edit(_selected!),
+                              onPrevious: _selectedIndex > 0
+                                  ? () => _selectRelative(-1)
+                                  : null,
+                              onNext:
+                                  _selectedIndex >= 0 &&
+                                      _selectedIndex <
+                                          _navigationRecords.length - 1
+                                  ? () => _selectRelative(1)
+                                  : null,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-            ),
-          ],
-        );
-        if (wide) return content;
-        return Stack(
-          children: [
-            content,
-            if (_drawerOpen) ...[
-              Positioned.fill(
-                child: Semantics(
-                  button: true,
-                  label: 'Close library drawer',
-                  child: GestureDetector(
-                    onTap: _closeDrawer,
-                    child: ColoredBox(color: Colors.black54),
-                  ),
-                ),
-              ),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: FractionallySizedBox(
-                  widthFactor: .8,
-                  heightFactor: 1,
-                  child: Material(
-                    elevation: 16,
-                    color: Theme.of(context).colorScheme.surface,
-                    child: _CatalogDrawer(
-                      controller: widget.controller,
-                      records: _shown,
-                      icons: _icons,
-                      selected: _selected,
-                      onSelected: (record) {
-                        widget.controller.clearSessionNewWork(record.work.id);
-                        setState(() => _selected = record);
-                        _closeDrawer();
-                      },
-                      onOpen: _edit,
-                      onClose: _closeDrawer,
-                    ),
-                  ),
-                ),
+                        ],
+                      ),
               ),
             ],
-          ],
-        );
-      },
+          );
+          if (wide) return content;
+          return Stack(
+            children: [
+              content,
+              if (_drawerOpen) ...[
+                Positioned.fill(
+                  child: Semantics(
+                    button: true,
+                    label: 'Close library drawer',
+                    child: GestureDetector(
+                      onTap: _closeDrawer,
+                      child: ColoredBox(color: Colors.black54),
+                    ),
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FractionallySizedBox(
+                    widthFactor: .8,
+                    heightFactor: 1,
+                    child: Material(
+                      elevation: 16,
+                      color: Theme.of(context).colorScheme.surface,
+                      child: _CatalogDrawer(
+                        controller: widget.controller,
+                        records: _shown,
+                        icons: _icons,
+                        selected: _selected,
+                        onSelected: (record) {
+                          widget.controller.clearSessionNewWork(record.work.id);
+                          setState(() => _selected = record);
+                          _closeDrawer();
+                        },
+                        onOpen: _edit,
+                        onClose: _closeDrawer,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          );
+        },
       ),
     );
   }
@@ -372,13 +372,14 @@ class _CatalogScreenState extends State<CatalogScreen> {
           child: IconButton(
             icon: Icon(_drawerOpen ? Icons.close : Icons.menu),
             tooltip: _drawerOpen ? 'Close library' : 'Open library',
-            onPressed: wide
-                ? null
-                : (_drawerOpen ? _closeDrawer : _openDrawer),
+            onPressed: wide ? null : (_drawerOpen ? _closeDrawer : _openDrawer),
           ),
         ),
         const Expanded(
-          child: Text('Catalog', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+          child: Text(
+            'Catalog',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+          ),
         ),
         IconButton(
           tooltip: 'Search catalog',
@@ -503,39 +504,45 @@ class _CatalogDrawer extends StatelessWidget {
         autofocus: true,
         child: Column(
           children: [
-        SizedBox(
-          height: 56,
-          child: Row(
-            children: [
-              const Expanded(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16),
-                  child: Text('Library', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
-                ),
+            SizedBox(
+              height: 56,
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 16),
+                      child: Text(
+                        'Library',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Semantics(
+                    button: true,
+                    label: 'Close library drawer',
+                    child: IconButton(
+                      tooltip: 'Close library',
+                      icon: const Icon(Icons.close),
+                      onPressed: onClose,
+                    ),
+                  ),
+                ],
               ),
-              Semantics(
-                button: true,
-                label: 'Close library drawer',
-                child: IconButton(
-                  tooltip: 'Close library',
-                  icon: const Icon(Icons.close),
-                  onPressed: onClose,
-                ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: _CatalogSelector(
+                controller: controller,
+                records: records,
+                icons: icons,
+                selected: selected,
+                onSelected: onSelected,
+                onOpen: onOpen,
               ),
-            ],
-          ),
-        ),
-        const Divider(height: 1),
-        Expanded(
-          child: _CatalogSelector(
-            controller: controller,
-            records: records,
-            icons: icons,
-            selected: selected,
-            onSelected: onSelected,
-            onOpen: onOpen,
-          ),
-        ),
+            ),
           ],
         ),
       ),

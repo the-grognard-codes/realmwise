@@ -55,11 +55,20 @@ void main() {
   );
 
   test('catalog icon mappings round trip and v1 databases migrate', () async {
-      final folder = await Directory.systemTemp.createTemp('realmwise_icons_');
+    final folder = await Directory.systemTemp.createTemp('realmwise_icons_');
     final dbPath = '${folder.path}${Platform.pathSeparator}catalog.db';
     final service = DatabaseService();
     await service.open(dbPath);
-    await service.upsertCatalogIcon(const CatalogIconMapping(tier: 'gameSystem', sectionName: 'Arcana', localPath: '/tmp/icon.png', alignmentX: .2, alignmentY: -.4, zoom: 2.25));
+    await service.upsertCatalogIcon(
+      const CatalogIconMapping(
+        tier: 'gameSystem',
+        sectionName: 'Arcana',
+        localPath: '/tmp/icon.png',
+        alignmentX: .2,
+        alignmentY: -.4,
+        zoom: 2.25,
+      ),
+    );
     final loaded = await service.getCatalogIcon('gameSystem', 'Arcana');
     expect(loaded?.localPath, '/tmp/icon.png');
     expect(loaded?.zoom, 2.25);
@@ -68,8 +77,18 @@ void main() {
     expect(await service.listCatalogIcons(), isEmpty);
     await service.close();
     final v2Path = '${folder.path}${Platform.pathSeparator}v2.db';
-    final v2 = await openDatabase(v2Path, version: 2, onCreate: (db, _) async => db.execute('CREATE TABLE catalog_icons (tier TEXT NOT NULL, section_name TEXT NOT NULL, local_path TEXT NOT NULL, alignment_x REAL NOT NULL DEFAULT 0, alignment_y REAL NOT NULL DEFAULT 0, PRIMARY KEY (tier, section_name))'));
-    await v2.insert('catalog_icons', {'tier': 'gameSystem', 'section_name': 'Legacy', 'local_path': '/tmp/legacy.png'});
+    final v2 = await openDatabase(
+      v2Path,
+      version: 2,
+      onCreate: (db, _) async => db.execute(
+        'CREATE TABLE catalog_icons (tier TEXT NOT NULL, section_name TEXT NOT NULL, local_path TEXT NOT NULL, alignment_x REAL NOT NULL DEFAULT 0, alignment_y REAL NOT NULL DEFAULT 0, PRIMARY KEY (tier, section_name))',
+      ),
+    );
+    await v2.insert('catalog_icons', {
+      'tier': 'gameSystem',
+      'section_name': 'Legacy',
+      'local_path': '/tmp/legacy.png',
+    });
     await v2.close();
     await service.open(v2Path);
     final migrated = await service.getCatalogIcon('gameSystem', 'Legacy');
@@ -78,7 +97,13 @@ void main() {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
     final oldPath = '${folder.path}${Platform.pathSeparator}old.db';
-    final old = await openDatabase(oldPath, version: 1, onCreate: (db, _) async => db.execute('CREATE TABLE settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL)'));
+    final old = await openDatabase(
+      oldPath,
+      version: 1,
+      onCreate: (db, _) async => db.execute(
+        'CREATE TABLE settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL)',
+      ),
+    );
     await old.close();
     await service.open(oldPath);
     expect(await service.listCatalogIcons(), isEmpty);
@@ -87,29 +112,31 @@ void main() {
   });
 
   test('extended RPGGeek metadata persists in the works table', () async {
-      final folder = await Directory.systemTemp.createTemp('realmwise_metadata_');
+    final folder = await Directory.systemTemp.createTemp('realmwise_metadata_');
     final service = DatabaseService();
     await service.open('${folder.path}${Platform.pathSeparator}catalog.db');
-    final saved = await service.saveRecord(const CatalogRecord(
-      work: BookWork(
-        title: 'Metadata Manual',
-        moreInfo: 'Expanded details',
-        designers: ['A Designer'],
-        artists: ['An Artist'],
-        productionStaff: ['Editor'],
-        version: '2nd edition',
-        productCode: 'PR-42',
-        seriesCode: 'SER-7',
-        dimensions: '8 x 11 in',
-        series: ['Core line'],
-        setting: ['The Realm'],
-        family: ['Fantasy'],
-        system: ['d20'],
-        category: ['Sourcebook'],
-        mechanics: ['Dice rolling'],
-        genre: ['High fantasy'],
+    final saved = await service.saveRecord(
+      const CatalogRecord(
+        work: BookWork(
+          title: 'Metadata Manual',
+          moreInfo: 'Expanded details',
+          designers: ['A Designer'],
+          artists: ['An Artist'],
+          productionStaff: ['Editor'],
+          version: '2nd edition',
+          productCode: 'PR-42',
+          seriesCode: 'SER-7',
+          dimensions: '8 x 11 in',
+          series: ['Core line'],
+          setting: ['The Realm'],
+          family: ['Fantasy'],
+          system: ['d20'],
+          category: ['Sourcebook'],
+          mechanics: ['Dice rolling'],
+          genre: ['High fantasy'],
+        ),
       ),
-    ));
+    );
     final loaded = await service.getRecord(saved.work.id!);
     expect(loaded.work.moreInfo, 'Expanded details');
     expect(loaded.work.designers, ['A Designer']);
