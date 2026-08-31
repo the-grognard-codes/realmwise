@@ -219,7 +219,7 @@ class GoogleDriveOAuthAuthenticator implements SyncAuthenticator {
         'redirect_uri': redirectUri.toString(),
         'grant_type': 'authorization_code',
         'code_verifier': verifier,
-        if (clientSecret != null) 'client_secret': clientSecret!,
+        'client_secret': ?clientSecret,
       },
     );
     if (response.statusCode ~/ 100 != 2)
@@ -414,7 +414,7 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
     final h = {
       'Authorization': 'Bearer ${await _access(s)}',
       'Content-Type': 'application/json',
-      if (revision != null) 'If-Match': revision,
+      'If-Match': ?revision,
     };
     final r = id == null
         ? await _http.post(

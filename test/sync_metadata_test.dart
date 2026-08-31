@@ -468,7 +468,7 @@ class _PolicyProvider implements SyncProvider {
   @override
   Future<SyncRemoteMetadata?> metadata(
     SyncAuthSession _,
-    SyncRemoteTarget __,
+    SyncRemoteTarget _,
   ) async {
     if (metadataFails) throw StateError('metadata unavailable');
     return remote;
@@ -477,8 +477,8 @@ class _PolicyProvider implements SyncProvider {
   @override
   Future<SyncUploadResult> upload(
     SyncAuthSession _,
-    SyncRemoteTarget __,
-    Uint8List ___, {
+    SyncRemoteTarget _,
+    Uint8List _, {
     SyncPrecondition? precondition,
   }) async {
     if (uploadFails) throw StateError('upload interrupted');
@@ -489,7 +489,7 @@ class _PolicyProvider implements SyncProvider {
   @override
   Future<SyncDownloadResult> download(
     SyncAuthSession _,
-    SyncRemoteTarget __, {
+    SyncRemoteTarget _, {
     SyncPrecondition? precondition,
   }) async =>
       SyncDownloadResult(payload: Uint8List.fromList([1]), metadata: remote);

@@ -128,7 +128,7 @@ class DiagnosticLogger {
   Future<void> _tail = Future<void>.value();
   Future<T> _enqueue<T>(Future<T> Function() action) {
     final result = _tail.then((_) => action());
-    _tail = result.then<void>((_) {}, onError: (_, __) {});
+    _tail = result.then<void>((_) {}, onError: (_, _) {});
     return result;
   }
 

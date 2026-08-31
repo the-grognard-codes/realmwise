@@ -565,13 +565,12 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     if (label == null) return;
     final result = await FilePicker.pickFiles(
       type: FileType.image,
-      allowMultiple: true,
       dialogTitle: 'Add local book images',
     );
-    if (result == null) return;
+    if (result.isEmpty) return;
     _commitCopy();
     final imported = <BookImage>[];
-    for (final selected in result.files) {
+    for (final selected in result) {
       final selectedPath = selected.path;
       if (selectedPath == null) continue;
       try {
@@ -579,7 +578,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
           await widget.controller.imageStorage.importFile(
             work: _committedWork(),
             sourcePath: selectedPath,
-            label: result.files.length == 1
+            label: result.length == 1
                 ? label
                 : '${label}_${path.basenameWithoutExtension(selected.name)}',
             cover: _record.images.isEmpty && imported.isEmpty,

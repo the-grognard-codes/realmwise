@@ -176,7 +176,7 @@ Never _fail(http.Response r, String op) {
   SyncDebug.trace('provider.graph.error', {
     'operation': op,
     'status': r.statusCode,
-    if (graphErrorCode != null) 'code': graphErrorCode,
+    'code': ?graphErrorCode,
   });
   if (r.statusCode == 401)
     throw OneDriveAuthException('Authentication expired or revoked');
@@ -339,7 +339,7 @@ class OneDriveOAuthAuthenticator implements SyncAuthenticator {
       // native/localhost callback future may later complete with cancellation;
       // that secondary error must not become an uncaught async exception.
       callbackFuture = callback.waitForCallback();
-      unawaited(callbackFuture.then<void>((_) {}, onError: (_, __) {}));
+      unawaited(callbackFuture.then<void>((_) {}, onError: (_, _) {}));
       await browser.open(auth);
       u = await callbackFuture.timeout(
         callbackTimeout,
@@ -362,7 +362,7 @@ class OneDriveOAuthAuthenticator implements SyncAuthenticator {
       final error = u.queryParameters['error'];
       SyncDebug.trace('provider.oauth.error', {
         'phase': 'authorization',
-        if (error != null) 'code': error,
+        'code': ?error,
       });
       throw OneDriveAuthException(_safe(error, 'authorization'));
     }
@@ -384,7 +384,7 @@ class OneDriveOAuthAuthenticator implements SyncAuthenticator {
       SyncDebug.trace('provider.oauth.error', {
         'phase': 'tokenExchange',
         'status': r.statusCode,
-        if (e != null) 'code': e,
+        'code': ?e,
       });
       throw OneDriveAuthException(_safe(e, 'token exchange'));
     }
@@ -575,7 +575,7 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
     final h = {
       'Authorization': 'Bearer ${await _access(s)}',
       'Content-Type': 'application/json',
-      if (etag != null) 'If-Match': etag,
+      'If-Match': ?etag,
       if (etag == null) 'If-None-Match': '*',
     };
     final rootId = await _appRootId(s);

@@ -466,7 +466,7 @@ class ExternalCatalogService {
         {
           'operation': 'openlibrary',
           'outcome': 'failed',
-          if (responseStatus != null) 'status': responseStatus,
+          'status': ?responseStatus,
           if (responseStatus != null)
             'statusFamily': '${responseStatus ~/ 100}xx',
         },

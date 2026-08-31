@@ -85,19 +85,19 @@ class FailingProvider implements SyncProvider {
   @override
   Future<SyncRemoteMetadata?> metadata(
     SyncAuthSession _,
-    SyncRemoteTarget __,
+    SyncRemoteTarget _,
   ) async => null;
   @override
   Future<SyncUploadResult> upload(
     SyncAuthSession _,
-    SyncRemoteTarget __,
-    Uint8List ___, {
+    SyncRemoteTarget _,
+    Uint8List _, {
     SyncPrecondition? precondition,
   }) async => throw UnimplementedError();
   @override
   Future<SyncDownloadResult> download(
     SyncAuthSession _,
-    SyncRemoteTarget __, {
+    SyncRemoteTarget _, {
     SyncPrecondition? precondition,
   }) async => throw UnimplementedError();
 }
@@ -132,8 +132,8 @@ class TargetProvider extends FailingProvider {
   @override
   Future<SyncUploadResult> upload(
     SyncAuthSession _,
-    SyncRemoteTarget __,
-    Uint8List ___, {
+    SyncRemoteTarget _,
+    Uint8List _, {
     SyncPrecondition? precondition,
   }) async {
     uploads++;
@@ -149,7 +149,7 @@ class TargetProvider extends FailingProvider {
   @override
   Future<SyncRemoteMetadata?> metadata(
     SyncAuthSession _,
-    SyncRemoteTarget __,
+    SyncRemoteTarget _,
   ) async => remoteMetadata;
 }
 
@@ -272,7 +272,10 @@ void main() {
       tokenStore: GoogleDriveTokenStore(tokens),
       httpClient: client,
     );
-    expect(auth.authenticate(), throwsA(isA<GoogleDriveAuthException>()));
+    await expectLater(
+      auth.authenticate(),
+      throwsA(isA<GoogleDriveAuthException>()),
+    );
   });
 
   test('oauth fetches and persists Drive account profile', () async {
@@ -1460,8 +1463,8 @@ void main() {
     );
     final s = const SyncAuthSession(accountId: 'x');
     final target = const SyncRemoteTarget(id: 'f', name: 'f');
-    expect(p.download(s, target), throwsA(isA<Exception>()));
-    expect(
+    await expectLater(p.download(s, target), throwsA(isA<Exception>()));
+    await expectLater(
       p.upload(
         s,
         target,

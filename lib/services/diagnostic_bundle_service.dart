@@ -46,9 +46,6 @@ class DiagnosticBundleService {
     }
     add('manifest.json', jsonEncode({'formatVersion': 1, 'appVersion': appVersion, 'result': 'success', 'files': files}));
     final encoded = ZipEncoder().encode(archive);
-    if (encoded == null) {
-      throw StateError('Could not create diagnostic archive.');
-    }
     final output = File(outputPath); await output.parent.create(recursive: true); await output.writeAsBytes(encoded, flush: true); return output;
   }
 }

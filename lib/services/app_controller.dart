@@ -82,15 +82,22 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
        backups = BackupService(),
        _tokenStorage = tokenStorage ?? SecureStorageService(),
        _providers = {
-         if (googleDriveProvider != null) 'google_drive': googleDriveProvider,
-         if (oneDriveProvider != null) 'onedrive': oneDriveProvider,
-         if (dropboxProvider != null) 'dropbox': dropboxProvider,
-         if (syncProvider != null) syncProvider.provider: syncProvider,
+         'google_drive': ?googleDriveProvider,
+         'onedrive': ?oneDriveProvider,
+         'dropbox': ?dropboxProvider,
+         ..._providerEntry(syncProvider),
        } {
     DiagnosticDiagnostics.logger = diagnostics;
   }
 
   final DatabaseService database;
+
+  static Map<String, SyncProvider> _providerEntry(SyncProvider? provider) =>
+      switch (provider) {
+        null => const {},
+        final provider => {provider.provider: provider},
+      };
+
   final BackupService backups;
   final ExportService exporter = ExportService();
   final CatalogBundleService bundles = CatalogBundleService();
@@ -191,7 +198,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<T> _serialize<T>(Future<T> Function() action) {
     final result = _operationTail.then((_) => action());
-    _operationTail = result.then<void>((_) {}, onError: (_, __) {});
+    _operationTail = result.then<void>((_) {}, onError: (_, _) {});
     return result;
   }
 
@@ -835,7 +842,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
             'The local catalog changed; review the conflict again.',
           );
         }
-        return downloadRemoteBundle(
+        return await downloadRemoteBundle(
           expectedRemote: decision.remote,
           expectedLocalFingerprint: localFingerprint,
           backup: localBackup,
