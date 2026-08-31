@@ -20,7 +20,11 @@ void main() {
         designers: ['D${sep}signer'],
       ),
       copies: const [
-        UserCopy(condition: BookCondition.mint, favorite: true, tags: ['one', 'two']),
+        UserCopy(
+          condition: BookCondition.mint,
+          favorite: true,
+          tags: ['one', 'two'],
+        ),
         UserCopy(id: 7, condition: BookCondition.poor),
       ],
       images: const [
@@ -52,7 +56,9 @@ void main() {
   });
 
   test('emits one blank-related row when relations are absent', () async {
-    final directory = await Directory.systemTemp.createTemp('rpg-export-empty-');
+    final directory = await Directory.systemTemp.createTemp(
+      'rpg-export-empty-',
+    );
     addTearDown(() => directory.delete(recursive: true));
     final output = '${directory.path}${Platform.pathSeparator}catalog.csv';
     await ExportService().exportRecords(

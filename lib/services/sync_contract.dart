@@ -159,7 +159,11 @@ class SyncLease {
     required this.lastRenewedAt,
     this.remoteRevision,
   });
-  final String catalogIdentity, ownerDeviceId, ownerDeviceName, generation, token;
+  final String catalogIdentity,
+      ownerDeviceId,
+      ownerDeviceName,
+      generation,
+      token;
   final DateTime issuedAt, expiresAt, lastRenewedAt;
   final SyncRevision? remoteRevision;
   bool isValidAt(DateTime now) => expiresAt.isAfter(now);

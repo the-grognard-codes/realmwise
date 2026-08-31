@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      FLUTTER_VERSION: "3.44.7"
+      FLUTTER_VERSION: "3.47.2"
 
     steps:
       - name: Checkout repository
@@ -45,7 +45,7 @@ jobs:
           build-mode: manual
 
       - name: Resolve Flutter dependencies
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Build Android debug APK for CodeQL
         run: flutter build apk --debug

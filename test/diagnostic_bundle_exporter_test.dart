@@ -15,8 +15,8 @@ void main() {
     MethodCall? received;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
-      received = call;
-      return 'content://downloads/diagnostics.zip';
+          received = call;
+          return 'content://downloads/diagnostics.zip';
         });
 
     final uri = await const DiagnosticBundleExporter(
@@ -35,8 +35,8 @@ void main() {
     MethodCall? received;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
-      received = call;
-      return null;
+          received = call;
+          return null;
         });
 
     await const DiagnosticBundleExporter(
@@ -57,8 +57,8 @@ void main() {
     MethodCall? received;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
-      received = call;
-      return null;
+          received = call;
+          return null;
         });
 
     await const DiagnosticBundleExporter(

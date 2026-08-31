@@ -5,9 +5,13 @@ void main() {
   test('lease validity and fencing fields are preserved', () {
     final now = DateTime.utc(2026, 1, 1);
     final lease = SyncLease(
-      catalogIdentity: 'catalog', ownerDeviceId: 'device-a',
-      ownerDeviceName: 'Laptop', generation: '4', token: 'opaque-token',
-      issuedAt: now, expiresAt: now.add(const Duration(minutes: 5)),
+      catalogIdentity: 'catalog',
+      ownerDeviceId: 'device-a',
+      ownerDeviceName: 'Laptop',
+      generation: '4',
+      token: 'opaque-token',
+      issuedAt: now,
+      expiresAt: now.add(const Duration(minutes: 5)),
       lastRenewedAt: now,
     );
     expect(lease.isValidAt(now), isTrue);
@@ -17,9 +21,13 @@ void main() {
 
   test('contention and lease loss are distinguishable', () {
     final lease = SyncLease(
-      catalogIdentity: 'catalog', ownerDeviceId: 'device-a',
-      ownerDeviceName: 'Laptop', generation: '1', token: 't',
-      issuedAt: DateTime.utc(2026), expiresAt: DateTime.utc(2027),
+      catalogIdentity: 'catalog',
+      ownerDeviceId: 'device-a',
+      ownerDeviceName: 'Laptop',
+      generation: '1',
+      token: 't',
+      issuedAt: DateTime.utc(2026),
+      expiresAt: DateTime.utc(2027),
       lastRenewedAt: DateTime.utc(2026),
     );
     expect(SyncLeaseContendedException(lease).toString(), contains('owned'));

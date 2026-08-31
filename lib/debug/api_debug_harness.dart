@@ -17,9 +17,11 @@ class ApiDebugHarness {
     int? port,
     Future<void>? readiness,
     Future<List<WorkCandidate>> Function(Uri uri)? openLibrary,
-    Future<List<WorkCandidate>> Function(String query, String key)? rpgGeekSearch,
+    Future<List<WorkCandidate>> Function(String query, String key)?
+    rpgGeekSearch,
     Future<WorkCandidate> Function(String id, String key)? rpgGeekThing,
-    @Deprecated('Use rpgGeekSearch/rpgGeekThing') Future<WorkCandidate> Function(WorkCandidate candidate, String key)? enrich,
+    @Deprecated('Use rpgGeekSearch/rpgGeekThing')
+    Future<WorkCandidate> Function(WorkCandidate candidate, String key)? enrich,
   }) async {
     final server = await HttpServer.bind(
       InternetAddress.loopbackIPv4,
@@ -27,8 +29,15 @@ class ApiDebugHarness {
     );
     final harness = ApiDebugHarness._(server, server.port);
     server.listen(
-      (request) =>
-          harness._handle(request, controller, readiness, openLibrary, rpgGeekSearch, rpgGeekThing, enrich),
+      (request) => harness._handle(
+        request,
+        controller,
+        readiness,
+        openLibrary,
+        rpgGeekSearch,
+        rpgGeekThing,
+        enrich,
+      ),
     );
     return harness;
   }
@@ -40,7 +49,8 @@ class ApiDebugHarness {
     AppController? controller,
     Future<void>? readiness,
     Future<List<WorkCandidate>> Function(Uri uri)? openLibrary,
-    Future<List<WorkCandidate>> Function(String query, String key)? rpgGeekSearch,
+    Future<List<WorkCandidate>> Function(String query, String key)?
+    rpgGeekSearch,
     Future<WorkCandidate> Function(String id, String key)? rpgGeekThing,
     Future<WorkCandidate> Function(WorkCandidate candidate, String key)? enrich,
   ) async {
@@ -86,23 +96,41 @@ class ApiDebugHarness {
           'results': result.map(_candidateJson).toList(),
         }, 200);
       }
-      if (request.method == 'GET' && request.uri.path == '/lookup/rpggeek/search') {
+      if (request.method == 'GET' &&
+          request.uri.path == '/lookup/rpggeek/search') {
         if (readiness != null) await readiness;
         final query = request.uri.queryParameters['query']?.trim() ?? '';
         final key = _bearer(request);
-        if (query.length < 2 || key.isEmpty) throw const CatalogLookupException('Provide query and Authorization Bearer token.');
-        final results = rpgGeekSearch != null ? await rpgGeekSearch(query, key) : await _requireController(controller).lookup.searchRpgGeek(query, key);
+        if (query.length < 2 || key.isEmpty)
+          throw const CatalogLookupException(
+            'Provide query and Authorization Bearer token.',
+          );
+        final results = rpgGeekSearch != null
+            ? await rpgGeekSearch(query, key)
+            : await _requireController(
+                controller,
+              ).lookup.searchRpgGeek(query, key);
         return await _json(request, {
           'ok': true,
           'results': results.map(_candidateJson).toList(),
         }, 200);
       }
-      if (request.method == 'GET' && request.uri.path.startsWith('/lookup/rpggeek/thing/')) {
+      if (request.method == 'GET' &&
+          request.uri.path.startsWith('/lookup/rpggeek/thing/')) {
         if (readiness != null) await readiness;
-        final id = request.uri.path.substring('/lookup/rpggeek/thing/'.length).trim();
+        final id = request.uri.path
+            .substring('/lookup/rpggeek/thing/'.length)
+            .trim();
         final key = _bearer(request);
-        if (id.isEmpty || key.isEmpty) throw const CatalogLookupException('Provide item id and Authorization Bearer token.');
-        final result = rpgGeekThing != null ? await rpgGeekThing(id, key) : await _requireController(controller).lookup.fetchRpgGeekItem(id, key);
+        if (id.isEmpty || key.isEmpty)
+          throw const CatalogLookupException(
+            'Provide item id and Authorization Bearer token.',
+          );
+        final result = rpgGeekThing != null
+            ? await rpgGeekThing(id, key)
+            : await _requireController(
+                controller,
+              ).lookup.fetchRpgGeekItem(id, key);
         return await _json(request, {
           'ok': true,
           'result': _candidateJson(result),
@@ -228,16 +256,25 @@ WorkCandidate _candidate(Map<String, dynamic> m) => WorkCandidate(
   gameSetting: m['gameSetting']?.toString() ?? '',
   bookType: m['bookType']?.toString() ?? '',
   moreInfo: m['moreInfo']?.toString() ?? '',
-  designers: _list(m['designers']), artists: _list(m['artists']),
-  productionStaff: _list(m['productionStaff']), version: m['version']?.toString() ?? '',
-  isbn: m['isbn']?.toString() ?? '', productCode: m['productCode']?.toString() ?? '',
-  seriesCode: m['seriesCode']?.toString() ?? '', dimensions: m['dimensions']?.toString() ?? '',
-  series: _list(m['series']), setting: _list(m['setting']), family: _list(m['family']),
-  system: _list(m['system']), category: _list(m['category']), mechanics: _list(m['mechanics']),
+  designers: _list(m['designers']),
+  artists: _list(m['artists']),
+  productionStaff: _list(m['productionStaff']),
+  version: m['version']?.toString() ?? '',
+  isbn: m['isbn']?.toString() ?? '',
+  productCode: m['productCode']?.toString() ?? '',
+  seriesCode: m['seriesCode']?.toString() ?? '',
+  dimensions: m['dimensions']?.toString() ?? '',
+  series: _list(m['series']),
+  setting: _list(m['setting']),
+  family: _list(m['family']),
+  system: _list(m['system']),
+  category: _list(m['category']),
+  mechanics: _list(m['mechanics']),
   genre: _list(m['genre']),
 );
 
-List<String> _list(Object? value) => (value as List? ?? const []).map((e) => e.toString()).toList();
+List<String> _list(Object? value) =>
+    (value as List? ?? const []).map((e) => e.toString()).toList();
 
 AppController _requireController(AppController? controller) =>
     controller ??
@@ -423,7 +460,8 @@ final Map<String, dynamic> _openApi = {
       },
       'Candidate': {
         'type': 'object',
-        'description': 'A catalog work candidate and optional remote metadata. Nonempty RPGGeek title, publisher, publicationDate, summary, and remoteCoverUrl values override Open Library values; OpenLibrary-only fields such as ISBN and authors, plus any RPGGeek-absent fields, remain.',
+        'description':
+            'A catalog work candidate and optional remote metadata. Nonempty RPGGeek title, publisher, publicationDate, summary, and remoteCoverUrl values override Open Library values; OpenLibrary-only fields such as ISBN and authors, plus any RPGGeek-absent fields, remain.',
         'properties': {
           'title': {'type': 'string'},
           'isbn13': {'type': 'string'},
@@ -449,9 +487,29 @@ final Map<String, dynamic> _openApi = {
           'gameSetting': {'type': 'string'},
           'bookType': {'type': 'string'},
           'moreInfo': {'type': 'string'},
-          for (final name in ['designers','artists','productionStaff','series','setting','family','system','category','mechanics','genre'])
-            name: {'type': 'array', 'items': {'type': 'string'}},
-          for (final name in ['version','isbn','productCode','seriesCode','dimensions'])
+          for (final name in [
+            'designers',
+            'artists',
+            'productionStaff',
+            'series',
+            'setting',
+            'family',
+            'system',
+            'category',
+            'mechanics',
+            'genre',
+          ])
+            name: {
+              'type': 'array',
+              'items': {'type': 'string'},
+            },
+          for (final name in [
+            'version',
+            'isbn',
+            'productCode',
+            'seriesCode',
+            'dimensions',
+          ])
             name: {'type': 'string'},
         },
       },

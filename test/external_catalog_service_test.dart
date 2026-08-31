@@ -48,25 +48,36 @@ void main() {
       }
       return _response(_detailXml('Dragon Quest', '3'));
     });
-    final result = await ExternalCatalogService(client).enrichWithRpgGeek(
-      const WorkCandidate(title: 'Dragon Quest'),
-      'key',
-    );
+    final result = await ExternalCatalogService(
+      client,
+    ).enrichWithRpgGeek(const WorkCandidate(title: 'Dragon Quest'), 'key');
     expect(result.rpgGeekId, '3');
-    expect(client.requests.where((request) => request.url.path.endsWith('/thing')), hasLength(1));
+    expect(
+      client.requests.where((request) => request.url.path.endsWith('/thing')),
+      hasLength(1),
+    );
   });
 
   test('detail failure leaves OpenLibrary candidate unchanged', () async {
     final original = const WorkCandidate(title: 'Missing', publisher: 'OL');
-    final client = _RecordingClient((request) => request.url.path.endsWith('/search')
-        ? _response('<items><item id="9"><name value="Missing"/></item></items>')
-        : _response('', status: 503));
-    final result = await ExternalCatalogService(client).enrichWithRpgGeek(original, 'key');
+    final client = _RecordingClient(
+      (request) => request.url.path.endsWith('/search')
+          ? _response(
+              '<items><item id="9"><name value="Missing"/></item></items>',
+            )
+          : _response('', status: 503),
+    );
+    final result = await ExternalCatalogService(
+      client,
+    ).enrichWithRpgGeek(original, 'key');
     expect(result, original);
   });
 
   test('ignores empty or weakly related search hits', () async {
-    final original = const WorkCandidate(title: 'Dragon Quest', publisher: 'OL');
+    final original = const WorkCandidate(
+      title: 'Dragon Quest',
+      publisher: 'OL',
+    );
     final client = _RecordingClient((request) {
       if (request.url.path.endsWith('/search')) {
         return _response(
@@ -76,26 +87,38 @@ void main() {
       }
       fail('weak hits must not trigger a detail request');
     });
-    final result = await ExternalCatalogService(client).enrichWithRpgGeek(original, 'key');
+    final result = await ExternalCatalogService(
+      client,
+    ).enrichWithRpgGeek(original, 'key');
     expect(result, same(original));
-    expect(client.requests.where((request) => request.url.path.endsWith('/thing')), isEmpty);
+    expect(
+      client.requests.where((request) => request.url.path.endsWith('/thing')),
+      isEmpty,
+    );
   });
 
   test('captures RPGGeek extended metadata and link values', () async {
-    final client = _RecordingClient((request) => request.url.path.endsWith('/search')
-        ? _response('<items><item id="7"><name value="Dragon Quest"/></item></items>')
-        : _response('<items><item id="7"><name value="Dragon Quest"/>'
-            '<description>RPG description</description><moreinfo>https://info</moreinfo>'
-            '<isbn>9780000000000</isbn><productcode>PX</productcode><seriescode>SX</seriescode>'
-            '<dimensions>8x5</dimensions><link type="rpgproductcode" value="LPX"/>'
-            '<link type="rpgseriescode" value="LSX"/><link type="rpgdimensions" value="L8x5"/>'
-            '<link type="rpgdesigner" value="Designer"/>'
-            '<link type="rpgartist" value="Artist"/><link type="rpgpublisher" value="Pub"/>'
-            '<link type="rpgseries" value="Series"/><link type="rpgsetting" value="Setting"/>'
-            '<link type="rpgsystem" value="System"/><link type="rpgmechanic" value="Dice"/>'
-            '<link type="rpggenre" value="Fantasy"/></item></items>'));
-    final result = await ExternalCatalogService(client).enrichWithRpgGeek(
-      const WorkCandidate(title: 'Dragon Quest'), 'key');
+    final client = _RecordingClient(
+      (request) => request.url.path.endsWith('/search')
+          ? _response(
+              '<items><item id="7"><name value="Dragon Quest"/></item></items>',
+            )
+          : _response(
+              '<items><item id="7"><name value="Dragon Quest"/>'
+              '<description>RPG description</description><moreinfo>https://info</moreinfo>'
+              '<isbn>9780000000000</isbn><productcode>PX</productcode><seriescode>SX</seriescode>'
+              '<dimensions>8x5</dimensions><link type="rpgproductcode" value="LPX"/>'
+              '<link type="rpgseriescode" value="LSX"/><link type="rpgdimensions" value="L8x5"/>'
+              '<link type="rpgdesigner" value="Designer"/>'
+              '<link type="rpgartist" value="Artist"/><link type="rpgpublisher" value="Pub"/>'
+              '<link type="rpgseries" value="Series"/><link type="rpgsetting" value="Setting"/>'
+              '<link type="rpgsystem" value="System"/><link type="rpgmechanic" value="Dice"/>'
+              '<link type="rpggenre" value="Fantasy"/></item></items>',
+            ),
+    );
+    final result = await ExternalCatalogService(
+      client,
+    ).enrichWithRpgGeek(const WorkCandidate(title: 'Dragon Quest'), 'key');
     expect(result.moreInfo, 'https://info');
     expect(result.designers, ['Designer']);
     expect(result.authors, ['Designer']);
@@ -112,100 +135,146 @@ void main() {
     expect(result.dimensions, '8x5');
   });
 
-  test('explicit RPGGeek author takes precedence over designer fallback', () async {
-    final client = _RecordingClient((request) => request.url.path.endsWith('/search')
-        ? _response('<items><item id="8"><name value="Dragon Quest"/></item></items>')
-        : _response('<items><item id="8"><name value="Dragon Quest"/>'
-            '<link type="rpgdesigner" value="Designer"/>'
-            '<link type="rpgauthor" value="Author"/></item></items>'));
-    final result = await ExternalCatalogService(client).enrichWithRpgGeek(
-      const WorkCandidate(title: 'Dragon Quest'), 'key');
-    expect(result.authors, ['Author']);
-    expect(result.designers, ['Designer']);
-  });
+  test(
+    'explicit RPGGeek author takes precedence over designer fallback',
+    () async {
+      final client = _RecordingClient(
+        (request) => request.url.path.endsWith('/search')
+            ? _response(
+                '<items><item id="8"><name value="Dragon Quest"/></item></items>',
+              )
+            : _response(
+                '<items><item id="8"><name value="Dragon Quest"/>'
+                '<link type="rpgdesigner" value="Designer"/>'
+                '<link type="rpgauthor" value="Author"/></item></items>',
+              ),
+      );
+      final result = await ExternalCatalogService(
+        client,
+      ).enrichWithRpgGeek(const WorkCandidate(title: 'Dragon Quest'), 'key');
+      expect(result.authors, ['Author']);
+      expect(result.designers, ['Designer']);
+    },
+  );
 
-  test('designer metadata fills authors when refreshing a confirmed item', () async {
-    final client = _RecordingClient((request) => _response(
-        '<items><item id="8"><name value="Dragon Quest"/>'
-        '<link type="rpgdesigner" value="Designer"/></item></items>'));
-    final result = await ExternalCatalogService(client).fetchRpgGeekItem('8', 'key');
-    expect(result.authors, ['Designer']);
-    expect(result.designers, ['Designer']);
-  });
+  test(
+    'designer metadata fills authors when refreshing a confirmed item',
+    () async {
+      final client = _RecordingClient(
+        (request) => _response(
+          '<items><item id="8"><name value="Dragon Quest"/>'
+          '<link type="rpgdesigner" value="Designer"/></item></items>',
+        ),
+      );
+      final result = await ExternalCatalogService(
+        client,
+      ).fetchRpgGeekItem('8', 'key');
+      expect(result.authors, ['Designer']);
+      expect(result.designers, ['Designer']);
+    },
+  );
 
   test('RPG title hits are ranked and retain OL bootstrap metadata', () async {
     final client = _RecordingClient((request) {
       if (request.url.host == 'openlibrary.org') {
         return http.Response('{"docs":[{"title":"Ignored"}]}', 200);
       }
-      return _response('<items><item id="1"><name value="Quest"/></item>'
-          '<item id="2"><name value="Dragon Quest"/></item></items>');
+      return _response(
+        '<items><item id="1"><name value="Quest"/></item>'
+        '<item id="2"><name value="Dragon Quest"/></item></items>',
+      );
     });
-    final results = await ExternalCatalogService(client).searchByTitleOrAuthor(
-      term: 'Dragon Quest', author: false, apiKey: 'key');
+    final results = await ExternalCatalogService(
+      client,
+    ).searchByTitleOrAuthor(term: 'Dragon Quest', author: false, apiKey: 'key');
     expect(results.map((r) => r.rpgGeekId), ['2', '1']);
   });
 
   test('RPG title hits retain search publication years', () async {
-    final client = _RecordingClient((request) => _response(
-        '<items><item id="1"><name value="Dragon Quest"/><yearpublished value="1998"/></item></items>'));
-    final results = await ExternalCatalogService(client).searchByTitleOrAuthor(
-      term: 'Dragon Quest', author: false, apiKey: 'key');
+    final client = _RecordingClient(
+      (request) => _response(
+        '<items><item id="1"><name value="Dragon Quest"/><yearpublished value="1998"/></item></items>',
+      ),
+    );
+    final results = await ExternalCatalogService(
+      client,
+    ).searchByTitleOrAuthor(term: 'Dragon Quest', author: false, apiKey: 'key');
     expect(results.single.publicationDate, '1998');
   });
 
   test('direct RPGGeek search retains search publication years', () async {
-    final client = _RecordingClient((request) => _response(
-        '<items><item id="1"><name value="Dragon Quest"/><yearpublished value="2004"/></item></items>'));
-    final results = await ExternalCatalogService(client).searchRpgGeek('Dragon Quest', 'key');
+    final client = _RecordingClient(
+      (request) => _response(
+        '<items><item id="1"><name value="Dragon Quest"/><yearpublished value="2004"/></item></items>',
+      ),
+    );
+    final results = await ExternalCatalogService(
+      client,
+    ).searchRpgGeek('Dragon Quest', 'key');
     expect(results.single.publicationDate, '2004');
   });
 
-  test('ISBN exact RPGGeek detail is returned, otherwise ranked choices only', () async {
-    final client = _RecordingClient((request) {
-      if (request.url.host == 'openlibrary.org') {
-        return http.Response('{"ISBN:9780000000000":{"title":"Dragon Quest","publishers":[{"name":"OL"}]}}', 200);
-      }
-      if (request.url.path.endsWith('/search')) {
-        return _response('<items><item id="1"><name value="Dragon Quest"/></item></items>');
-      }
-      return _response('<items><item id="1"><name value="Dragon Quest"/><isbn>9780000000000</isbn></item></items>');
-    });
-    final exact = await ExternalCatalogService(client).searchByIsbn('9780000000000', apiKey: 'key');
-    expect(exact, hasLength(1));
-    expect(exact.single.rpgGeekId, '1');
-    expect(exact.single.publisher, 'OL');
-  });
-
-  test('ISBN non-exact RPGGeek choices do not inherit OpenLibrary metadata', () async {
-    final client = _RecordingClient((request) {
-      if (request.url.host == 'openlibrary.org') {
-        return http.Response(
-          '{"ISBN:9780000000000":{"title":"Dragon Quest","authors":[{"name":"OL Author"}],"publishers":[{"name":"OL Publisher"}],"publish_date":"2001","identifiers":{"isbn_13":["9780000000000"]}}}',
-          200,
-          headers: {'content-type': 'application/json'},
+  test(
+    'ISBN exact RPGGeek detail is returned, otherwise ranked choices only',
+    () async {
+      final client = _RecordingClient((request) {
+        if (request.url.host == 'openlibrary.org') {
+          return http.Response(
+            '{"ISBN:9780000000000":{"title":"Dragon Quest","publishers":[{"name":"OL"}]}}',
+            200,
+          );
+        }
+        if (request.url.path.endsWith('/search')) {
+          return _response(
+            '<items><item id="1"><name value="Dragon Quest"/></item></items>',
+          );
+        }
+        return _response(
+          '<items><item id="1"><name value="Dragon Quest"/><isbn>9780000000000</isbn></item></items>',
         );
-      }
-      if (request.url.path.endsWith('/search')) {
-        return _response('<items><item id="1"><name value="Dragon Quest: Deluxe"/></item>'
-            '<item id="2"><name value="Dragon Quest Companion"/></item></items>');
-      }
-      fail('non-exact choices must not fetch RPGGeek details');
-    });
-    final results = await ExternalCatalogService(client).searchByIsbn(
-      '9780000000000',
-      apiKey: 'key',
-    );
-    expect(results.map((result) => result.title), [
-      'Dragon Quest: Deluxe',
-      'Dragon Quest Companion',
-    ]);
-    expect(results.map((result) => result.rpgGeekId), ['1', '2']);
-    expect(results.every((result) => result.authors.isEmpty), isTrue);
-    expect(results.every((result) => result.isbn13.isEmpty), isTrue);
-    expect(results.every((result) => result.publisher.isEmpty), isTrue);
-    expect(results.every((result) => result.publicationDate.isEmpty), isTrue);
-  });
+      });
+      final exact = await ExternalCatalogService(
+        client,
+      ).searchByIsbn('9780000000000', apiKey: 'key');
+      expect(exact, hasLength(1));
+      expect(exact.single.rpgGeekId, '1');
+      expect(exact.single.publisher, 'OL');
+    },
+  );
+
+  test(
+    'ISBN non-exact RPGGeek choices do not inherit OpenLibrary metadata',
+    () async {
+      final client = _RecordingClient((request) {
+        if (request.url.host == 'openlibrary.org') {
+          return http.Response(
+            '{"ISBN:9780000000000":{"title":"Dragon Quest","authors":[{"name":"OL Author"}],"publishers":[{"name":"OL Publisher"}],"publish_date":"2001","identifiers":{"isbn_13":["9780000000000"]}}}',
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        if (request.url.path.endsWith('/search')) {
+          return _response(
+            '<items><item id="1"><name value="Dragon Quest: Deluxe"/></item>'
+            '<item id="2"><name value="Dragon Quest Companion"/></item></items>',
+          );
+        }
+        fail('non-exact choices must not fetch RPGGeek details');
+      });
+      final results = await ExternalCatalogService(
+        client,
+      ).searchByIsbn('9780000000000', apiKey: 'key');
+      expect(results.map((result) => result.title), [
+        'Dragon Quest: Deluxe',
+        'Dragon Quest Companion',
+      ]);
+      expect(results.map((result) => result.rpgGeekId), ['1', '2']);
+      expect(results.every((result) => result.authors.isEmpty), isTrue);
+      expect(results.every((result) => result.isbn13.isEmpty), isTrue);
+      expect(results.every((result) => result.publisher.isEmpty), isTrue);
+      expect(results.every((result) => result.publicationDate.isEmpty), isTrue);
+    },
+  );
 
   test('converts a valid ISBN-10 to ISBN-13 for OpenLibrary lookup', () async {
     final client = _RecordingClient((request) {
@@ -216,7 +285,9 @@ void main() {
         headers: {'content-type': 'application/json'},
       );
     });
-    final result = await ExternalCatalogService(client).searchByIsbn('0306406152');
+    final result = await ExternalCatalogService(
+      client,
+    ).searchByIsbn('0306406152');
     expect(result.single.title, 'Test Book');
     expect(result.single.isbn13, '9780306406157');
   });
@@ -224,7 +295,10 @@ void main() {
   test('adds configured contact only to OpenLibrary request headers', () async {
     final client = _RecordingClient((request) {
       if (request.url.host == 'openlibrary.org') {
-        expect(request.headers['user-agent'], 'Realmwise/1.0 (Ada Lovelace ada@example.com)');
+        expect(
+          request.headers['user-agent'],
+          'Realmwise/1.0 (Ada Lovelace ada@example.com)',
+        );
         expect(request.headers['from'], 'ada@example.com');
         return http.Response('{"ISBN:9780000000000":{"title":"Book"}}', 200);
       }
@@ -242,23 +316,38 @@ void main() {
 
   test('rejects invalid ISBN-10 values', () async {
     expect(
-      () => ExternalCatalogService(_RecordingClient((_) => _response('{}')))
-          .searchByIsbn('0306406153'),
+      () => ExternalCatalogService(
+        _RecordingClient((_) => _response('{}')),
+      ).searchByIsbn('0306406153'),
       throwsA(isA<CatalogLookupException>()),
     );
   });
 
-  test('confirmed RPG detail fills missing cover from ISBN OpenLibrary record', () async {
-    final client = _RecordingClient((request) {
-      if (request.url.host == 'openlibrary.org') {
-        return http.Response('{"ISBN:9780000000000":{"title":"Dragon Quest","cover":{"large":"https://cover"}}}', 200);
-      }
-      return _response('<items><item id="1"><name value="Dragon Quest"/><isbn>9780000000000</isbn></item></items>');
-    });
-    final result = await ExternalCatalogService(client).fetchRpgGeekDetails(
-      const WorkCandidate(title: 'Dragon Quest', isbn13: '9780000000000', rpgGeekId: '1'), 'key');
-    expect(result.remoteCoverUrl, 'https://cover');
-  });
+  test(
+    'confirmed RPG detail fills missing cover from ISBN OpenLibrary record',
+    () async {
+      final client = _RecordingClient((request) {
+        if (request.url.host == 'openlibrary.org') {
+          return http.Response(
+            '{"ISBN:9780000000000":{"title":"Dragon Quest","cover":{"large":"https://cover"}}}',
+            200,
+          );
+        }
+        return _response(
+          '<items><item id="1"><name value="Dragon Quest"/><isbn>9780000000000</isbn></item></items>',
+        );
+      });
+      final result = await ExternalCatalogService(client).fetchRpgGeekDetails(
+        const WorkCandidate(
+          title: 'Dragon Quest',
+          isbn13: '9780000000000',
+          rpgGeekId: '1',
+        ),
+        'key',
+      );
+      expect(result.remoteCoverUrl, 'https://cover');
+    },
+  );
 
   test('RPGGeek search failure falls back to OpenLibrary candidates', () async {
     final client = _RecordingClient((request) {
@@ -272,30 +361,45 @@ void main() {
       return _response('', status: 503);
     });
     final results = await ExternalCatalogService(client).searchByTitleOrAuthor(
-      term: 'Fallback Book', author: false, apiKey: 'key');
+      term: 'Fallback Book',
+      author: false,
+      apiKey: 'key',
+    );
     expect(results, hasLength(1));
     expect(results.single.title, 'Fallback Book');
     expect(results.single.isbn13, '9781111111111');
   });
 
   test('cleans encoded OpenLibrary summaries and control characters', () async {
-    final client = _RecordingClient((request) => http.Response(
-          '{"ISBN:9780000000000":{"title":"Book","notes":{"value":"A &amp; B &NBSP; &#x2013; line\\r\\r\\nnext\\u0007"}}}',
-          200,
-          headers: {'content-type': 'application/json'},
-        ));
-    final result = await ExternalCatalogService(client).searchByIsbn('9780000000000');
+    final client = _RecordingClient(
+      (request) => http.Response(
+        '{"ISBN:9780000000000":{"title":"Book","notes":{"value":"A &amp; B &NBSP; &#x2013; line\\r\\r\\nnext\\u0007"}}}',
+        200,
+        headers: {'content-type': 'application/json'},
+      ),
+    );
+    final result = await ExternalCatalogService(
+      client,
+    ).searchByIsbn('9780000000000');
     expect(result.single.summary, 'A & B   – line\n\nnext');
   });
 
-  test('cleans encoded RPGGeek descriptions and normalizes line breaks', () async {
-    final client = _RecordingClient((request) => _response(
-        '<items><item id="8"><name value="Book"/>'
-        '<description>A &amp; B &amp;NBSP; &#13;&#10;line&#10;&#10;&#10;next&amp;#7;</description>'
-        '</item></items>'));
-    final result = await ExternalCatalogService(client).fetchRpgGeekItem('8', 'key');
-    expect(result.summary, 'A & B   \nline\n\nnext');
-  });
+  test(
+    'cleans encoded RPGGeek descriptions and normalizes line breaks',
+    () async {
+      final client = _RecordingClient(
+        (request) => _response(
+          '<items><item id="8"><name value="Book"/>'
+          '<description>A &amp; B &amp;NBSP; &#13;&#10;line&#10;&#10;&#10;next&amp;#7;</description>'
+          '</item></items>',
+        ),
+      );
+      final result = await ExternalCatalogService(
+        client,
+      ).fetchRpgGeekItem('8', 'key');
+      expect(result.summary, 'A & B   \nline\n\nnext');
+    },
+  );
 }
 
 String _detailXml(String title, String id) =>

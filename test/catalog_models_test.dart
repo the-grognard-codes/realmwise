@@ -3,14 +3,26 @@ import 'package:realmwise/models/catalog_models.dart';
 
 void main() {
   test('book conditions expose the persisted names and labels in order', () {
-    expect(
-      BookCondition.values.map((condition) => condition.name).toList(),
-      ['mint', 'nearMint', 'veryFine', 'fine', 'veryGood', 'good', 'fair', 'poor'],
-    );
-    expect(
-      BookCondition.values.map((condition) => condition.label).toList(),
-      ['Mint', 'Near Mint', 'Very Fine', 'Fine', 'Very Good', 'Good', 'Fair', 'Poor'],
-    );
+    expect(BookCondition.values.map((condition) => condition.name).toList(), [
+      'mint',
+      'nearMint',
+      'veryFine',
+      'fine',
+      'veryGood',
+      'good',
+      'fair',
+      'poor',
+    ]);
+    expect(BookCondition.values.map((condition) => condition.label).toList(), [
+      'Mint',
+      'Near Mint',
+      'Very Fine',
+      'Fine',
+      'Very Good',
+      'Good',
+      'Fair',
+      'Poor',
+    ]);
   });
 
   test('book condition parsing preserves legacy values', () {
@@ -30,14 +42,8 @@ void main() {
       const BookWork(title: 'Book', rpgGeekId: '42/evil').rpgGeekUrl,
       isNull,
     );
-    expect(
-      const BookWork(title: 'Book', rpgGeekId: 'abc').rpgGeekUrl,
-      isNull,
-    );
-    expect(
-      const BookWork(title: 'Book', rpgGeekId: '４２').rpgGeekUrl,
-      isNull,
-    );
+    expect(const BookWork(title: 'Book', rpgGeekId: 'abc').rpgGeekUrl, isNull);
+    expect(const BookWork(title: 'Book', rpgGeekId: '４２').rpgGeekUrl, isNull);
     expect(
       const WorkCandidate(title: 'Book', rpgGeekId: '99').rpgGeekUrl,
       'https://rpggeek.com/rpgitem/99',
