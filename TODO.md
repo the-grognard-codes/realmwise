@@ -24,10 +24,6 @@
 ## Completion Notes
 
 
-Find out about Android publication.
-    Get a manifest of what is required packages, builds, etc.
-    Are we relatively up-to-date?
-    Is this code ready for publication?
 
 P1 — Android releases use the debug signing key and a placeholder app ID. The authored configuration signs release with the debug keystore and uses com.example.rpg_catalog, undermining production provenance and store readiness. build.gradle.kts (line 17)
 
