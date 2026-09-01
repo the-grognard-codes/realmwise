@@ -66,7 +66,7 @@ jobs:
           ref: ${{ needs.validate-release.outputs.release_tag }}
       - name: Validate SBOM matches lockfile
         run: python3 .github/scripts/validate_sbom.py
-      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: realmwise-release-metadata
           path: |
