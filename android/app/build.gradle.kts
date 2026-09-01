@@ -101,7 +101,7 @@ android {
 
 dependencies {
     // Google Identity Services for Android AuthorizationClient.
-    implementation("com.google.android.gms:play-services-auth:21.6.0")
+    implementation("com.google.android.gms:play-services-auth:22.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 }
 
