@@ -15,7 +15,7 @@ pluginManagement {
         mavenCentral()
         gradlePluginPortal()
     }
-}classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.10")
+}
 
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
