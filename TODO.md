@@ -41,3 +41,9 @@ Release pipeline follow-ups:
 - Keep the initial generic Linux tarball release. Later, evaluate supported-distribution packaging and testing for Debian `.deb` and RPM packages, including desktop metadata and install/upgrade/uninstall behavior.
 
 Icons for Avatar RPG, Marvel Multiverse, OGL content.
+
+
+High contrast theme has black on black text.
+
+Add light / dark button and then create a theme based on the existing for each.
+
