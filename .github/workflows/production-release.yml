@@ -24,6 +24,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: Verify and publish the existing draft release
         shell: bash

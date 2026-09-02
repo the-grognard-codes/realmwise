@@ -113,6 +113,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           release_dir="$RUNNER_TEMP/realmwise-release"
           if gh release view "$RELEASE_TAG" --json isDraft,isPrerelease > "$RUNNER_TEMP/release.json"; then
