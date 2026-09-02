@@ -39,3 +39,5 @@ Release pipeline follow-ups:
 
 - Add automated integration coverage for release-critical real-world flows: first launch and database setup/restore, database migration, cloud-sync conflict/recovery, secure storage, file selection, and camera scanning. Retain a manual smoke-test checklist for physical Windows, Android, and Debian-based Linux devices until those scenarios are automated.
 - Keep the initial generic Linux tarball release. Later, evaluate supported-distribution packaging and testing for Debian `.deb` and RPM packages, including desktop metadata and install/upgrade/uninstall behavior.
+
+Icons for Avatar RPG, Marvel Multiverse, OGL content.

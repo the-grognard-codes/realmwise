@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/catalog_models.dart';
 import '../services/app_controller.dart';
@@ -59,12 +60,14 @@ class SearchAddScreen extends StatefulWidget {
 }
 
 class _SearchAddScreenState extends State<SearchAddScreen> {
+  static const _lookupModePreferenceKey = 'realmwise.lookup_mode';
   final _query = TextEditingController();
   LookupMode _mode = LookupMode.isbn;
   List<WorkCandidate> _results = const [];
   bool _searching = false;
   String? _message;
   bool _cameraPermissionDenied = false;
+  bool _modeChanged = false;
 
   @override
   void initState() {
@@ -75,7 +78,33 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
         ? LookupMode.title
         : LookupMode.author;
     _query.text = _queryForMode(_mode);
+    _restoreLookupMode();
     if (_isAndroid) _loadCameraPermission();
+  }
+
+  Future<void> _restoreLookupMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedMode = LookupMode.values
+        .asNameMap()[prefs.getString(_lookupModePreferenceKey)];
+    if (!mounted || _modeChanged || savedMode == null || savedMode == _mode) {
+      return;
+    }
+    setState(() {
+      _mode = savedMode;
+      _query.text = _queryForMode(savedMode);
+    });
+  }
+
+  Future<void> _changeLookupMode(LookupMode mode) async {
+    setState(() {
+      _modeChanged = true;
+      _mode = mode;
+      _query.text = _queryForMode(mode);
+      _results = const [];
+      _message = null;
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lookupModePreferenceKey, mode.name);
   }
 
   String _queryForMode(LookupMode mode) {
@@ -269,8 +298,8 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
     );
     controller.dispose();
     if (!mounted || isbn == null) return;
+    if (_mode != LookupMode.isbn) await _changeLookupMode(LookupMode.isbn);
     _query.text = isbn;
-    if (_mode != LookupMode.isbn) setState(() => _mode = LookupMode.isbn);
     await _search();
   }
 
@@ -314,12 +343,8 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
                 ),
               ],
               selected: {_mode},
-              onSelectionChanged: (selection) => setState(() {
-                _mode = selection.first;
-                _query.text = _queryForMode(_mode);
-                _results = const [];
-                _message = null;
-              }),
+              onSelectionChanged: (selection) =>
+                  _changeLookupMode(selection.first),
             ),
             const SizedBox(height: 14),
             TextField(
