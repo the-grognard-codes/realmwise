@@ -85,7 +85,7 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
   Future<void> _restoreLookupMode() async {
     final prefs = await SharedPreferences.getInstance();
     final savedMode = LookupMode.values.asNameMap()[
-      prefs.getString(_lookupModePreferenceKey),
+      prefs.getString(_lookupModePreferenceKey)
     ];
     if (!mounted || _modeChanged || savedMode == null || savedMode == _mode) {
       return;
