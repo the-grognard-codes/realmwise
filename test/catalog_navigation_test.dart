@@ -32,8 +32,8 @@ void main() {
 
     final ordered = flattenCatalogHierarchy(records);
     expect(ordered.map((record) => record.work.title).toList(), [
-      'zeta',
       'alpha',
+      'zeta',
       'Untyped',
       'General',
       'Beta',
@@ -76,7 +76,7 @@ void main() {
     );
   });
 
-  test('filtered subsets retain supplied traversal order within sections', () {
+  test('filtered subsets sort works within sections', () {
     final records = [
       _record('guide-1', system: 'S', setting: 'Set', type: 'Guide'),
       _record('other', system: 'S', setting: 'Other', type: 'Core'),
@@ -85,7 +85,7 @@ void main() {
     final filtered = [records[2], records[0]];
     expect(
       flattenCatalogHierarchy(filtered).map((record) => record.work.title),
-      ['guide-2', 'guide-1'],
+      ['guide-1', 'guide-2'],
     );
   });
 
@@ -101,10 +101,31 @@ void main() {
       order: CatalogHierarchyOrder.gameSystemBookTypeSetting,
     );
     expect(ordered.map((record) => record.work.title), [
+      'other-type',
       'setting-a',
       'setting-b',
-      'other-type',
       'untyped',
     ]);
+  });
+
+  test('sorts every hierarchy level alphabetically', () {
+    final records = [
+      _record('Zulu', system: 'Zeta', setting: 'Zulu', type: 'Zulu'),
+      _record('alpha', system: 'Alpha', setting: 'Zulu', type: 'Zulu'),
+      _record('Beta', system: 'Alpha', setting: 'Alpha', type: 'Zulu'),
+      _record('gamma', system: 'Alpha', setting: 'Alpha', type: 'Alpha'),
+    ];
+
+    expect(
+      flattenCatalogHierarchy(records).map((record) => record.work.title),
+      ['gamma', 'Beta', 'alpha', 'Zulu'],
+    );
+    expect(
+      flattenCatalogHierarchy(
+        records,
+        order: CatalogHierarchyOrder.gameSystemBookTypeSetting,
+      ).map((record) => record.work.title),
+      ['gamma', 'Beta', 'alpha', 'Zulu'],
+    );
   });
 }
