@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:realmwise/screens/settings_screen.dart';
 import 'package:realmwise/services/app_controller.dart';
+import 'package:realmwise/theme/app_theme.dart';
 
 class _FakePathProvider extends PathProviderPlatform {
   _FakePathProvider(this.path);
@@ -71,6 +72,43 @@ void main() {
       expect(find.text('Cloud Sync'), findsOneWidget);
       expect(find.text('Sources'), findsOneWidget);
       expect(find.text('Theme'), findsOneWidget);
+      expect(find.text('System'), findsOneWidget);
+      expect(find.text('Light'), findsOneWidget);
+      expect(find.text('Dark'), findsOneWidget);
+      expect(find.text('Greyscale'), findsOneWidget);
+      expect(find.text('Greyscale - High Contrast'), findsNothing);
+      expect(themeSeeds.keys, isNot(contains('Greyscale - High Contrast')));
+
+      final appearanceSelector = find.byType(SegmentedButton<ThemeMode>);
+      Finder appearanceOption(String label) =>
+          find.descendant(of: appearanceSelector, matching: find.text(label));
+      Future<void> selectAppearance(String label, ThemeMode mode) async {
+        await tester.ensureVisible(appearanceOption(label));
+        await tester.tap(appearanceOption(label));
+        await tester.pump();
+        for (var i = 0; i < 100; i++) {
+          final selector = tester.widget<SegmentedButton<ThemeMode>>(
+            appearanceSelector,
+          );
+          if (controller.themeMode == mode &&
+              selector.onSelectionChanged != null) {
+            return;
+          }
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)),
+          );
+          await tester.pump();
+        }
+        expect(controller.themeMode, mode);
+      }
+
+      await selectAppearance('Dark', ThemeMode.dark);
+      expect(controller.themeMode, ThemeMode.dark);
+      await selectAppearance('Light', ThemeMode.light);
+      expect(controller.themeMode, ThemeMode.light);
+      await selectAppearance('System', ThemeMode.system);
+      expect(controller.themeMode, ThemeMode.system);
+
       expect(find.text('Custom Catalog Icons'), findsOneWidget);
       await _selectTab(tester, 'Sources');
       expect(find.text('RPGGeek Data Enrichment'), findsOneWidget);

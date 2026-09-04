@@ -21,16 +21,20 @@ void main() {
       expect(canonicalThemeName('Color Vision Accessible'), greyscaleThemeName);
       expect(themeSeeds.keys, isNot(contains('Rose spell')));
       expect(themeSeeds.keys, isNot(contains('Moonstone')));
+      expect(themeSeeds.keys, isNot(contains('Copper')));
+      expect(canonicalThemeName('Copper'), defaultThemeName);
+      expect(canonicalThemeName('Teal sigil'), 'Teal Sigil');
+      expect(themeSeeds.keys, contains('Teal Sigil'));
     },
   );
 
-  test('high contrast dark stays dark regardless of requested brightness', () {
+  test('legacy high contrast names migrate to greyscale and honor brightness', () {
     expect(
       buildRpgTheme(
-        greyscaleHighContrastThemeName,
+        'Greyscale - High Contrast',
         Brightness.light,
       ).brightness,
-      Brightness.dark,
+      Brightness.light,
     );
     expect(
       buildRpgTheme(
@@ -41,18 +45,22 @@ void main() {
     );
   });
 
-  test('Dungeon black stays dark and uses a flagstone palette', () {
+  test('Dungeon black supports both brightness modes and uses a flagstone palette', () {
     expect(
       buildRpgTheme('Dungeon black', Brightness.light).brightness,
-      Brightness.dark,
+      Brightness.light,
     );
     expect(
       buildRpgTheme('Dungeon black', Brightness.dark).brightness,
       Brightness.dark,
     );
+    expect(
+      buildRpgTheme('Dungeon black', Brightness.light).colorScheme.surface,
+      isNot(buildRpgTheme('Dungeon black', Brightness.dark).colorScheme.surface),
+    );
     final dungeon = buildRpgTheme(
       'Dungeon black',
-      Brightness.light,
+      Brightness.dark,
     ).colorScheme;
     final parchment = buildRpgTheme(
       'Parchment gold',
@@ -147,8 +155,7 @@ void main() {
       'Parchment Gold',
       'Forest Green',
       'Royal Purple',
-      'Teal sigil',
-      'Copper',
+      'Teal Sigil',
     ]) {
       final theme = buildRpgTheme(name, Brightness.light);
       expect(
@@ -172,12 +179,8 @@ void main() {
       const Color(0xFF5D3678),
     );
     expect(
-      buildRpgTheme('Teal sigil', Brightness.light).colorScheme.surface,
+      buildRpgTheme('Teal Sigil', Brightness.light).colorScheme.surface,
       const Color(0xFFF0FAF9),
-    );
-    expect(
-      buildRpgTheme('Copper', Brightness.light).colorScheme.tertiary,
-      const Color(0xFF9A7615),
     );
   });
 

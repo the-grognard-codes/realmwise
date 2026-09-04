@@ -156,11 +156,7 @@ class _RealmwiseBootstrapState extends State<RealmwiseBootstrap> {
       debugShowCheckedModeBanner: false,
       theme: buildRpgTheme(controller.seedName, Brightness.light),
       darkTheme: buildRpgTheme(controller.seedName, Brightness.dark),
-      themeMode:
-          controller.seedName == highContrastDarkThemeName ||
-              controller.seedName == dungeonBlackThemeName
-          ? ThemeMode.dark
-          : ThemeMode.system,
+      themeMode: controller.themeMode,
       home: controller.loading
           ? const _LoadingScreen()
           : controller.isOpen && controller.error == null
