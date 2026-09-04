@@ -3,8 +3,9 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
+//import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
@@ -149,6 +150,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   bool loading = true;
   String? error;
   String seedName = defaultThemeName;
+  ThemeMode themeMode = ThemeMode.system;
   CatalogHierarchyOrder hierarchyOrder =
       CatalogHierarchyOrder.gameSystemSettingBookType;
   bool includePersonalImagesInBundles = false;
@@ -415,6 +417,15 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       seedName = canonicalThemeName(savedTheme);
       if (savedTheme != seedName) {
         await database.setSetting('theme_seed', seedName);
+      }
+      final savedThemeMode = await database.getSetting('theme_mode');
+      themeMode = switch (savedThemeMode) {
+        'light' => ThemeMode.light,
+        'dark' => ThemeMode.dark,
+        _ => ThemeMode.system,
+      };
+      if (savedThemeMode != themeMode.name) {
+        await database.setSetting('theme_mode', themeMode.name);
       }
       final savedHierarchy = await database.getSetting(
         'catalog_hierarchy_order',
@@ -1235,6 +1246,14 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> setTheme(String name) async {
     seedName = canonicalThemeName(name);
     await database.setSetting('theme_seed', seedName);
+    notifyListeners();
+  }
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    themeMode = mode;
+    if (database.isOpen) {
+      await database.setSetting('theme_mode', mode.name);
+    }
     notifyListeners();
   }
 

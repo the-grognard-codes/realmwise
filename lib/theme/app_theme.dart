@@ -8,18 +8,17 @@ const Map<String, Color> themeSeeds = {
   'Arcane Blue': Color(0xFF254C7A),
   'Forest Green': Color(0xFF385C37),
   'Royal Purple': Color(0xFF5D3A78),
-  'Copper': Color(0xFF9A4B2A),
-  'Teal sigil': Color(0xFF176B6B),
+  'Teal Sigil': Color(0xFF176B6B),
   'Greyscale': Color(0xFF666666),
-  'Greyscale - High Contrast': Color(0xFFBDBDBD),
 };
 
 const String defaultThemeName = 'Arcane Blue';
 const String dungeonBlackThemeName = 'Dungeon Black';
 const String greyscaleThemeName = 'Greyscale';
-const String greyscaleHighContrastThemeName = 'Greyscale - High Contrast';
-// Kept as aliases for callers compiled against the previous names.
-const String highContrastDarkThemeName = greyscaleHighContrastThemeName;
+// Deprecated aliases retained for source compatibility. The former high
+// contrast catalog entry is now canonicalized to the single Greyscale theme.
+const String greyscaleHighContrastThemeName = greyscaleThemeName;
+const String highContrastDarkThemeName = greyscaleThemeName;
 const String colorVisionAccessibleThemeName = greyscaleThemeName;
 
 /// Converts names from older releases to the current catalog. Removed themes
@@ -36,9 +35,12 @@ String canonicalThemeName(String? name) {
     case 'Color Vision Accessible':
       return greyscaleThemeName;
     case 'High Contrast Dark':
-      return greyscaleHighContrastThemeName;
+    case 'Greyscale - High Contrast':
+      return greyscaleThemeName;
     case 'Dungeon black':
       return dungeonBlackThemeName;
+    case 'Teal sigil':
+      return 'Teal Sigil';
     default:
       return themeSeeds.containsKey(name) ? name : defaultThemeName;
   }
@@ -46,59 +48,79 @@ String canonicalThemeName(String? name) {
 
 ThemeData buildRpgTheme(String selectedSeed, Brightness brightness) {
   final name = canonicalThemeName(selectedSeed);
-  final forcedDark =
-      name == greyscaleHighContrastThemeName || name == dungeonBlackThemeName;
-  final effectiveBrightness = forcedDark ? Brightness.dark : brightness;
+  final effectiveBrightness = brightness;
 
   ColorScheme scheme;
   if (name == dungeonBlackThemeName) {
-    scheme =
-        ColorScheme.fromSeed(
-          seedColor: themeSeeds[name]!,
-          brightness: Brightness.dark,
-          contrastLevel: 1.0,
-        ).copyWith(
-          primary: const Color(0xFF6E7F61),
-          onPrimary: const Color(0xFFF8F6EF),
-          primaryContainer: const Color(0xFF394236),
-          onPrimaryContainer: const Color(0xFFE2E9D7),
-          secondary: const Color(0xFF8E6C4A),
-          onSecondary: const Color(0xFFF9F3EA),
-          secondaryContainer: const Color(0xFF4A3827),
-          onSecondaryContainer: const Color(0xFFFFE9D3),
-          tertiary: const Color(0xFF7F8468),
-          onTertiary: const Color(0xFFF6F4E8),
-          tertiaryContainer: const Color(0xFF3C4032),
-          onTertiaryContainer: const Color(0xFFE7E8DA),
-          surface: const Color(0xFF1C1D1A),
-          onSurface: const Color(0xFFF1EFE5),
-          surfaceContainerHighest: const Color(0xFF333530),
-          surfaceContainerHigh: const Color(0xFF2A2C27),
-          surfaceContainer: const Color(0xFF232520),
-          surfaceContainerLow: const Color(0xFF1A1C17),
-          surfaceContainerLowest: const Color(0xFF11120F),
-          onSurfaceVariant: const Color(0xFFD1CFC0),
-          outline: const Color(0xFF9A9B8C),
-          outlineVariant: const Color(0xFF626458),
-          inverseSurface: const Color(0xFFEAE7DB),
-          onInverseSurface: const Color(0xFF161713),
-          inversePrimary: const Color(0xFF59664E),
-          scrim: const Color(0xFF000000),
-          shadow: const Color(0xFF000000),
-          surfaceDim: const Color(0xFF151712),
-          surfaceBright: const Color(0xFF3D3F39),
-          surfaceTint: const Color(0xFF758468),
-        );
+    scheme = ColorScheme.fromSeed(
+      seedColor: themeSeeds[name]!,
+      brightness: brightness,
+      contrastLevel: 0.15,
+    );
+    if (brightness == Brightness.dark) {
+      scheme = scheme.copyWith(
+        primary: const Color(0xFF6E7F61),
+        onPrimary: const Color(0xFFF8F6EF),
+        primaryContainer: const Color(0xFF394236),
+        onPrimaryContainer: const Color(0xFFE2E9D7),
+        secondary: const Color(0xFF8E6C4A),
+        onSecondary: const Color(0xFFF9F3EA),
+        secondaryContainer: const Color(0xFF4A3827),
+        onSecondaryContainer: const Color(0xFFFFE9D3),
+        tertiary: const Color(0xFF7F8468),
+        onTertiary: const Color(0xFFF6F4E8),
+        tertiaryContainer: const Color(0xFF3C4032),
+        onTertiaryContainer: const Color(0xFFE7E8DA),
+        surface: const Color(0xFF1C1D1A),
+        onSurface: const Color(0xFFF1EFE5),
+        surfaceContainerHighest: const Color(0xFF333530),
+        surfaceContainerHigh: const Color(0xFF2A2C27),
+        surfaceContainer: const Color(0xFF232520),
+        surfaceContainerLow: const Color(0xFF1A1C17),
+        surfaceContainerLowest: const Color(0xFF11120F),
+        onSurfaceVariant: const Color(0xFFD1CFC0),
+        outline: const Color(0xFF9A9B8C),
+        outlineVariant: const Color(0xFF626458),
+        inverseSurface: const Color(0xFFEAE7DB),
+        onInverseSurface: const Color(0xFF161713),
+        inversePrimary: const Color(0xFF59664E),
+        scrim: const Color(0xFF000000),
+        shadow: const Color(0xFF000000),
+        surfaceDim: const Color(0xFF151712),
+        surfaceBright: const Color(0xFF3D3F39),
+        surfaceTint: const Color(0xFF758468),
+      );
+    } else {
+      scheme = scheme.copyWith(
+        primary: const Color(0xFF4E6145),
+        onPrimary: const Color(0xFFFFFFFF),
+        primaryContainer: const Color(0xFFDCE8D1),
+        onPrimaryContainer: const Color(0xFF10200D),
+        secondary: const Color(0xFF765334),
+        onSecondary: const Color(0xFFFFFFFF),
+        secondaryContainer: const Color(0xFFF1DDC8),
+        onSecondaryContainer: const Color(0xFF29170B),
+        tertiary: const Color(0xFF566040),
+        onTertiary: const Color(0xFFFFFFFF),
+        tertiaryContainer: const Color(0xFFE0E5C9),
+        onTertiaryContainer: const Color(0xFF171D08),
+        surface: const Color(0xFFF5F6EE),
+        onSurface: const Color(0xFF181A15),
+        surfaceContainerHighest: const Color(0xFFE1E4D9),
+        onSurfaceVariant: const Color(0xFF45483F),
+        outline: const Color(0xFF74786B),
+      );
+    }
   } else {
     final seed = themeSeeds[name]!;
     scheme = ColorScheme.fromSeed(
       seedColor: seed,
       brightness: effectiveBrightness,
-      contrastLevel: forcedDark ? 1.0 : 0.15,
+      contrastLevel: 0.15,
     );
   }
 
-  if (name == greyscaleThemeName || name == greyscaleHighContrastThemeName) {
+  if (name == greyscaleThemeName) {
     Color grey(Color color) {
       final channel = (color.computeLuminance() * 255).round().clamp(0, 255);
       return Color.fromARGB(255, channel, channel, channel);
@@ -169,34 +191,6 @@ ThemeData buildRpgTheme(String selectedSeed, Brightness brightness) {
       outline: effectiveBrightness == Brightness.dark
           ? const Color(0xFFE0E0E0)
           : const Color(0xFF404040),
-    );
-  }
-  if (name == 'Dungeon black') {
-    scheme = scheme.copyWith(
-      primary: const Color(0xFF728365),
-      onPrimary: const Color(0xFFF8F6EF),
-      primaryContainer: const Color(0xFF3E4738),
-      onPrimaryContainer: const Color(0xFFE4EAD8),
-      secondary: const Color(0xFF967050),
-      onSecondary: const Color(0xFFF9F3EA),
-      secondaryContainer: const Color(0xFF4D3928),
-      onSecondaryContainer: const Color(0xFFFFE9D1),
-      tertiary: const Color(0xFF848B71),
-      onTertiary: const Color(0xFFF6F4E8),
-      tertiaryContainer: const Color(0xFF404336),
-      onTertiaryContainer: const Color(0xFFE7E9D9),
-      surface: const Color(0xFF1D1E1B),
-      onSurface: const Color(0xFFF2F0E6),
-      surfaceContainerHighest: const Color(0xFF353732),
-      surfaceContainerHigh: const Color(0xFF2B2D28),
-      surfaceContainer: const Color(0xFF242620),
-      surfaceContainerLow: const Color(0xFF1B1D18),
-      onSurfaceVariant: const Color(0xFFD2CFC1),
-      outline: const Color(0xFF9A9B8D),
-      outlineVariant: const Color(0xFF64665A),
-      surfaceDim: const Color(0xFF151711),
-      surfaceBright: const Color(0xFF3E4039),
-      surfaceTint: const Color(0xFF778569),
     );
   }
   final dark = effectiveBrightness == Brightness.dark;
@@ -305,7 +299,7 @@ ThemeData buildRpgTheme(String selectedSeed, Brightness brightness) {
           ? const Color(0xFFFFE9A8)
           : const Color(0xFF281B03),
     );
-  } else if (name == 'Teal sigil') {
+  } else if (name == 'Teal Sigil') {
     scheme = scheme.copyWith(
       primary: dark ? const Color(0xFF62D8D1) : const Color(0xFF006E6A),
       onPrimary: dark ? const Color(0xFF003735) : const Color(0xFFFFFFFF),
@@ -334,35 +328,6 @@ ThemeData buildRpgTheme(String selectedSeed, Brightness brightness) {
           ? const Color(0xFFB5F4EE)
           : const Color(0xFF00201F),
     );
-  } else if (name == 'Copper') {
-    scheme = scheme.copyWith(
-      primary: dark ? const Color(0xFFE09A72) : const Color(0xFF8B452A),
-      onPrimary: dark ? const Color(0xFF381207) : const Color(0xFFFFFFFF),
-      primaryContainer: dark
-          ? const Color(0xFF6A301D)
-          : const Color(0xFFFFDBCA),
-      onPrimaryContainer: dark
-          ? const Color(0xFFFFDBCA)
-          : const Color(0xFF351107),
-      secondary: dark ? const Color(0xFFE5A6A1) : const Color(0xFF98504A),
-      onSecondary: dark ? const Color(0xFF3C0D0B) : const Color(0xFFFFFFFF),
-      secondaryContainer: dark
-          ? const Color(0xFF6F2926)
-          : const Color(0xFFFFDAD6),
-      onSecondaryContainer: dark
-          ? const Color(0xFFFFDAD6)
-          : const Color(0xFF3C0D0B),
-      surface: dark ? const Color(0xFF211512) : const Color(0xFFFFF7F3),
-      onSurface: dark ? const Color(0xFFFFECE5) : const Color(0xFF261815),
-      tertiary: dark ? const Color(0xFFE5C15A) : const Color(0xFF9A7615),
-      onTertiary: dark ? const Color(0xFF332500) : const Color(0xFFFFFFFF),
-      tertiaryContainer: dark
-          ? const Color(0xFF5B4607)
-          : const Color(0xFFFFE7A3),
-      onTertiaryContainer: dark
-          ? const Color(0xFFFFE7A3)
-          : const Color(0xFF332500),
-    );
   }
   final base = ThemeData(
     colorScheme: scheme,
@@ -373,8 +338,7 @@ ThemeData buildRpgTheme(String selectedSeed, Brightness brightness) {
     'Parchment Gold',
     'Forest Green',
     'Royal Purple',
-    'Teal sigil',
-    'Copper',
+    'Teal Sigil',
   }.contains(name);
   return base.copyWith(
     textTheme: base.textTheme.apply(fontFamily: 'Georgia'),
