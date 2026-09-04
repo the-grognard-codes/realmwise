@@ -28,74 +28,79 @@ void main() {
     },
   );
 
-  test('legacy high contrast names migrate to greyscale and honor brightness', () {
-    expect(
-      buildRpgTheme(
-        'Greyscale - High Contrast',
+  test(
+    'legacy high contrast names migrate to greyscale and honor brightness',
+    () {
+      expect(
+        buildRpgTheme('Greyscale - High Contrast', Brightness.light).brightness,
         Brightness.light,
-      ).brightness,
-      Brightness.light,
-    );
-    expect(
-      buildRpgTheme(
-        greyscaleHighContrastThemeName,
+      );
+      expect(
+        buildRpgTheme(
+          greyscaleHighContrastThemeName,
+          Brightness.dark,
+        ).colorScheme.brightness,
         Brightness.dark,
-      ).colorScheme.brightness,
-      Brightness.dark,
-    );
-  });
+      );
+    },
+  );
 
-  test('Dungeon black supports both brightness modes and uses a flagstone palette', () {
-    expect(
-      buildRpgTheme('Dungeon black', Brightness.light).brightness,
-      Brightness.light,
-    );
-    expect(
-      buildRpgTheme('Dungeon black', Brightness.dark).brightness,
-      Brightness.dark,
-    );
-    expect(
-      buildRpgTheme('Dungeon black', Brightness.light).colorScheme.surface,
-      isNot(buildRpgTheme('Dungeon black', Brightness.dark).colorScheme.surface),
-    );
-    final dungeon = buildRpgTheme(
-      'Dungeon black',
-      Brightness.dark,
-    ).colorScheme;
-    final parchment = buildRpgTheme(
-      'Parchment gold',
-      Brightness.light,
-    ).colorScheme;
-    expect(dungeon.surface, isNot(parchment.surface));
-    expect(dungeon.primary, isNot(parchment.primary));
-    expect(channelValue(dungeon.surface.r), lessThan(40));
-    expect(channelValue(dungeon.surface.g), lessThan(40));
-    expect(channelValue(dungeon.surface.b), lessThan(40));
-    expect(
-      channelValue(dungeon.primary.g),
-      greaterThan(channelValue(dungeon.primary.r)),
-    );
-    expect(
-      channelValue(dungeon.primary.r),
-      greaterThan(channelValue(dungeon.primary.b)),
-    );
-    expect(
-      channelValue(dungeon.secondary.r),
-      greaterThan(channelValue(dungeon.secondary.g)),
-    );
-    expect(
-      channelValue(dungeon.secondary.g),
-      greaterThan(channelValue(dungeon.secondary.b)),
-    );
-    expect(
-      channelValue(dungeon.tertiary.r),
-      greaterThan(channelValue(dungeon.tertiary.b)),
-    );
-    expect(
-      channelValue(dungeon.tertiary.g),
-      greaterThan(channelValue(dungeon.tertiary.r)),
-    );
-  });
+  test(
+    'Dungeon black supports both brightness modes and uses a flagstone palette',
+    () {
+      expect(
+        buildRpgTheme('Dungeon black', Brightness.light).brightness,
+        Brightness.light,
+      );
+      expect(
+        buildRpgTheme('Dungeon black', Brightness.dark).brightness,
+        Brightness.dark,
+      );
+      expect(
+        buildRpgTheme('Dungeon black', Brightness.light).colorScheme.surface,
+        isNot(
+          buildRpgTheme('Dungeon black', Brightness.dark).colorScheme.surface,
+        ),
+      );
+      final dungeon = buildRpgTheme(
+        'Dungeon black',
+        Brightness.dark,
+      ).colorScheme;
+      final parchment = buildRpgTheme(
+        'Parchment gold',
+        Brightness.light,
+      ).colorScheme;
+      expect(dungeon.surface, isNot(parchment.surface));
+      expect(dungeon.primary, isNot(parchment.primary));
+      expect(channelValue(dungeon.surface.r), lessThan(40));
+      expect(channelValue(dungeon.surface.g), lessThan(40));
+      expect(channelValue(dungeon.surface.b), lessThan(40));
+      expect(
+        channelValue(dungeon.primary.g),
+        greaterThan(channelValue(dungeon.primary.r)),
+      );
+      expect(
+        channelValue(dungeon.primary.r),
+        greaterThan(channelValue(dungeon.primary.b)),
+      );
+      expect(
+        channelValue(dungeon.secondary.r),
+        greaterThan(channelValue(dungeon.secondary.g)),
+      );
+      expect(
+        channelValue(dungeon.secondary.g),
+        greaterThan(channelValue(dungeon.secondary.b)),
+      );
+      expect(
+        channelValue(dungeon.tertiary.r),
+        greaterThan(channelValue(dungeon.tertiary.b)),
+      );
+      expect(
+        channelValue(dungeon.tertiary.g),
+        greaterThan(channelValue(dungeon.tertiary.r)),
+      );
+    },
+  );
 
   test('named palettes preserve hues and readable contrast', () {
     final dragon = buildRpgTheme('Dragon Red', Brightness.light).colorScheme;
