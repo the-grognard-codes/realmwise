@@ -1,9 +1,83 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:realmwise/models/catalog_models.dart';
+import 'package:realmwise/services/diagnostic_logging.dart';
 import 'package:realmwise/services/external_catalog_service.dart';
 
 void main() {
+  test('retries a transient OpenLibrary transport failure', () async {
+    var attempts = 0;
+    final client = _RecordingClient((_) {
+      attempts++;
+      if (attempts == 1) {
+        throw http.ClientException(
+          'https://private.example/search?title=secret',
+        );
+      }
+      return http.Response(
+        '{"docs":[{"title":"Recovered Book"}]}',
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+
+    final results = await ExternalCatalogService(
+      client,
+    ).searchByTitleOrAuthor(term: 'Recovered Book', author: false);
+
+    expect(results.single.title, 'Recovered Book');
+    expect(attempts, 2);
+  });
+
+  test('does not retry a non-success OpenLibrary response', () async {
+    var attempts = 0;
+    final client = _RecordingClient((_) {
+      attempts++;
+      return http.Response('', 503);
+    });
+
+    await expectLater(
+      ExternalCatalogService(
+        client,
+      ).searchByTitleOrAuthor(term: 'Unavailable Book', author: false),
+      throwsA(isA<CatalogLookupException>()),
+    );
+
+    expect(attempts, 1);
+  });
+
+  test('OpenLibrary transport telemetry uses a safe coarse category', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'realmwise-catalog-diagnostic-test',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final logger = DiagnosticLogger(directory: directory);
+    DiagnosticDiagnostics.logger = logger;
+    addTearDown(() => DiagnosticDiagnostics.logger = null);
+    final client = _RecordingClient((_) {
+      throw TimeoutException('https://private.example/search?title=secret');
+    });
+
+    await expectLater(
+      ExternalCatalogService(
+        client,
+      ).searchByTitleOrAuthor(term: 'Secret Book', author: false),
+      throwsA(isA<CatalogLookupException>()),
+    );
+    await DiagnosticDiagnostics.flush();
+
+    final log = await (await logger.files()).single.readAsString();
+    final fields = jsonDecode(log) as Map<String, dynamic>;
+    expect(fields['fields']['errorClass'], 'timeout');
+    expect(fields['fields']['retryCount'], 1);
+    expect(log, isNot(contains('private.example')));
+    expect(log, isNot(contains('Secret Book')));
+  });
+
   test('tries subtitle fallback and selects its matching result', () async {
     final client = _RecordingClient((request) {
       if (request.url.path.endsWith('/search')) {

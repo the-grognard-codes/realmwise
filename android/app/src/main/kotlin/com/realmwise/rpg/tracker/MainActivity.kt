@@ -10,6 +10,7 @@ import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.auth.api.identity.AuthorizationClient
 import com.google.android.gms.auth.api.identity.ClearTokenRequest
 import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.android.gms.common.api.Scope
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -309,14 +310,18 @@ class MainActivity : FlutterActivity() {
         val callback = pendingResult ?: return
         pendingResult = null
         if (googleAuthorizationCancelled) return
-        if (resultCode != Activity.RESULT_OK || data == null) {
+        if (data == null) {
             callback.error("authorization_cancelled", "Google authorization was cancelled", null)
             return
         }
         try {
             callback.success(tokenMap(authorizationClient.getAuthorizationResultFromIntent(data)))
         } catch (error: Exception) {
-            callback.error("authorization_failed", safeMessage(error), null)
+            if (error is ApiException && error.statusCode == CommonStatusCodes.CANCELED) {
+                callback.error("authorization_cancelled", "Google authorization was cancelled", null)
+            } else {
+                callback.error("authorization_failed", authorizationErrorMessage(error), null)
+            }
         }
     }
 
@@ -338,6 +343,13 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun safeMessage(error: Throwable): String = error.message ?: "Google authorization failed"
+
+    private fun authorizationErrorMessage(error: Throwable): String =
+        if (error is ApiException) {
+            "Google authorization failed (status code ${error.statusCode})"
+        } else {
+            "Google authorization failed"
+        }
 
     companion object {
         private const val CHANNEL = "realmwise/google_drive"

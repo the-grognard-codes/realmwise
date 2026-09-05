@@ -250,6 +250,7 @@ class _CatalogShellState extends State<CatalogShell> {
       SearchAddScreen(
         controller: widget.controller,
         onSaved: () => setState(() => _page = 0),
+        onBack: () => setState(() => _page = 0),
       ),
       SettingsScreen(
         controller: widget.controller,

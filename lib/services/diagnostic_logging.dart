@@ -117,10 +117,11 @@ class DiagnosticEvent {
 
 class DiagnosticLogger {
   DiagnosticLogger({
-    this._directory,
+    Directory? directory,
     String? sessionId,
     this.maxBytes = 5 * 1024 * 1024,
-  }) : sessionId = sessionId ?? _newSession();
+  }) : _directory = directory,
+       sessionId = sessionId ?? _newSession();
   Directory? _directory;
   final String sessionId;
   int maxBytes;
