@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:realmwise/app.dart';
 import 'package:realmwise/models/catalog_models.dart';
 import 'package:realmwise/screens/catalog_screen.dart';
 import 'package:realmwise/services/app_controller.dart';
@@ -57,6 +58,15 @@ void main() {
         ),
       ),
     );
+    await controller.database.saveRecord(
+      const CatalogRecord(
+        work: BookWork(
+          title: 'Bestiary',
+          gameSystem: 'RIFTS',
+          gameSetting: 'Rifts Earth',
+        ),
+      ),
+    );
   });
 
   tearDown(() async {
@@ -89,6 +99,35 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
   }
+
+  Future<void> pumpCatalogShell(
+    WidgetTester tester, {
+    required bool wide,
+  }) async {
+    await tester.pumpWidget(
+      MaterialApp(home: CatalogShell(controller: controller)),
+    );
+    await tester.pump();
+    for (var i = 0; i < 100; i++) {
+      final navigation = wide
+          ? find.byType(NavigationRail)
+          : find.byType(NavigationBar);
+      if (navigation.evaluate().isNotEmpty &&
+          find.byType(CircularProgressIndicator).evaluate().isEmpty) {
+        return;
+      }
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump();
+    }
+    fail('Catalog shell navigation did not appear');
+  }
+
+  Finder catalogHeaderIconButton(String tooltip) => find.ancestor(
+    of: find.byTooltip(tooltip),
+    matching: find.byType(IconButton),
+  );
 
   testWidgets('opens the phone drawer and closes from its scrim', (
     tester,
@@ -166,5 +205,117 @@ void main() {
     await tester.tap(leaf);
     await pumpInteraction(tester);
     expect(find.text('Library'), findsNothing);
+  });
+
+  testWidgets('phone shell keeps bottom navigation without a top app bar', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    await pumpCatalogShell(tester, wide: false);
+
+    expect(find.byType(AppBar), findsNothing);
+    expect(find.byType(NavigationBar), findsOneWidget);
+  });
+
+  testWidgets('phone catalog content clears the status-bar inset', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = const FakeViewPadding(top: 32);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetPadding);
+    await pumpCatalogShell(tester, wide: false);
+
+    final menu = find.byTooltip('Open library');
+    expect(tester.getTopLeft(menu).dy, greaterThanOrEqualTo(32));
+    await tester.tap(menu);
+    await pumpInteraction(tester);
+    expect(find.text('Library'), findsOneWidget);
+  });
+
+  testWidgets(
+    'wide shell keeps navigation rail without a bottom navigation bar',
+    (tester) async {
+      tester.view.physicalSize = const Size(1000, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      await pumpCatalogShell(tester, wide: true);
+
+      expect(find.byType(AppBar), findsNothing);
+      expect(find.byType(NavigationRail), findsOneWidget);
+      expect(find.byType(NavigationBar), findsNothing);
+    },
+  );
+
+  testWidgets('search toggles the hidden catalog filters and header controls', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    await pumpCatalog(tester);
+
+    expect(find.text('Filter catalog text'), findsNothing);
+    expect(find.text('All tags'), findsNothing);
+    expect(find.byTooltip('Refresh local catalog'), findsNothing);
+    expect(find.text('Search'), findsOneWidget);
+    expect(find.byTooltip('Previous book'), findsOneWidget);
+    expect(find.byTooltip('Next book'), findsOneWidget);
+
+    await tester.tap(find.text('Search'));
+    await tester.pump();
+    expect(find.text('Filter catalog text'), findsOneWidget);
+    expect(find.text('All tags'), findsOneWidget);
+    expect(find.byTooltip('Refresh local catalog'), findsOneWidget);
+    expect(
+      tester.getSize(find.byType(TextField)).height,
+      tester.getSize(find.byTooltip('Filter by tag')).height,
+    );
+    expect(
+      tester.getSize(find.byTooltip('Filter by tag')).height,
+      tester.getSize(find.byTooltip('Refresh local catalog')).height,
+    );
+
+    await tester.tap(find.text('Search'));
+    await tester.pump();
+    expect(find.text('Filter catalog text'), findsNothing);
+  });
+
+  testWidgets('library navigation is available only in the catalog header', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    await pumpCatalog(tester);
+
+    final previous = tester.widget<IconButton>(
+      catalogHeaderIconButton('Previous book'),
+    );
+    final next = tester.widget<IconButton>(
+      catalogHeaderIconButton('Next book'),
+    );
+    expect(find.byTooltip('Previous book'), findsOneWidget);
+    expect(find.byTooltip('Next book'), findsOneWidget);
+    expect(previous.onPressed != null || next.onPressed != null, isTrue);
+
+    final navigate = previous.onPressed != null
+        ? find.byTooltip('Previous book')
+        : find.byTooltip('Next book');
+    await tester.tap(navigate);
+    await tester.pump();
+    expect(
+      tester
+          .widget<IconButton>(
+            catalogHeaderIconButton(
+              previous.onPressed != null ? 'Next book' : 'Previous book',
+            ),
+          )
+          .onPressed,
+      isNotNull,
+    );
   });
 }

@@ -311,12 +311,12 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      leading: BackButton(
-        onPressed: widget.onBack ?? () => Navigator.pop(context),
-      ),
-      title: const Text('Find a work'),
-    ),
+    appBar: widget.onBack == null
+        ? AppBar(
+            leading: BackButton(onPressed: () => Navigator.pop(context)),
+            title: const Text('Find a work'),
+          )
+        : null,
     body: Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 860),
@@ -336,7 +336,7 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
               segments: const [
                 ButtonSegment(
                   value: LookupMode.isbn,
-                  label: Text('ISBN-10/13'),
+                  label: Text('ISBN'),
                   icon: Icon(Icons.numbers),
                 ),
                 ButtonSegment(

@@ -37,39 +37,33 @@ void main() {
     expect(searchField().keyboardType, TextInputType.text);
     expect(searchField().textInputAction, TextInputAction.search);
 
-    await tester.tap(find.text('ISBN-10/13'));
+    await tester.tap(find.text('ISBN'));
     await tester.pump();
     expect(searchField().key, const ValueKey(LookupMode.isbn));
     expect(searchField().keyboardType, TextInputType.number);
   });
 
-  testWidgets('back uses the embedding navigation callback when provided', (
-    tester,
-  ) async {
+  testWidgets('does not show a redundant top navigation bar', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final controller = AppController();
     addTearDown(controller.dispose);
-    var backCount = 0;
-
     await tester.pumpWidget(
       MaterialApp(
         home: SearchAddScreen(
           controller: controller,
           onSaved: () {},
-          onBack: () => backCount++,
+          onBack: () {},
         ),
       ),
     );
     await tester.pump();
 
-    await tester.tap(find.byType(BackButton));
-
-    expect(backCount, 1);
+    expect(find.byType(AppBar), findsNothing);
+    expect(find.byType(BackButton), findsNothing);
+    expect(find.text('Find a work'), findsOneWidget);
   });
 
-  testWidgets('back pops when no embedding navigation callback is provided', (
-    tester,
-  ) async {
+  testWidgets('standalone route retains back navigation bar', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final controller = AppController();
     addTearDown(controller.dispose);
@@ -86,6 +80,7 @@ void main() {
     );
     await tester.pump();
 
+    expect(find.byType(AppBar), findsOneWidget);
     await tester.tap(find.byType(BackButton));
     await tester.pumpAndSettle();
 
