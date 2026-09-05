@@ -879,7 +879,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           length: tabs.length,
           child: Column(
             children: [
-              TabBar(tabs: tabs),
+              TabBar(
+                labelPadding: const EdgeInsets.symmetric(
+                  horizontal: 16 * 2 / 3,
+                ),
+                tabs: tabs,
+              ),
               Expanded(child: TabBarView(children: views)),
             ],
           ),

@@ -134,6 +134,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
   String? _error;
   List<CatalogIconMapping> _icons = const [];
   bool _drawerOpen = false;
+  bool _filtersVisible = false;
   final _filterFocus = FocusNode();
 
   @override
@@ -260,7 +261,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
           final content = Column(
             children: [
               _catalogHeader(wide),
-              _catalogTools(),
+              if (_filtersVisible) _catalogTools(),
               Expanded(
                 child: _records.isEmpty
                     ? const _EmptyCatalog()
@@ -275,15 +276,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
                               onEdit: _selected == null
                                   ? null
                                   : () => _edit(_selected!),
-                              onPrevious: _selectedIndex > 0
-                                  ? () => _selectRelative(-1)
-                                  : null,
-                              onNext:
-                                  _selectedIndex >= 0 &&
-                                      _selectedIndex <
-                                          _navigationRecords.length - 1
-                                  ? () => _selectRelative(1)
-                                  : null,
                             ),
                           ),
                         ],
@@ -297,15 +289,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
                               onEdit: _selected == null
                                   ? null
                                   : () => _edit(_selected!),
-                              onPrevious: _selectedIndex > 0
-                                  ? () => _selectRelative(-1)
-                                  : null,
-                              onNext:
-                                  _selectedIndex >= 0 &&
-                                      _selectedIndex <
-                                          _navigationRecords.length - 1
-                                  ? () => _selectRelative(1)
-                                  : null,
                             ),
                           ),
                         ],
@@ -379,6 +362,15 @@ class _CatalogScreenState extends State<CatalogScreen> {
     );
   }
 
+  void _toggleFilters() {
+    setState(() => _filtersVisible = !_filtersVisible);
+    if (_filtersVisible) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _filtersVisible) _filterFocus.requestFocus();
+      });
+    }
+  }
+
   Widget _catalogHeader(bool wide) => SizedBox(
     height: 56,
     child: Row(
@@ -387,21 +379,63 @@ class _CatalogScreenState extends State<CatalogScreen> {
           button: true,
           label: _drawerOpen ? 'Close library drawer' : 'Open library drawer',
           child: IconButton(
+            style: IconButton.styleFrom(
+              minimumSize: const Size.square(40),
+              maximumSize: const Size.square(40),
+              padding: EdgeInsets.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+            ),
             icon: Icon(_drawerOpen ? Icons.close : Icons.menu),
             tooltip: _drawerOpen ? 'Close library' : 'Open library',
             onPressed: wide ? null : (_drawerOpen ? _closeDrawer : _openDrawer),
           ),
         ),
-        const Expanded(
-          child: Text(
-            'Catalog',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+        const SizedBox(width: 8),
+        const Text(
+          'Catalog',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+        ),
+        const _HeaderDivider(),
+        TextButton.icon(
+          onPressed: _toggleFilters,
+          style: TextButton.styleFrom(
+            minimumSize: const Size(0, 40),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.compact,
           ),
+          icon: const Icon(Icons.search),
+          label: const Text('Search'),
+        ),
+        const _HeaderDivider(),
+        IconButton(
+          style: IconButton.styleFrom(
+            minimumSize: const Size.square(40),
+            maximumSize: const Size.square(40),
+            padding: EdgeInsets.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.compact,
+          ),
+          onPressed: _selectedIndex > 0 ? () => _selectRelative(-1) : null,
+          tooltip: 'Previous book',
+          icon: const Icon(Icons.arrow_back),
         ),
         IconButton(
-          tooltip: 'Search catalog',
-          icon: const Icon(Icons.search),
-          onPressed: () => _filterFocus.requestFocus(),
+          style: IconButton.styleFrom(
+            minimumSize: const Size.square(40),
+            maximumSize: const Size.square(40),
+            padding: EdgeInsets.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.compact,
+          ),
+          onPressed:
+              _selectedIndex >= 0 &&
+                  _selectedIndex < _navigationRecords.length - 1
+              ? () => _selectRelative(1)
+              : null,
+          tooltip: 'Next book',
+          icon: const Icon(Icons.arrow_forward),
         ),
       ],
     ),
@@ -437,53 +471,93 @@ class _CatalogScreenState extends State<CatalogScreen> {
     child: Row(
       children: [
         Expanded(
-          child: TextField(
-            controller: _filterController,
-            focusNode: _filterFocus,
-            decoration: InputDecoration(
-              labelText: 'Filter catalog text',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: _filterController.text.isEmpty
-                  ? null
-                  : IconButton(
-                      onPressed: () => _filterController.clear(),
-                      icon: const Icon(Icons.clear),
-                    ),
+          child: SizedBox(
+            height: _catalogControlHeight,
+            child: TextField(
+              controller: _filterController,
+              focusNode: _filterFocus,
+              decoration: InputDecoration(
+                labelText: 'Filter catalog text',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _filterController.text.isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: () => _filterController.clear(),
+                        icon: const Icon(Icons.clear),
+                      ),
+              ),
             ),
           ),
         ),
         const SizedBox(width: 8),
-        PopupMenuButton<String>(
-          tooltip: 'Filter by tag',
-          onSelected: (tag) => setState(() => _tag = tag.isEmpty ? null : tag),
-          itemBuilder: (context) => [
-            // Popup menus treat a null value as dismissal, so use an empty
-            // sentinel for the explicit "All tags" choice.
-            CheckedPopupMenuItem<String>(
-              value: '',
-              checked: _tag == null,
-              child: const Text('All tags'),
-            ),
-            ..._tags.map(
-              (tag) => CheckedPopupMenuItem<String>(
-                value: tag,
-                checked: _tag == tag,
-                child: Text(tag),
+        SizedBox(
+          height: _catalogControlHeight,
+          child: PopupMenuButton<String>(
+            tooltip: 'Filter by tag',
+            onSelected: (tag) =>
+                setState(() => _tag = tag.isEmpty ? null : tag),
+            itemBuilder: (context) => [
+              // Popup menus treat a null value as dismissal, so use an empty
+              // sentinel for the explicit "All tags" choice.
+              CheckedPopupMenuItem<String>(
+                value: '',
+                checked: _tag == null,
+                child: const Text('All tags'),
+              ),
+              ..._tags.map(
+                (tag) => CheckedPopupMenuItem<String>(
+                  value: tag,
+                  checked: _tag == tag,
+                  child: Text(tag),
+                ),
+              ),
+            ],
+            child: Container(
+              height: _catalogControlHeight,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              alignment: Alignment.center,
+              decoration: ShapeDecoration(
+                shape: StadiumBorder(
+                  side: BorderSide(
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.sell_outlined, size: 18),
+                  const SizedBox(width: 8),
+                  Text(_tag ?? 'All tags'),
+                ],
               ),
             ),
-          ],
-          child: Chip(
-            avatar: const Icon(Icons.sell_outlined, size: 18),
-            label: Text(_tag ?? 'All tags'),
           ),
         ),
-        IconButton(
-          onPressed: _load,
-          tooltip: 'Refresh local catalog',
-          icon: const Icon(Icons.refresh),
+        const SizedBox(width: 8),
+        SizedBox(
+          height: _catalogControlHeight,
+          width: _catalogControlHeight,
+          child: IconButton(
+            onPressed: _load,
+            tooltip: 'Refresh local catalog',
+            icon: const Icon(Icons.refresh),
+          ),
         ),
       ],
     ),
+  );
+}
+
+const double _catalogControlHeight = 56;
+
+class _HeaderDivider extends StatelessWidget {
+  const _HeaderDivider();
+
+  @override
+  Widget build(BuildContext context) => const Padding(
+    padding: EdgeInsets.symmetric(horizontal: 6),
+    child: SizedBox(height: 24, width: 1, child: VerticalDivider(width: 1)),
   );
 }
 
@@ -833,16 +907,9 @@ class _NewBadge extends StatelessWidget {
 }
 
 class _BookPreview extends StatelessWidget {
-  const _BookPreview({
-    required this.record,
-    required this.onEdit,
-    required this.onPrevious,
-    required this.onNext,
-  });
+  const _BookPreview({required this.record, required this.onEdit});
   final CatalogRecord? record;
   final VoidCallback? onEdit;
-  final VoidCallback? onPrevious;
-  final VoidCallback? onNext;
 
   @override
   Widget build(BuildContext context) {
@@ -868,26 +935,9 @@ class _BookPreview extends StatelessWidget {
                   final details = Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              work.title,
-                              style: Theme.of(context).textTheme.headlineSmall,
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: onPrevious,
-                            tooltip: 'Previous book',
-                            icon: const Icon(Icons.arrow_back),
-                          ),
-                          IconButton(
-                            onPressed: onNext,
-                            tooltip: 'Next book',
-                            icon: const Icon(Icons.arrow_forward),
-                          ),
-                        ],
+                      Text(
+                        work.title,
+                        style: Theme.of(context).textTheme.headlineSmall,
                       ),
                       const SizedBox(height: 8),
                       Text(

@@ -241,8 +241,6 @@ class _CatalogShellState extends State<CatalogShell> {
     ),
   ];
 
-  String get _title => ['Catalog', 'Add to catalog', 'Settings'][_page];
-
   @override
   Widget build(BuildContext context) {
     final pages = [
@@ -261,35 +259,38 @@ class _CatalogShellState extends State<CatalogShell> {
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 760;
         return Scaffold(
-          appBar: AppBar(title: Text(_title)),
-          body: Row(
-            children: [
-              if (wide)
-                NavigationRail(
-                  selectedIndex: _page,
-                  labelType: NavigationRailLabelType.all,
-                  onDestinationSelected: (index) =>
-                      setState(() => _page = index),
-                  leading: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Icon(
-                      Icons.shield,
-                      color: Theme.of(context).colorScheme.primary,
-                      size: 32,
+          body: SafeArea(
+            top: true,
+            bottom: false,
+            child: Row(
+              children: [
+                if (wide)
+                  NavigationRail(
+                    selectedIndex: _page,
+                    labelType: NavigationRailLabelType.all,
+                    onDestinationSelected: (index) =>
+                        setState(() => _page = index),
+                    leading: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Icon(
+                        Icons.shield,
+                        color: Theme.of(context).colorScheme.primary,
+                        size: 32,
+                      ),
                     ),
+                    destinations: _destinations
+                        .map(
+                          (item) => NavigationRailDestination(
+                            icon: item.icon,
+                            selectedIcon: item.selectedIcon,
+                            label: Text(item.label),
+                          ),
+                        )
+                        .toList(),
                   ),
-                  destinations: _destinations
-                      .map(
-                        (item) => NavigationRailDestination(
-                          icon: item.icon,
-                          selectedIcon: item.selectedIcon,
-                          label: Text(item.label),
-                        ),
-                      )
-                      .toList(),
-                ),
-              Expanded(child: pages[_page]),
-            ],
+                Expanded(child: pages[_page]),
+              ],
+            ),
           ),
           bottomNavigationBar: wide
               ? null
