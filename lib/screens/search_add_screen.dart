@@ -40,6 +40,7 @@ class SearchAddScreen extends StatefulWidget {
     super.key,
     required this.controller,
     required this.onSaved,
+    this.onBack,
     this.selectionOnly = false,
     this.initialIsbn,
     this.initialTitle,
@@ -47,6 +48,11 @@ class SearchAddScreen extends StatefulWidget {
   });
   final AppController controller;
   final VoidCallback onSaved;
+
+  /// Handles leaving the screen when it is embedded in another navigation UI.
+  ///
+  /// When omitted, the screen retains its pushed-route behavior and pops.
+  final VoidCallback? onBack;
 
   /// When true, selecting a remote result returns the enriched candidate
   /// instead of opening a new editor route.
@@ -306,7 +312,9 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      leading: BackButton(onPressed: () => Navigator.pop(context)),
+      leading: BackButton(
+        onPressed: widget.onBack ?? () => Navigator.pop(context),
+      ),
       title: const Text('Find a work'),
     ),
     body: Center(
@@ -348,6 +356,7 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
             ),
             const SizedBox(height: 14),
             TextField(
+              key: ValueKey(_mode),
               controller: _query,
               keyboardType: _mode == LookupMode.isbn
                   ? TextInputType.number

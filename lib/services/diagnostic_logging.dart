@@ -117,11 +117,11 @@ class DiagnosticEvent {
 
 class DiagnosticLogger {
   DiagnosticLogger({
-    this._directory,
+    this.directory,
     String? sessionId,
     this.maxBytes = 5 * 1024 * 1024,
   }) : sessionId = sessionId ?? _newSession();
-  Directory? _directory;
+  Directory? directory;
   final String sessionId;
   int maxBytes;
   bool debugLogging = false;
@@ -136,14 +136,13 @@ class DiagnosticLogger {
       '${DateTime.now().toUtc().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 32).toRadixString(16)}';
 
   Future<void> initialize() async {
-    _directory ??= Directory(
+    directory ??= Directory(
       p.join((await getApplicationSupportDirectory()).path, 'diagnostics'),
     );
-    await _directory!.create(recursive: true);
+    await directory!.create(recursive: true);
     await _reconcile();
   }
 
-  Directory get directory => _directory!;
   bool _retained(DiagnosticSeverity s) =>
       s.index >= DiagnosticSeverity.warning.index || debugLogging;
 
@@ -153,7 +152,7 @@ class DiagnosticLogger {
   }) async {
     debugLogging = optionsEnabled && debugEnabled;
     maxBytes = debugLogging ? 100 * 1024 * 1024 : 5 * 1024 * 1024;
-    if (_directory != null) await _reconcile();
+    if (directory != null) await _reconcile();
   }
 
   Future<void> log(
@@ -173,13 +172,13 @@ class DiagnosticLogger {
       final line = '${jsonEncode(item.toJson())}\n';
       await _enqueue<void>(() async {
         await initialize();
-        final file = File(p.join(directory.path, 'diagnostic.log'));
+        final file = File(p.join(directory!.path, 'diagnostic.log'));
         // Rotate before the append that would cross the configured cap.
         if (await file.exists() &&
             (await file.length()) + line.length > maxBytes) {
           final rotated = File(
             p.join(
-              directory.path,
+              directory!.path,
               'diagnostic-${DateTime.now().toUtc().microsecondsSinceEpoch}.log',
             ),
           );
@@ -200,9 +199,9 @@ class DiagnosticLogger {
   Future<void> flush() => _tail;
 
   Future<List<File>> files() async {
-    if (_directory == null) return const [];
+    if (directory == null) return const [];
     try {
-      return (await directory.list().where((e) => e is File).toList())
+      return (await directory!.list().where((e) => e is File).toList())
           .cast<File>();
     } on Object {
       return const [];

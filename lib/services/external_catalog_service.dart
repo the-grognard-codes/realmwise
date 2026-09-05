@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -16,6 +17,9 @@ class CatalogLookupException implements Exception {
 /// Remote lookup boundary. All callers handle failure so the catalog remains usable offline.
 class ExternalCatalogService {
   ExternalCatalogService(this._client, {this._ownerName, this._ownerEmail});
+  static const _openLibraryTransportAttempts = 2;
+  static const _openLibraryRetryBackoff = Duration(milliseconds: 100);
+
   final http.Client _client;
   String? _ownerName;
   String? _ownerEmail;
@@ -445,9 +449,7 @@ class ExternalCatalogService {
       headers['From'] = effectiveEmail!.trim();
     int? responseStatus;
     try {
-      final response = await _client
-          .get(url, headers: headers)
-          .timeout(const Duration(seconds: 12));
+      final response = await _getOpenLibrary(url, headers);
       responseStatus = response.statusCode;
       if (response.statusCode < 200 || response.statusCode >= 300)
         throw CatalogLookupException(
@@ -477,15 +479,48 @@ class ExternalCatalogService {
         DiagnosticSeverity.warning,
         'catalog.lookup.error',
         {
-          'operation': 'remote',
+          'operation': 'openlibrary',
           'outcome': 'failed',
-          'errorClass': error.runtimeType.toString(),
+          // This is deliberately a fixed category, never an exception message.
+          // Transport exceptions can contain request URLs or user search terms.
+          'errorClass': _openLibraryErrorCategory(error),
+          if (_isTransientOpenLibraryTransportError(error))
+            'retryCount': _openLibraryTransportAttempts - 1,
         },
       );
       throw const CatalogLookupException(
         'Could not reach OpenLibrary. You can still add the book manually while offline.',
       );
     }
+  }
+
+  Future<http.Response> _getOpenLibrary(
+    Uri url,
+    Map<String, String> headers,
+  ) async {
+    for (var attempt = 0; attempt < _openLibraryTransportAttempts; attempt++) {
+      try {
+        return await _client
+            .get(url, headers: headers)
+            .timeout(const Duration(seconds: 12));
+      } on Exception catch (error) {
+        if (!_isTransientOpenLibraryTransportError(error) ||
+            attempt == _openLibraryTransportAttempts - 1) {
+          rethrow;
+        }
+        await Future<void>.delayed(_openLibraryRetryBackoff * (attempt + 1));
+      }
+    }
+    throw StateError('Open Library retry loop ended unexpectedly.');
+  }
+
+  bool _isTransientOpenLibraryTransportError(Object error) =>
+      error is TimeoutException || error is http.ClientException;
+
+  String _openLibraryErrorCategory(Object error) {
+    if (error is TimeoutException) return 'timeout';
+    if (error is http.ClientException) return 'transport';
+    return 'unexpected';
   }
 
   String _userAgent(String? ownerName, String? ownerEmail) {

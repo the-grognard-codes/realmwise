@@ -169,6 +169,69 @@ void main() {
     controller.dispose();
   });
 
+  test(
+    'remote restore retries a temporarily malformed OneDrive bundle',
+    () async {
+      final provider = _FakeSyncProvider();
+      final source = AppController(
+        tokenStorage: _MemoryTokenStorage(),
+        imageRootPathOverride: p.join(dir.path, 'retry-source-images'),
+      );
+      await source.openDatabase(
+        p.join(dir.path, 'retry-source.db'),
+        remember: false,
+      );
+      final bundle = p.join(dir.path, 'retry-remote.realmwise');
+      await source.exportDeviceBundle(bundle);
+
+      final controller = AppController(
+        syncProvider: provider,
+        tokenStorage: _MemoryTokenStorage(),
+        imageRootPathOverride: p.join(dir.path, 'retry-active-images'),
+      );
+      controller.syncCoordinator = SyncCoordinator(
+        metadataStorage: SharedPreferencesSyncMetadataStorage(
+          await SharedPreferences.getInstance(),
+        ),
+      );
+      await controller.openDatabase(
+        p.join(dir.path, 'retry-active.db'),
+        remember: false,
+      );
+      await controller.selectProvider(provider);
+      controller.syncCoordinator
+        ..provider = provider
+        ..session = const SyncAuthSession(accountId: 'account')
+        ..target = const SyncRemoteTarget(id: 'target', name: 'Target')
+        ..metadata = const SyncMetadata(
+          catalogIdentity: 'active',
+          provider: 'fake',
+          accountId: 'account',
+          remoteTargetId: 'target',
+        );
+      controller.syncMetadata = controller.syncCoordinator.metadata;
+      provider.payloads = <Uint8List>[
+        Uint8List.fromList('manifest unavailable'.codeUnits),
+        Uint8List.fromList('manifest unavailable'.codeUnits),
+        await File(bundle).readAsBytes(),
+      ];
+
+      final applied = await controller.downloadRemoteBundle(
+        expectedRemote: const SyncRemoteMetadata(
+          revision: SyncRevision('1'),
+          contentHash: 'remote',
+        ),
+      );
+
+      expect(applied, isTrue);
+      expect(provider.downloadCalls, 3);
+      await source.closeDatabase();
+      source.dispose();
+      await controller.closeDatabase();
+      controller.dispose();
+    },
+  );
+
   test('remote restore rejects an unregistered captured provider', () async {
     final registered = _FakeSyncProvider();
     final unregistered = _FakeSyncProvider();
@@ -231,6 +294,8 @@ class _MemoryTokenStorage implements TokenStorage {
 
 class _FakeSyncProvider implements SyncProvider {
   Uint8List? payload;
+  List<Uint8List>? payloads;
+  int downloadCalls = 0;
   @override
   String get provider => 'fake';
 
@@ -262,11 +327,20 @@ class _FakeSyncProvider implements SyncProvider {
     SyncAuthSession session,
     SyncRemoteTarget target, {
     SyncPrecondition? precondition,
-  }) async => SyncDownloadResult(
-    payload: payload!,
-    metadata: const SyncRemoteMetadata(
-      revision: SyncRevision('1'),
-      contentHash: 'remote',
-    ),
-  );
+  }) async {
+    final sequence = payloads;
+    final nextPayload = sequence == null
+        ? payload!
+        : sequence[downloadCalls < sequence.length
+              ? downloadCalls
+              : sequence.length - 1];
+    downloadCalls++;
+    return SyncDownloadResult(
+      payload: nextPayload,
+      metadata: const SyncRemoteMetadata(
+        revision: SyncRevision('1'),
+        contentHash: 'remote',
+      ),
+    );
+  }
 }

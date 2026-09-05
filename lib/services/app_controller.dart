@@ -962,7 +962,12 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     try {
       SyncDownloadResult? result;
       BundleManifest? manifest;
-      const maxBundleReadRetries = 3;
+      // OneDrive can return an older, incomplete file immediately after the
+      // manifest is created or replaced. Keep this finite so a permanently
+      // malformed bundle still fails promptly, while allowing propagation to
+      // settle over several seconds.
+      const maxBundleReadRetries = 5;
+      const initialBundleReadRetryDelay = Duration(milliseconds: 500);
       for (var attempt = 0; attempt < maxBundleReadRetries; attempt++) {
         try {
           result = await syncCoordinator.download(
@@ -978,7 +983,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
           if (error is! FormatException) rethrow;
           if (attempt == maxBundleReadRetries - 1) rethrow;
           await Future<void>.delayed(
-            Duration(milliseconds: 100 * (1 << attempt)),
+            initialBundleReadRetryDelay * (1 << attempt),
           );
         }
       }
