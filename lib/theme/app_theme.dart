@@ -21,6 +21,50 @@ const String greyscaleHighContrastThemeName = greyscaleThemeName;
 const String highContrastDarkThemeName = greyscaleThemeName;
 const String colorVisionAccessibleThemeName = greyscaleThemeName;
 
+const Map<String, String> _themeSlugs = {
+  'Dragon Red': 'dragon-red',
+  'Parchment Gold': 'parchment-gold',
+  'Dungeon Black': 'dungeon-black',
+  'Arcane Blue': 'arcane-blue',
+  'Forest Green': 'forest-green',
+  'Royal Purple': 'royal-purple',
+  'Teal Sigil': 'teal-sigil',
+  'Greyscale': 'greyscale',
+};
+
+/// The lower-kebab placeholder asset slug for a current or legacy theme name.
+String canonicalThemeSlug(String? name) =>
+    _themeSlugs[canonicalThemeName(name)]!;
+
+String workCoverPlaceholderAssetPath(String? themeName) =>
+    'assets/placeholders/work-cover-placeholder-unavailable-${canonicalThemeSlug(themeName)}.png';
+
+/// Makes the selected canonical theme available to cover widgets without
+/// requiring theme values to be threaded through every call site.
+@immutable
+class CoverPlaceholderTheme extends ThemeExtension<CoverPlaceholderTheme> {
+  const CoverPlaceholderTheme({
+    required this.canonicalName,
+    required this.assetPath,
+  });
+
+  final String canonicalName;
+  final String assetPath;
+
+  @override
+  CoverPlaceholderTheme copyWith({String? canonicalName, String? assetPath}) =>
+      CoverPlaceholderTheme(
+        canonicalName: canonicalName ?? this.canonicalName,
+        assetPath: assetPath ?? this.assetPath,
+      );
+
+  @override
+  CoverPlaceholderTheme lerp(
+    covariant CoverPlaceholderTheme? other,
+    double t,
+  ) => t < 0.5 ? this : other ?? this;
+}
+
 /// Converts names from older releases to the current catalog. Removed themes
 /// intentionally fall back to Arcane Blue instead of silently changing to an
 /// unrelated palette.
@@ -341,6 +385,12 @@ ThemeData buildRpgTheme(String selectedSeed, Brightness brightness) {
     'Teal Sigil',
   }.contains(name);
   return base.copyWith(
+    extensions: [
+      CoverPlaceholderTheme(
+        canonicalName: name,
+        assetPath: workCoverPlaceholderAssetPath(name),
+      ),
+    ],
     textTheme: base.textTheme.apply(fontFamily: 'Georgia'),
     appBarTheme: AppBarTheme(
       centerTitle: false,
