@@ -5,8 +5,15 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'secure_storage_service.dart';
+import 'diagnostic_logging.dart';
 import 'sync_contract.dart';
 import 'sync_debug.dart';
+
+void _oneDriveTrace(
+  String action, [
+  Map<String, Object?> fields = const {},
+  DiagnosticSeverity? severity,
+]) => SyncDebug.trace(action, {'provider': 'onedrive', ...fields}, severity);
 
 abstract interface class OneDriveOAuthBrowser {
   Future<void> open(Uri uri);
@@ -173,7 +180,7 @@ String _quickXorHash(Uint8List bytes) {
 
 Never _fail(http.Response r, String op) {
   final graphErrorCode = _safeGraphErrorCode(r.body);
-  SyncDebug.trace('provider.graph.error', {
+  _oneDriveTrace('provider.graph.error', {
     'operation': op,
     'status': r.statusCode,
     'code': ?graphErrorCode,
@@ -247,10 +254,10 @@ List<String> _scopeNames(Object? value) {
 void _requireAppFolderScope(Iterable<String> scopes) {
   final granted = scopes.toSet();
   final appFolderPresent = granted.contains('Files.ReadWrite.AppFolder');
-  SyncDebug.trace('provider.oauth.scopes', {
+  _oneDriveTrace('provider.oauth.scopes', {
     'filesReadWriteAppFolder': appFolderPresent,
     'scopeCount': granted.length,
-  });
+  }, DiagnosticSeverity.debug);
   if (!appFolderPresent) {
     throw OneDriveAuthException(
       'Microsoft consent did not grant Files.ReadWrite.AppFolder; revoke Realmwise consent and reconnect',
@@ -295,7 +302,7 @@ class OneDriveOAuthAuthenticator implements SyncAuthenticator {
       final wait = Duration(
         seconds: (retryAfter ?? (1 << attempt)).clamp(1, 30).toInt(),
       );
-      SyncDebug.trace('provider.graph.retry', {
+      _oneDriveTrace('provider.graph.retry', {
         'attempt': attempt + 1,
         'backoffMs': wait.inMilliseconds,
         'status': response.statusCode,
@@ -360,7 +367,7 @@ class OneDriveOAuthAuthenticator implements SyncAuthenticator {
       throw OneDriveAuthException('Invalid OAuth state');
     if (u.queryParameters['error'] != null) {
       final error = u.queryParameters['error'];
-      SyncDebug.trace('provider.oauth.error', {
+      _oneDriveTrace('provider.oauth.error', {
         'phase': 'authorization',
         'code': ?error,
       });
@@ -381,7 +388,7 @@ class OneDriveOAuthAuthenticator implements SyncAuthenticator {
     );
     if (r.statusCode ~/ 100 != 2) {
       final e = _safeOAuthErrorCode(r.body);
-      SyncDebug.trace('provider.oauth.error', {
+      _oneDriveTrace('provider.oauth.error', {
         'phase': 'tokenExchange',
         'status': r.statusCode,
         'code': ?e,
@@ -479,7 +486,7 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
       final retryAfter = int.tryParse(response.headers['retry-after'] ?? '');
       final seconds = retryAfter ?? (1 << attempt);
       final wait = Duration(seconds: seconds.clamp(1, 30).toInt());
-      SyncDebug.trace('provider.graph.retry', {
+      _oneDriveTrace('provider.graph.retry', {
         'attempt': attempt + 1,
         'backoffMs': wait.inMilliseconds,
         'status': response.statusCode,
@@ -495,7 +502,7 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
 
   Future<void> _waitForConsistency(int attempt) async {
     final wait = Duration(seconds: (1 << attempt).clamp(1, 30).toInt());
-    SyncDebug.trace('provider.download.retry', {
+    _oneDriveTrace('provider.download.retry', {
       'attempt': attempt + 1,
       'backoffMs': wait.inMilliseconds,
     });
@@ -921,12 +928,12 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
       ),
     );
     if (r.statusCode == 404) {
-      SyncDebug.trace('provider.metadata', {'status': 404});
+      _oneDriveTrace('provider.metadata', {'status': 404});
       _tags.remove(t.id);
       return null;
     }
     if (r.statusCode != 200) {
-      SyncDebug.trace('provider.metadata.error', {'status': r.statusCode});
+      _oneDriveTrace('provider.metadata.error', {'status': r.statusCode});
       _fail(r, 'OneDrive metadata failed');
     }
     final j = jsonDecode(r.body) as Map;
@@ -938,7 +945,7 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
       contentHash: (h is Map ? h['quickXorHash'] : null) as String? ?? '',
       updatedAt: DateTime.tryParse(j['lastModifiedDateTime'] ?? ''),
     );
-    SyncDebug.trace('provider.metadata', {
+    _oneDriveTrace('provider.metadata', {
       'status': r.statusCode,
       'revision': SyncDebug.hashPrefix(metadata.revision.value),
       'etagPresent': tag.isNotEmpty,
@@ -954,7 +961,7 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
     SyncPrecondition? precondition,
   }) async {
     final hash = sha256.convert(payload).toString();
-    SyncDebug.trace('provider.upload.start', {
+    _oneDriveTrace('provider.upload.start', {
       'revision': precondition?.revision == null
           ? 'none'
           : SyncDebug.hashPrefix(precondition!.revision!.value),
@@ -968,7 +975,7 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
                 precondition.revision!.value != old.revision.value) ||
             (precondition.contentHash != null &&
                 precondition.contentHash != old.contentHash))) {
-      SyncDebug.trace('provider.upload.conflict', {'reason': 'precondition'});
+      _oneDriveTrace('provider.upload.conflict', {'reason': 'precondition'});
       throw SyncConflictException(old);
     }
     final r = await _http.put(
@@ -983,7 +990,7 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
       body: payload,
     );
     if (r.statusCode == 412)
-      SyncDebug.trace('provider.upload.412', {'status': 412});
+      _oneDriveTrace('provider.upload.412', {'status': 412});
     if (r.statusCode == 412)
       throw SyncConflictException(
         old ??
@@ -993,7 +1000,7 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
             ),
       );
     if (r.statusCode ~/ 100 != 2) _fail(r, 'OneDrive upload failed');
-    SyncDebug.trace('provider.upload.content', {
+    _oneDriveTrace('provider.upload.content', {
       'status': r.statusCode,
       'etagPresent': r.headers['etag'] != null,
     });

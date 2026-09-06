@@ -10,11 +10,12 @@ void main() {
   test('sanitizer drops unsafe keys recursively and redacts secrets', () {
     final result = DiagnosticSanitizer.fields({
       'title': 'private book',
-      'provider': 'Bearer abcdefghijklmnop',
-      'operation': 'lookup',
+      'provider': 'onedrive',
+      'operation': 'Bearer abcdefghijklmnop',
     });
     expect(result.containsKey('title'), isFalse);
-    expect(result['provider'], '[REDACTED]');
+    expect(result['provider'], 'onedrive');
+    expect(result['operation'], '[REDACTED]');
   });
 
   test('exception sanitization keeps only the exception class', () {
@@ -25,24 +26,75 @@ void main() {
     expect(DiagnosticSanitizer.value(_SensitiveObject()), '[REDACTED]');
   });
 
-  test('sync failures are warnings or errors and lifecycle is debug', () async {
-    final dir = await Directory.systemTemp.createTemp(
-      'realmwise-diagnostic-test',
-    );
-    addTearDown(() => dir.delete(recursive: true));
-    final logger = DiagnosticLogger(directory: dir)..debugLogging = true;
-    SyncDebug.diagnosticLogger = logger;
-    DiagnosticDiagnostics.logger = logger;
-    addTearDown(() => SyncDebug.diagnosticLogger = null);
-    addTearDown(() => DiagnosticDiagnostics.logger = null);
-    SyncDebug.trace('provider.upload.retry', const {'status': 503});
-    SyncDebug.trace('provider.upload.error', const {'status': 500});
-    SyncDebug.trace('provider.upload.start', const {'status': 200});
-    await DiagnosticDiagnostics.flush();
-    final text = await (await logger.files()).single.readAsString();
-    expect(text, contains('"severity":"error"'));
-    expect(text, contains('"severity":"debug"'));
-  });
+  test(
+    'sync failures are errors, retries warnings, and lifecycle is debug',
+    () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'realmwise-diagnostic-test',
+      );
+      addTearDown(() => dir.delete(recursive: true));
+      final logger = DiagnosticLogger(directory: dir)..debugLogging = true;
+      SyncDebug.diagnosticLogger = logger;
+      DiagnosticDiagnostics.logger = logger;
+      addTearDown(() => SyncDebug.diagnosticLogger = null);
+      addTearDown(() => DiagnosticDiagnostics.logger = null);
+      SyncDebug.trace('provider.upload.retry', const {'status': 503});
+      SyncDebug.trace('provider.upload.error', const {'status': 500});
+      SyncDebug.trace('provider.upload.start', const {'status': 200});
+      await DiagnosticDiagnostics.flush();
+      final text = await (await logger.files()).single.readAsString();
+      expect(text, contains('"severity":"error"'));
+      expect(text, contains('"severity":"warning"'));
+      expect(text, contains('"severity":"debug"'));
+    },
+  );
+
+  test(
+    'provider connect failures retain provider attribution as errors',
+    () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'realmwise-diagnostic-test',
+      );
+      addTearDown(() => dir.delete(recursive: true));
+      final logger = DiagnosticLogger(directory: dir)..debugLogging = true;
+      SyncDebug.diagnosticLogger = logger;
+      addTearDown(() => SyncDebug.diagnosticLogger = null);
+      SyncDebug.trace('provider.connect.failure', const {
+        'provider': 'google_drive',
+        'operation': 'connect',
+        'outcome': 'failure',
+        'errorClass': 'StateError',
+      }, DiagnosticSeverity.error);
+      await logger.flush();
+      final text = await (await logger.files()).single.readAsString();
+      expect(text, contains('"severity":"error"'));
+      expect(text, contains('"provider":"google_drive"'));
+      expect(text, contains('"event":"sync.provider.connect.failure"'));
+    },
+  );
+
+  test(
+    'OAuth observations remain debug and retain safe provider fields',
+    () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'realmwise-diagnostic-test',
+      );
+      addTearDown(() => dir.delete(recursive: true));
+      final logger = DiagnosticLogger(directory: dir)..debugLogging = true;
+      SyncDebug.diagnosticLogger = logger;
+      addTearDown(() => SyncDebug.diagnosticLogger = null);
+      SyncDebug.trace('provider.oauth.scopes', const {
+        'provider': 'onedrive',
+        'operation': 'scope_check',
+        'phase': 'authorization',
+      });
+      await logger.flush();
+      final text = await (await logger.files()).single.readAsString();
+      expect(text, contains('"severity":"debug"'));
+      expect(text, contains('"provider":"onedrive"'));
+      expect(text, contains('"phase":"authorization"'));
+    },
+  );
 
   test('warning persists while debug is filtered', () async {
     final dir = await Directory.systemTemp.createTemp(

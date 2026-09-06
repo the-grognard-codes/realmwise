@@ -1,14 +1,18 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:realmwise/services/google_drive_sync.dart';
+import 'package:realmwise/services/diagnostic_logging.dart';
 import 'package:realmwise/services/secure_storage_service.dart';
 import 'package:realmwise/services/sync_contract.dart';
 import 'package:realmwise/services/sync_coordinator.dart';
+import 'package:realmwise/services/sync_debug.dart';
 import 'package:realmwise/services/sync_metadata.dart';
 
 class MemTokens implements TokenStorage {
@@ -32,6 +36,25 @@ class C implements OAuthCallback {
   final Uri uri;
   @override
   Future<Uri> waitForCallback() async => uri;
+}
+
+class SequencedAndroidAuthorization implements AndroidGoogleDriveAuthorization {
+  SequencedAndroidAuthorization(this.results);
+  final List<Object> results;
+  int calls = 0;
+
+  @override
+  Future<Map<String, Object?>> authorize({required String clientId}) async {
+    final result = results[calls++];
+    if (result is PlatformException) throw result;
+    return result as Map<String, Object?>;
+  }
+
+  @override
+  Future<void> cancelAuthorization() async {}
+
+  @override
+  Future<void> clearToken(String token) async {}
 }
 
 class DynamicCallback implements OAuthCallback {
@@ -154,6 +177,217 @@ class TargetProvider extends FailingProvider {
 }
 
 void main() {
+  GoogleDriveOAuthAuthenticator androidAuthenticator(
+    AndroidGoogleDriveAuthorization authorization, {
+    Future<void> Function(Duration)? delay,
+  }) => GoogleDriveOAuthAuthenticator(
+    clientId: 'id',
+    redirectUri: Uri.parse('http://localhost'),
+    browser: B(),
+    callback: C(Uri.parse('http://localhost')),
+    tokenStore: GoogleDriveTokenStore(MemTokens()),
+    androidAuthorization: authorization,
+    authorizationDelay: delay,
+  );
+
+  test('retries Android Google authorization status 8 once', () async {
+    final authorization = SequencedAndroidAuthorization([
+      PlatformException(
+        code: 'authorization_failed',
+        details: {'phase': 'get_authorization_result', 'status': 8},
+      ),
+      {'access_token': 'access', 'account_id': 'account'},
+    ]);
+    final auth = androidAuthenticator(authorization, delay: (_) async {});
+
+    final session = await auth.authenticate();
+
+    expect(session.accountId, 'account');
+    expect(authorization.calls, 2);
+  });
+
+  test(
+    'surfaces Android Google authorization status 8 after one retry',
+    () async {
+      final failure = PlatformException(
+        code: 'authorization_failed',
+        details: {'phase': 'get_authorization_result', 'status': 8},
+      );
+      final authorization = SequencedAndroidAuthorization([failure, failure]);
+
+      await expectLater(
+        androidAuthenticator(authorization, delay: (_) async {}).authenticate(),
+        throwsA(isA<PlatformException>()),
+      );
+      expect(authorization.calls, 2);
+    },
+  );
+
+  test(
+    'does not retry Android cancellation or non-internal failures',
+    () async {
+      for (final failure in [
+        PlatformException(code: 'authorization_cancelled'),
+        PlatformException(
+          code: 'authorization_failed',
+          details: {'phase': 'authorize', 'status': 10},
+        ),
+      ]) {
+        final authorization = SequencedAndroidAuthorization([failure]);
+        await expectLater(
+          androidAuthenticator(
+            authorization,
+            delay: (_) async {},
+          ).authenticate(),
+          throwsA(isA<PlatformException>()),
+        );
+        expect(authorization.calls, 1);
+      }
+    },
+  );
+
+  test('cancelling during Android status-8 backoff suppresses retry', () async {
+    final authorization = SequencedAndroidAuthorization([
+      PlatformException(
+        code: 'authorization_failed',
+        details: {'phase': 'get_authorization_result', 'status': 8},
+      ),
+      {'access_token': 'access', 'account_id': 'account'},
+    ]);
+    final delayStarted = Completer<void>();
+    final releaseDelay = Completer<void>();
+    final auth = androidAuthenticator(
+      authorization,
+      delay: (_) async {
+        delayStarted.complete();
+        await releaseDelay.future;
+      },
+    );
+    final connection = auth.authenticate();
+    await delayStarted.future;
+
+    await auth.cancelPendingAuthentication();
+    releaseDelay.complete();
+
+    await expectLater(
+      connection,
+      throwsA(
+        isA<PlatformException>().having(
+          (error) => error.code,
+          'code',
+          'authorization_cancelled',
+        ),
+      ),
+    );
+    expect(authorization.calls, 1);
+  });
+
+  test(
+    'a newer Android authorization is not cancelled by an older retry',
+    () async {
+      final authorization = SequencedAndroidAuthorization([
+        PlatformException(
+          code: 'authorization_failed',
+          details: {'phase': 'get_authorization_result', 'status': 8},
+        ),
+        {'access_token': 'new-access', 'account_id': 'new-account'},
+      ]);
+      final delayStarted = Completer<void>();
+      final releaseDelay = Completer<void>();
+      final auth = androidAuthenticator(
+        authorization,
+        delay: (_) async {
+          delayStarted.complete();
+          await releaseDelay.future;
+        },
+      );
+      final oldConnection = auth.authenticate();
+      await delayStarted.future;
+      await auth.cancelPendingAuthentication();
+
+      final newSession = await auth.authenticate();
+      releaseDelay.complete();
+
+      expect(newSession.accountId, 'new-account');
+      await expectLater(oldConnection, throwsA(isA<PlatformException>()));
+      expect(authorization.calls, 2);
+    },
+  );
+
+  test(
+    'Android diagnostics retain only mapped phase and error class',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'realmwise-auth-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final logger = DiagnosticLogger(directory: directory);
+      SyncDebug.diagnosticLogger = logger;
+      addTearDown(() => SyncDebug.diagnosticLogger = null);
+      final auth = androidAuthenticator(
+        SequencedAndroidAuthorization([
+          PlatformException(
+            code: 'authorization_failed',
+            details: {
+              'phase': 'activity_result',
+              'status': 10,
+              'errorClass': 'ApiException',
+            },
+          ),
+        ]),
+      );
+
+      await expectLater(auth.authenticate(), throwsA(isA<PlatformException>()));
+      await logger.flush();
+      final text = await (await logger.files()).single.readAsString();
+      expect(text, contains('"provider":"google_drive"'));
+      expect(text, contains('"operation":"activity_result"'));
+      expect(text, contains('"errorClass":"ApiError"'));
+    },
+  );
+
+  test('Android diagnostics replace unknown native error classes', () async {
+    final directory = await Directory.systemTemp.createTemp('realmwise-auth-');
+    addTearDown(() => directory.delete(recursive: true));
+    final logger = DiagnosticLogger(directory: directory);
+    SyncDebug.diagnosticLogger = logger;
+    addTearDown(() => SyncDebug.diagnosticLogger = null);
+    final auth = androidAuthenticator(
+      SequencedAndroidAuthorization([
+        PlatformException(
+          code: 'authorization_failed',
+          details: {'phase': 'authorize', 'errorClass': 'SensitiveThrowable'},
+        ),
+      ]),
+    );
+
+    await expectLater(auth.authenticate(), throwsA(isA<PlatformException>()));
+    await logger.flush();
+    final text = await (await logger.files()).single.readAsString();
+    expect(text, contains('"errorClass":"PlatformError"'));
+    expect(text, isNot(contains('SensitiveThrowable')));
+  });
+
+  test('Android diagnostics map SendIntentException safely', () async {
+    final directory = await Directory.systemTemp.createTemp('realmwise-auth-');
+    addTearDown(() => directory.delete(recursive: true));
+    final logger = DiagnosticLogger(directory: directory);
+    SyncDebug.diagnosticLogger = logger;
+    addTearDown(() => SyncDebug.diagnosticLogger = null);
+    final auth = androidAuthenticator(
+      SequencedAndroidAuthorization([
+        PlatformException(
+          code: 'authorization_failed',
+          details: {'errorClass': 'SendIntentException'},
+        ),
+      ]),
+    );
+
+    await expectLater(auth.authenticate(), throwsA(isA<PlatformException>()));
+    await logger.flush();
+    final text = await (await logger.files()).single.readAsString();
+    expect(text, contains('"errorClass":"IntentSendError"'));
+  });
   test(
     'failed connect persists recoverable error and clears live connection',
     () async {

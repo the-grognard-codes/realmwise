@@ -8,6 +8,7 @@ import 'package:realmwise/services/dropbox_sync.dart';
 import 'package:realmwise/services/dropbox_runtime.dart';
 import 'package:realmwise/services/secure_storage_service.dart';
 import 'package:realmwise/services/sync_contract.dart';
+import 'package:realmwise/services/sync_debug.dart';
 
 class _Store implements TokenStorage {
   final m = <String, String>{};
@@ -176,6 +177,9 @@ void main() {
     );
   });
   test('refreshes OAuth token', () async {
+    final logs = <String>[];
+    SyncDebug.logger = logs.add;
+    addTearDown(() => SyncDebug.logger = null);
     final s = _Store();
     final t = DropboxTokenStore(s);
     await t.write('dropbox_oauth:id', {
@@ -207,6 +211,7 @@ void main() {
       isNotNull,
     );
     expect((await t.read('dropbox_oauth:id'))['access_token'], 'new');
+    expect(logs.single, contains('provider=dropbox'));
   });
   test('revision precondition conflict', () async {
     final s = _Store();

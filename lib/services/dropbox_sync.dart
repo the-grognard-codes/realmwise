@@ -3,9 +3,16 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
+import 'secure_storage_service.dart';
+import 'diagnostic_logging.dart';
 import 'sync_contract.dart';
 import 'sync_debug.dart';
-import 'secure_storage_service.dart';
+
+void _dropboxTrace(
+  String action, [
+  Map<String, Object?> fields = const {},
+  DiagnosticSeverity? severity,
+]) => SyncDebug.trace(action, {'provider': 'dropbox', ...fields}, severity);
 
 abstract interface class DropboxOAuthBrowser {
   Future<void> open(Uri uri);
@@ -394,7 +401,7 @@ class DropboxProvider implements SyncProvider, SyncLeaseProvider {
       final seconds =
           (int.tryParse(r.headers['retry-after'] ?? '') ?? (1 << attempt))
               .clamp(1, 30);
-      SyncDebug.trace('provider.dropbox.retry', {
+      _dropboxTrace('provider.dropbox.retry', {
         'attempt': attempt + 1,
         'status': r.statusCode,
       });
@@ -498,9 +505,7 @@ class DropboxProvider implements SyncProvider, SyncLeaseProvider {
     final j = jsonDecode(r.body) as Map;
     final rev = j['rev'] as String? ?? '';
     final h = j['content_hash'] as String? ?? '';
-    SyncDebug.trace('provider.metadata', {
-      'revision': SyncDebug.hashPrefix(rev),
-    });
+    _dropboxTrace('provider.metadata', {'revision': SyncDebug.hashPrefix(rev)});
     return SyncRemoteMetadata(
       revision: SyncRevision(rev),
       contentHash: h,

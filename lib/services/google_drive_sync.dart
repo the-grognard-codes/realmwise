@@ -1,13 +1,21 @@
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import 'secure_storage_service.dart';
+import 'diagnostic_logging.dart';
 import 'sync_contract.dart';
 import 'sync_debug.dart';
+
+void _googleTrace(
+  String action, [
+  Map<String, Object?> fields = const {},
+  DiagnosticSeverity? severity,
+]) =>
+    SyncDebug.trace(action, {'provider': 'google_drive', ...fields}, severity);
 
 abstract interface class OAuthBrowser {
   Future<void> open(Uri uri);
@@ -81,7 +89,7 @@ Never _tokenFailure(http.Response response, String operation) {
   } catch (_) {
     // Fall through to a generic, safe message for non-JSON responses.
   }
-  SyncDebug.trace('provider.google.oauth.error', {
+  _googleTrace('provider.google.oauth.error', {
     'phase': 'tokenExchange',
     'status': response.statusCode,
     if (error != null && _safeOAuthError(error, operation).contains('($error)'))
@@ -118,8 +126,10 @@ class GoogleDriveOAuthAuthenticator implements SyncAuthenticator {
     this.clientSecret,
     this.androidAuthorization,
     this.scopes = const ['https://www.googleapis.com/auth/drive.appdata'],
+    Future<void> Function(Duration duration)? authorizationDelay,
     http.Client? httpClient,
-  }) : _http = httpClient ?? http.Client();
+  }) : _http = httpClient ?? http.Client(),
+       _authorizationDelay = authorizationDelay ?? Future<void>.delayed;
   final String clientId;
   final String? clientSecret;
   final AndroidGoogleDriveAuthorization? androidAuthorization;
@@ -129,6 +139,8 @@ class GoogleDriveOAuthAuthenticator implements SyncAuthenticator {
   final GoogleDriveTokenStore tokenStore;
   final List<String> scopes;
   final http.Client _http;
+  final Future<void> Function(Duration duration) _authorizationDelay;
+  int _authorizationGeneration = 0;
   String get _key => 'google_drive_oauth:$clientId';
 
   /// Revokes the currently cached Android access token. This endpoint does
@@ -157,7 +169,7 @@ class GoogleDriveOAuthAuthenticator implements SyncAuthenticator {
   @override
   Future<SyncAuthSession> authenticate() async {
     if (androidAuthorization != null) {
-      final token = await androidAuthorization!.authorize(clientId: clientId);
+      final token = await _authorizeAndroid();
       final access = token['access_token'] as String?;
       if (access == null || access.trim().isEmpty)
         throw GoogleDriveAuthException('Missing access token');
@@ -201,7 +213,7 @@ class GoogleDriveOAuthAuthenticator implements SyncAuthenticator {
       throw GoogleDriveAuthException('Invalid OAuth state');
     final error = result.queryParameters['error'];
     if (error != null) {
-      SyncDebug.trace('provider.google.oauth.error', {
+      _googleTrace('provider.google.oauth.error', {
         'phase': 'authorization',
         if (_safeOAuthError(error, 'authorization').contains('($error)'))
           'code': error,
@@ -267,7 +279,93 @@ class GoogleDriveOAuthAuthenticator implements SyncAuthenticator {
     );
   }
 
+  Future<Map<String, Object?>> _authorizeAndroid() async {
+    final generation = ++_authorizationGeneration;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final token = await androidAuthorization!.authorize(clientId: clientId);
+        _ensureAuthorizationCurrent(generation);
+        SyncDebug.trace('provider.google.authorization', {
+          'provider': 'google_drive',
+          'operation': 'authorize',
+          'outcome': 'success',
+          'retryCount': attempt,
+        });
+        return token;
+      } on PlatformException catch (error) {
+        _ensureAuthorizationCurrent(generation);
+        final status = _platformStatus(error.details);
+        final retryable = error.code == 'authorization_failed' && status == 8;
+        final cancelled = error.code == 'authorization_cancelled';
+        SyncDebug.trace(
+          'provider.google.authorization.failure',
+          {
+            'provider': 'google_drive',
+            'operation': _platformPhase(error.details),
+            'outcome': cancelled ? 'cancelled' : 'failure',
+            'status': ?status,
+            'errorClass': _platformErrorClass(error.details),
+            'retryCount': attempt,
+          },
+          cancelled
+              ? DiagnosticSeverity.debug
+              : retryable && attempt == 0
+              ? DiagnosticSeverity.warning
+              : DiagnosticSeverity.error,
+        );
+        if (!retryable || attempt == 1) rethrow;
+        SyncDebug.trace('provider.google.authorization.retry', const {
+          'provider': 'google_drive',
+          'operation': 'authorize',
+          'outcome': 'retrying',
+          'status': 8,
+          'retryCount': 1,
+        }, DiagnosticSeverity.warning);
+        await _authorizationDelay(const Duration(milliseconds: 350));
+        _ensureAuthorizationCurrent(generation);
+      }
+    }
+    throw StateError('Unreachable authorization retry state');
+  }
+
+  static int? _platformStatus(Object? details) {
+    if (details is! Map) return null;
+    final value = details['status'];
+    return value is num ? value.toInt() : int.tryParse('$value');
+  }
+
+  static String _platformPhase(Object? details) {
+    if (details is! Map) return 'authorize';
+    const allowed = {
+      'authorize',
+      'launch_resolution',
+      'get_authorization_result',
+      'activity_result',
+    };
+    final phase = details['phase'];
+    return phase is String && allowed.contains(phase) ? phase : 'authorize';
+  }
+
+  static String _platformErrorClass(Object? details) {
+    if (details is! Map) return 'PlatformError';
+    const mapped = {
+      'ApiException': 'ApiError',
+      'SendIntentException': 'IntentSendError',
+    };
+    final errorClass = details['errorClass'];
+    return errorClass is String
+        ? mapped[errorClass] ?? 'PlatformError'
+        : 'PlatformError';
+  }
+
+  void _ensureAuthorizationCurrent(int generation) {
+    if (generation != _authorizationGeneration) {
+      throw PlatformException(code: 'authorization_cancelled');
+    }
+  }
+
   Future<void> cancelPendingAuthentication() async {
+    _authorizationGeneration++;
     await androidAuthorization?.cancelAuthorization();
   }
 
@@ -642,7 +740,7 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
       headers: {'Authorization': 'Bearer ${await _access(s)}'},
     );
     if (r.statusCode != 200) {
-      SyncDebug.trace('provider.list.error', {'status': r.statusCode});
+      _googleTrace('provider.list.error', {'status': r.statusCode});
       _driveFailure(r, 'Drive list failed');
     }
     try {
@@ -662,13 +760,13 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
           ),
         );
       }
-      SyncDebug.trace('provider.list', {
+      _googleTrace('provider.list', {
         'status': r.statusCode,
         'count': targets.length,
       });
       return targets;
     } catch (_) {
-      SyncDebug.trace('provider.list.error', {'status': r.statusCode});
+      _googleTrace('provider.list.error', {'status': r.statusCode});
       throw GoogleDriveException(
         'Drive list returned an invalid response',
         statusCode: r.statusCode,
@@ -688,17 +786,17 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
       headers: {'Authorization': 'Bearer ${await _access(s)}'},
     );
     if (r.statusCode == 404) {
-      SyncDebug.trace('provider.metadata', {'status': 404});
+      _googleTrace('provider.metadata', {'status': 404});
       _etags.remove(t.id);
       return null;
     }
     if (r.statusCode != 200) {
-      SyncDebug.trace('provider.metadata.error', {'status': r.statusCode});
+      _googleTrace('provider.metadata.error', {'status': r.statusCode});
       throw Exception('Drive metadata failed');
     }
     final j = jsonDecode(r.body);
     final etag = r.headers['etag'];
-    SyncDebug.trace('provider.metadata', {
+    _googleTrace('provider.metadata', {
       'status': r.statusCode,
       'revision': '${j['version']}',
       'etagPresent': etag != null || j['etag'] is String,
@@ -732,7 +830,7 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
     SyncPrecondition? precondition,
   }) async {
     final hash = sha256.convert(payload).toString();
-    SyncDebug.trace('provider.upload.start', {
+    _googleTrace('provider.upload.start', {
       'revision': precondition?.revision?.value ?? 'none',
       'hash': SyncDebug.hashPrefix(hash),
     });
@@ -754,7 +852,7 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
       if (revisionMismatch &&
           !hashMismatch &&
           precondition.contentHash != null) {
-        SyncDebug.trace('provider.upload.revision_reconciled', {
+        _googleTrace('provider.upload.revision_reconciled', {
           'revision': old.revision.value,
           'hash': SyncDebug.hashPrefix(old.contentHash),
         });
@@ -772,7 +870,7 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
         canRetry && revisionMismatch && attempt < 3;
         attempt++
       ) {
-        SyncDebug.trace('provider.upload.retry', {
+        _googleTrace('provider.upload.retry', {
           'attempt': attempt + 1,
           'backoffMs': 100 * (1 << attempt),
         });
@@ -787,7 +885,7 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
         if (revisionMismatch &&
             !hashMismatch &&
             precondition.contentHash != null) {
-          SyncDebug.trace('provider.upload.revision_reconciled', {
+          _googleTrace('provider.upload.revision_reconciled', {
             'revision': refreshed.revision.value,
             'hash': SyncDebug.hashPrefix(refreshed.contentHash),
           });
@@ -800,7 +898,7 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
         }
       }
       if (hashMismatch || revisionMismatch) {
-        SyncDebug.trace('provider.upload.conflict', {
+        _googleTrace('provider.upload.conflict', {
           'revisionMismatch': revisionMismatch,
           'hashMismatch': hashMismatch,
         });
@@ -821,7 +919,7 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
       body: payload,
     );
     var r = await mediaPatch();
-    SyncDebug.trace('provider.upload.media', {
+    _googleTrace('provider.upload.media', {
       'status': r.statusCode,
       'etagPresent': r.headers['etag'] != null,
     });
@@ -840,7 +938,7 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
                   (precondition.revision == null ||
                       precondition.revision == refreshed.revision)));
       if (!matches) throw SyncConflictException(refreshed ?? old!);
-      SyncDebug.trace('provider.upload.412.retry', {'status': 412});
+      _googleTrace('provider.upload.412.retry', {'status': 412});
       old = refreshed;
       r = await mediaPatch();
       if (r.statusCode == 412) throw SyncConflictException(refreshed);
@@ -861,7 +959,7 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
         'appProperties': {'realmwiseSha256': hash},
       }),
     );
-    SyncDebug.trace('provider.upload.properties', {
+    _googleTrace('provider.upload.properties', {
       'status': properties.statusCode,
       'etagPresent': properties.headers['etag'] != null,
     });
