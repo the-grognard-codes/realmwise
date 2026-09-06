@@ -38,3 +38,5 @@ flutter:
   uses-material-design: true
   assets:
     - assets/branding/publication/
+    - assets/icons/
+    - assets/placeholders/

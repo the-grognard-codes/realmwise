@@ -21,34 +21,23 @@ class CoverImage extends StatelessWidget {
   Widget build(BuildContext context) {
     final file = image == null ? null : File(image!.localPath);
     if (file == null || !file.existsSync()) {
-      return Container(
-        width: width,
-        height: height,
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        alignment: Alignment.center,
-        padding: const EdgeInsets.all(12),
-        child: const Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.image_not_supported_outlined),
-            SizedBox(height: 6),
-            Text('No local cover image', textAlign: TextAlign.center),
-          ],
-        ),
-      );
+      return _placeholder();
     }
     return Image.file(
       file,
       width: width,
       height: height,
       fit: fit,
-      errorBuilder: (context, error, stack) => Container(
-        width: width,
-        height: height,
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        alignment: Alignment.center,
-        child: const Text('Image cannot be read', textAlign: TextAlign.center),
-      ),
+      errorBuilder: (context, error, stack) => _placeholder(),
+    );
+  }
+
+  Widget _placeholder() {
+    return Image.asset(
+      'assets/placeholders/work-cover-placeholder-unavailable.png',
+      width: width,
+      height: height,
+      fit: fit,
     );
   }
 }
