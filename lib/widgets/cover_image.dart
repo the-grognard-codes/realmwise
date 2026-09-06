@@ -42,13 +42,9 @@ class CoverImage extends StatelessWidget {
   }
 
   Widget _placeholder(BuildContext context) {
-    final assetPath = Theme.of(context).extension<CoverPlaceholderTheme>()?.assetPath ??
+    final assetPath =
+        Theme.of(context).extension<CoverPlaceholderTheme>()?.assetPath ??
         workCoverPlaceholderAssetPath(defaultThemeName);
-    return Image.asset(
-      assetPath,
-      width: width,
-      height: height,
-      fit: fit,
-    );
+    return Image.asset(assetPath, width: width, height: height, fit: fit);
   }
 }

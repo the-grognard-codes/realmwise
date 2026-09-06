@@ -33,7 +33,8 @@ const Map<String, String> _themeSlugs = {
 };
 
 /// The lower-kebab placeholder asset slug for a current or legacy theme name.
-String canonicalThemeSlug(String? name) => _themeSlugs[canonicalThemeName(name)]!;
+String canonicalThemeSlug(String? name) =>
+    _themeSlugs[canonicalThemeName(name)]!;
 
 String workCoverPlaceholderAssetPath(String? themeName) =>
     'assets/placeholders/work-cover-placeholder-unavailable-${canonicalThemeSlug(themeName)}.png';
