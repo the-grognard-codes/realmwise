@@ -28,6 +28,40 @@ void main() {
     },
   );
 
+  test('cover placeholders use canonical lower-kebab theme asset names', () {
+    const expectedSlugs = {
+      'Dragon Red': 'dragon-red',
+      'Parchment Gold': 'parchment-gold',
+      'Dungeon Black': 'dungeon-black',
+      'Arcane Blue': 'arcane-blue',
+      'Forest Green': 'forest-green',
+      'Royal Purple': 'royal-purple',
+      'Teal Sigil': 'teal-sigil',
+      'Greyscale': 'greyscale',
+    };
+
+    for (final entry in expectedSlugs.entries) {
+      expect(canonicalThemeSlug(entry.key), entry.value);
+      expect(
+        workCoverPlaceholderAssetPath(entry.key),
+        'assets/placeholders/work-cover-placeholder-unavailable-${entry.value}.png',
+      );
+    }
+    expect(canonicalThemeSlug('Moonstone'), 'arcane-blue');
+    expect(canonicalThemeSlug('Dungeon black'), 'dungeon-black');
+  });
+
+  test('built themes expose their cover placeholder metadata', () {
+    final theme = buildRpgTheme('Teal sigil', Brightness.dark);
+    final placeholder = theme.extension<CoverPlaceholderTheme>();
+
+    expect(placeholder?.canonicalName, 'Teal Sigil');
+    expect(
+      placeholder?.assetPath,
+      'assets/placeholders/work-cover-placeholder-unavailable-teal-sigil.png',
+    );
+  });
+
   test(
     'legacy high contrast names migrate to greyscale and honor brightness',
     () {

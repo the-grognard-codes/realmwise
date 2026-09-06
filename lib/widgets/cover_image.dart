@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../models/catalog_models.dart';
+import '../theme/app_theme.dart';
 
 class CoverImage extends StatelessWidget {
   const CoverImage({
@@ -20,21 +21,31 @@ class CoverImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final file = image == null ? null : File(image!.localPath);
-    if (file == null || !file.existsSync()) {
-      return _placeholder();
+    if (file == null || !_canRead(file)) {
+      return _placeholder(context);
     }
     return Image.file(
       file,
       width: width,
       height: height,
       fit: fit,
-      errorBuilder: (context, error, stack) => _placeholder(),
+      errorBuilder: (context, error, stack) => _placeholder(context),
     );
   }
 
-  Widget _placeholder() {
+  bool _canRead(File file) {
+    try {
+      return file.existsSync();
+    } on FileSystemException {
+      return false;
+    }
+  }
+
+  Widget _placeholder(BuildContext context) {
+    final assetPath = Theme.of(context).extension<CoverPlaceholderTheme>()?.assetPath ??
+        workCoverPlaceholderAssetPath(defaultThemeName);
     return Image.asset(
-      'assets/placeholders/work-cover-placeholder-unavailable.png',
+      assetPath,
       width: width,
       height: height,
       fit: fit,

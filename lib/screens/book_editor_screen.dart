@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as path;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/catalog_models.dart';
 import '../services/app_controller.dart';
@@ -475,6 +476,24 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     }
   }
 
+  Future<void> _openRpgGeekThing() async {
+    final url = _record.work.rpgGeekUrl;
+    if (url == null) return;
+    try {
+      if (!await launchUrl(Uri.parse(url)) && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open RPGGeek item page.')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open RPGGeek item page.')),
+        );
+      }
+    }
+  }
+
   Future<void> _delete() async {
     if (_record.work.id == null) {
       if (mounted) Navigator.pop(context);
@@ -742,6 +761,8 @@ class _BookEditorScreenState extends State<BookEditorScreen>
         },
       ),
       const SizedBox(height: 12),
+      _rpgGeekField(),
+      const SizedBox(height: 12),
       TextFormField(
         controller: _productCode,
         decoration: const InputDecoration(labelText: 'Product code'),
@@ -788,6 +809,16 @@ class _BookEditorScreenState extends State<BookEditorScreen>
         ],
       ),
       const SizedBox(height: 20),
+      TextFormField(
+        controller: _summary,
+        minLines: 5,
+        maxLines: 10,
+        decoration: const InputDecoration(
+          labelText: 'Summary',
+          alignLabelWithHint: true,
+        ),
+      ),
+      const SizedBox(height: 20),
       _section('Catalog hierarchy'),
       LocalAutocompleteField(
         controller: _system,
@@ -808,16 +839,6 @@ class _BookEditorScreenState extends State<BookEditorScreen>
         label: 'Book type',
         suggestions: (text) =>
             widget.controller.catalog.suggestions('book_type', text),
-      ),
-      const SizedBox(height: 20),
-      TextFormField(
-        controller: _summary,
-        minLines: 5,
-        maxLines: 10,
-        decoration: const InputDecoration(
-          labelText: 'Summary',
-          alignLabelWithHint: true,
-        ),
       ),
     ],
   );
@@ -950,6 +971,31 @@ class _BookEditorScreenState extends State<BookEditorScreen>
           ),
         ),
       ],
+    );
+  }
+
+  Widget _rpgGeekField() {
+    final id = _record.work.rpgGeekId.trim();
+    final url = _record.work.rpgGeekUrl;
+    if (id.isEmpty || url == null) {
+      return const Text('RPGGeek Thing ID: No Info');
+    }
+    return Text.rich(
+      TextSpan(
+        text: 'RPGGeek Thing ID: ',
+        children: [
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: InkWell(
+              onTap: _openRpgGeekThing,
+              child: Text(
+                id,
+                style: const TextStyle(decoration: TextDecoration.underline),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

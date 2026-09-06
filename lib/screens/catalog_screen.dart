@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'dart:io';
 
 import '../data/database_service.dart';
@@ -916,6 +915,18 @@ class _BookPreview extends StatelessWidget {
     if (record == null)
       return const Center(child: Text('Select a book to see its details.'));
     final work = record!.work;
+    final authors = work.authors.length > 3
+        ? '${work.authors.take(3).join(', ')}, et. al.'
+        : work.authors.join(', ');
+    final bestCondition = record!.copies.isEmpty
+        ? 'No copies owned'
+        : record!.copies
+              .map((copy) => copy.condition)
+              .reduce(
+                (best, condition) =>
+                    condition.index < best.index ? condition : best,
+              )
+              .label;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Center(
@@ -941,37 +952,29 @@ class _BookPreview extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        work.authors.isEmpty
+                        authors.isEmpty
                             ? 'Author information is not recorded.'
-                            : work.authors.join(', '),
+                            : authors,
                       ),
                       const SizedBox(height: 16),
-                      _Fact(label: 'ISBN-13', value: work.isbn13),
-                      _RpgGeekField(id: work.rpgGeekId, url: work.rpgGeekUrl),
                       _Fact(label: 'Publisher', value: work.publisher),
-                      _Fact(label: 'Published', value: work.publicationDate),
                       _Fact(
                         label: 'Pages',
                         value: work.pageCount?.toString() ?? '',
                       ),
-                      _Fact(label: 'Copies', value: '${record!.copies.length}'),
+                      _Fact(label: 'Published', value: work.publicationDate),
+                      _Fact(label: 'ISBN-13', value: work.isbn13),
+                      if (work.publicationDate.trim().isNotEmpty ||
+                          work.isbn13.trim().isNotEmpty)
+                        const SizedBox(height: 8),
                       _Fact(
-                        label: 'Tags',
-                        value: record!.tags.isEmpty
-                            ? 'No tags'
-                            : record!.tags.join(', '),
+                        label: 'Copies Owned',
+                        value: '${record!.copies.length}',
                       ),
-                      if (work.summary.trim().isNotEmpty) ...[
-                        const SizedBox(height: 16),
-                        Text(
-                          work.summary,
-                          maxLines: 5,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ] else ...[
-                        const SizedBox(height: 16),
-                        const Text('No summary is recorded for this work.'),
-                      ],
+                      _Fact(
+                        label: 'Best Condition Owned',
+                        value: bestCondition,
+                      ),
                       const SizedBox(height: 22),
                       FilledButton.icon(
                         onPressed: onEdit,
@@ -1018,61 +1021,6 @@ class _Fact extends StatelessWidget {
           padding: const EdgeInsets.only(bottom: 4),
           child: Text('$label: $value'),
         );
-}
-
-class _RpgGeekField extends StatelessWidget {
-  const _RpgGeekField({required this.id, required this.url});
-  final String id;
-  final String? url;
-
-  @override
-  Widget build(BuildContext context) {
-    final trimmedId = id.trim();
-    if (url == null || trimmedId.isEmpty) {
-      return const Text('RPGGeek Thing ID: No Info');
-    }
-    return Text.rich(
-      TextSpan(
-        text: 'RPGGeek Thing ID: ',
-        children: [
-          WidgetSpan(
-            alignment: PlaceholderAlignment.middle,
-            child: InkWell(
-              onTap: () => _openRpgGeek(context, url),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Text(
-                  trimmedId,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.primary,
-                    decoration: TextDecoration.underline,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-Future<void> _openRpgGeek(BuildContext context, String? url) async {
-  if (url == null) return;
-  try {
-    final launched = await launchUrl(Uri.parse(url));
-    if (!launched && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open RPGGeek link.')),
-      );
-    }
-  } catch (_) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open RPGGeek link.')),
-      );
-    }
-  }
 }
 
 class _EmptyCatalog extends StatelessWidget {
