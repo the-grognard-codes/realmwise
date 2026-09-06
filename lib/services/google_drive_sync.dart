@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
@@ -232,7 +231,7 @@ class GoogleDriveOAuthAuthenticator implements SyncAuthenticator {
         'redirect_uri': redirectUri.toString(),
         'grant_type': 'authorization_code',
         'code_verifier': verifier,
-        if (clientSecret != null) 'client_secret': clientSecret,
+        'client_secret': ?clientSecret,
       },
     );
     if (response.statusCode ~/ 100 != 2)
@@ -304,7 +303,7 @@ class GoogleDriveOAuthAuthenticator implements SyncAuthenticator {
             'provider': 'google_drive',
             'operation': _platformPhase(error.details),
             'outcome': cancelled ? 'cancelled' : 'failure',
-            if (status != null) 'status': status,
+            'status': ?status,
             'errorClass': _platformErrorClass(error.details),
             'retryCount': attempt,
           },
