@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
@@ -6,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:realmwise/data/database_service.dart';
 import 'package:realmwise/services/app_controller.dart';
 import 'package:realmwise/services/secure_storage_service.dart';
+import 'package:realmwise/services/sync_contract.dart';
 
 class _MemoryTokenStorage implements TokenStorage {
   final values = <String, String>{};
@@ -28,6 +30,40 @@ class _FakePathProvider extends PathProviderPlatform {
   Future<String?> getApplicationDocumentsPath() async => documentsPath;
 }
 
+class _FailingGoogleProvider implements SyncProvider {
+  @override
+  String get provider => 'google_drive';
+
+  @override
+  Future<SyncAuthSession> authenticate() =>
+      Future<SyncAuthSession>.error(StateError('authentication failed'));
+
+  @override
+  Future<SyncDownloadResult> download(
+    SyncAuthSession session,
+    SyncRemoteTarget target, {
+    SyncPrecondition? precondition,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<List<SyncRemoteTarget>> listRemoteTargets(SyncAuthSession session) =>
+      throw UnimplementedError();
+
+  @override
+  Future<SyncRemoteMetadata?> metadata(
+    SyncAuthSession session,
+    SyncRemoteTarget target,
+  ) => throw UnimplementedError();
+
+  @override
+  Future<SyncUploadResult> upload(
+    SyncAuthSession session,
+    SyncRemoteTarget target,
+    Uint8List payload, {
+    SyncPrecondition? precondition,
+  }) => throw UnimplementedError();
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -39,6 +75,58 @@ void main() {
     expect(defaultDeviceNameForHostname('  my device  '), 'my-device');
     expect(defaultDeviceNameForHostname('   '), isNull);
   });
+
+  test('disconnect clears stale automatic sync ownership UI state', () async {
+    final folder = await Directory.systemTemp.createTemp(
+      'realmwise_disconnect_',
+    );
+    PathProviderPlatform.instance = _FakePathProvider(folder.path);
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final controller = AppController(tokenStorage: _MemoryTokenStorage());
+    await controller.initialize();
+    controller.automaticSyncEnabled = true;
+    controller.automaticSyncOwnershipValid = false;
+    controller.automaticSyncError = 'Automatic sync ownership was lost';
+    controller.scheduleAutomaticSync();
+
+    await controller.disconnectGoogleDrive();
+
+    expect(controller.automaticSyncEnabled, isFalse);
+    expect(controller.automaticSyncOwnershipValid, isFalse);
+    expect(controller.automaticSyncError, isNull);
+    controller.dispose();
+    await folder.delete(recursive: true);
+  });
+
+  test(
+    'failed connection clears stale automatic sync ownership UI state',
+    () async {
+      final folder = await Directory.systemTemp.createTemp(
+        'realmwise_connect_',
+      );
+      PathProviderPlatform.instance = _FakePathProvider(folder.path);
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final controller = AppController(
+        tokenStorage: _MemoryTokenStorage(),
+        googleDriveProvider: _FailingGoogleProvider(),
+      );
+      await controller.initialize();
+      controller.automaticSyncEnabled = true;
+      controller.automaticSyncOwnershipValid = false;
+      controller.automaticSyncError = 'Automatic sync ownership was lost';
+
+      await expectLater(
+        controller.connectGoogleDrive(),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(controller.automaticSyncEnabled, isFalse);
+      expect(controller.automaticSyncOwnershipValid, isFalse);
+      expect(controller.automaticSyncError, isNull);
+      controller.dispose();
+      await folder.delete(recursive: true);
+    },
+  );
 
   test('initialize preserves an existing device ID', () async {
     final folder = await Directory.systemTemp.createTemp('realmwise_device_');

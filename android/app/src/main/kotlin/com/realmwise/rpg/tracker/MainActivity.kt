@@ -2,9 +2,11 @@ package com.realmwise.rpg.tracker
 
 import android.app.Activity
 import android.content.Intent
+import android.content.IntentSender
 import android.net.Uri
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
+import android.util.Log
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.auth.api.identity.AuthorizationClient
@@ -25,6 +27,12 @@ import kotlinx.coroutines.withContext
 class MainActivity : FlutterActivity() {
     private lateinit var authorizationClient: AuthorizationClient
     private var pendingResult: MethodChannel.Result? = null
+    private var googleAuthorizationGeneration = 0L
+    // Resolution codes are never reused for this process. A canceled
+    // operation can therefore be removed immediately; any late result has no
+    // mapping and cannot be mistaken for a later authorization.
+    private val googleResolutionOperations = mutableMapOf<Int, GoogleResolutionOperation>()
+    private var nextGoogleResolutionRequestCode = GOOGLE_RESOLUTION_REQUEST_CODE_START
     private var googleAuthorizationCancelled = false
     private var dropboxResult: MethodChannel.Result? = null
     private var oneDriveResult: MethodChannel.Result? = null
@@ -41,7 +49,13 @@ class MainActivity : FlutterActivity() {
                     googleAuthorizationCancelled = true
                     val callback = pendingResult
                     pendingResult = null
-                    callback?.error("authorization_cancelled", "Google authorization was cancelled", null)
+                    googleAuthorizationGeneration++
+                    if (callback != null) removeGoogleResolutions(callback)
+                    callback?.error(
+                        "authorization_cancelled",
+                        "Google authorization was cancelled",
+                        mapOf("phase" to "authorize", "errorClass" to "unknown"),
+                    )
                     result.success(null)
                     return@setMethodCallHandler
                 }
@@ -69,35 +83,42 @@ class MainActivity : FlutterActivity() {
                 }
                 pendingResult = result
                 googleAuthorizationCancelled = false
+                val generation = ++googleAuthorizationGeneration
                 val request = AuthorizationRequest.builder()
                     .setRequestedScopes(listOf(
-                        Scope(DRIVE_APPDATA_SCOPE),
-                        Scope("openid"),
-                        Scope("email")
+                        Scope(DRIVE_APPDATA_SCOPE)
                     ))
                     .build()
                 authorizationClient.authorize(request)
                     .addOnSuccessListener { authorizationResult ->
-                        if (googleAuthorizationCancelled || pendingResult == null) return@addOnSuccessListener
+                        if (!isCurrentGoogleAuthorization(result, generation)) return@addOnSuccessListener
                         if (authorizationResult.hasResolution()) {
+                            var resolutionRequestCode: Int? = null
                             try {
+                                resolutionRequestCode = registerGoogleResolution(result, generation)
                                 startIntentSenderForResult(
                                     authorizationResult.pendingIntent!!.intentSender,
-                                    REQUEST_CODE, null, 0, 0, 0, null
+                                    resolutionRequestCode!!, null, 0, 0, 0, null
                                 )
                             } catch (error: Exception) {
+                                resolutionRequestCode?.let { googleResolutionOperations.remove(it) }
+                                if (!isCurrentGoogleAuthorization(result, generation)) return@addOnSuccessListener
                                 pendingResult = null
-                                result.error("authorization_failed", safeMessage(error), null)
+                                Log.w(TAG, "Google authorization resolution failed: phase=launch_resolution status=unknown")
+                                result.error("authorization_failed", authorizationErrorMessage(error), authorizationErrorDetails("launch_resolution", error))
                             }
                         } else {
+                            if (!isCurrentGoogleAuthorization(result, generation)) return@addOnSuccessListener
                             pendingResult = null
+                            Log.i(TAG, "Google authorization succeeded: phase=authorize status=0")
                             result.success(tokenMap(authorizationResult))
                         }
                     }
                     .addOnFailureListener { throwable ->
-                        if (googleAuthorizationCancelled || pendingResult == null) return@addOnFailureListener
+                        if (!isCurrentGoogleAuthorization(result, generation)) return@addOnFailureListener
                         pendingResult = null
-                        result.error("authorization_failed", safeMessage(throwable), null)
+                        Log.w(TAG, "Google authorization failed: ${authorizationLogSummary("authorize", throwable)}")
+                        result.error("authorization_failed", authorizationErrorMessage(throwable), authorizationErrorDetails("authorize", throwable))
                     }
             }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, OAUTH_CONFIG_CHANNEL)
@@ -306,21 +327,24 @@ class MainActivity : FlutterActivity() {
             }
             return
         }
-        if (requestCode != REQUEST_CODE) return
-        val callback = pendingResult ?: return
+        val operation = googleResolutionOperations.remove(requestCode) ?: return
+        val callback = operation.callback
+        if (!isCurrentGoogleAuthorization(callback, operation.generation)) return
         pendingResult = null
-        if (googleAuthorizationCancelled) return
         if (data == null) {
-            callback.error("authorization_cancelled", "Google authorization was cancelled", null)
+            Log.w(TAG, "Google authorization cancelled: phase=activity_result status=0")
+            callback.error("authorization_cancelled", "Google authorization was cancelled", mapOf("phase" to "activity_result"))
             return
         }
         try {
             callback.success(tokenMap(authorizationClient.getAuthorizationResultFromIntent(data)))
         } catch (error: Exception) {
             if (error is ApiException && error.statusCode == CommonStatusCodes.CANCELED) {
-                callback.error("authorization_cancelled", "Google authorization was cancelled", null)
-            } else {
-                callback.error("authorization_failed", authorizationErrorMessage(error), null)
+                Log.w(TAG, "Google authorization cancelled: ${authorizationLogSummary("get_authorization_result", error)}")
+            callback.error("authorization_cancelled", "Google authorization was cancelled", authorizationErrorDetails("get_authorization_result", error))
+        } else {
+                Log.w(TAG, "Google authorization failed: ${authorizationLogSummary("get_authorization_result", error)}")
+                callback.error("authorization_failed", authorizationErrorMessage(error), authorizationErrorDetails("get_authorization_result", error))
             }
         }
     }
@@ -351,7 +375,62 @@ class MainActivity : FlutterActivity() {
             "Google authorization failed"
         }
 
+    // These details cross the MethodChannel and are persisted in diagnostics.
+    // Keep them deliberately limited to non-identifying status metadata.
+    private fun authorizationErrorDetails(phase: String, error: Throwable): Map<String, Any> =
+        buildMap {
+            put("phase", phase)
+            put("errorClass", authorizationErrorClass(error))
+            if (error is ApiException) put("status", error.statusCode)
+        }
+
+    private fun isCurrentGoogleAuthorization(
+        callback: MethodChannel.Result,
+        generation: Long,
+    ): Boolean =
+        !googleAuthorizationCancelled &&
+            pendingResult === callback &&
+            googleAuthorizationGeneration == generation
+
+    private fun registerGoogleResolution(
+        callback: MethodChannel.Result,
+        generation: Long,
+    ): Int {
+        if (nextGoogleResolutionRequestCode > GOOGLE_RESOLUTION_REQUEST_CODE_END) {
+            throw IllegalStateException("Google authorization resolution request codes exhausted")
+        }
+        val requestCode = nextGoogleResolutionRequestCode++
+        googleResolutionOperations[requestCode] = GoogleResolutionOperation(callback, generation)
+        return requestCode
+    }
+
+    private fun removeGoogleResolutions(callback: MethodChannel.Result) {
+        googleResolutionOperations.entries.removeAll { it.value.callback === callback }
+    }
+
+    private data class GoogleResolutionOperation(
+        val callback: MethodChannel.Result,
+        val generation: Long,
+    )
+
+    private fun authorizationErrorClass(error: Throwable): String = when (error) {
+        is ApiException -> "ApiException"
+        is IntentSender.SendIntentException -> "SendIntentException"
+        else -> "unknown"
+    }
+
+    private fun authorizationLogSummary(phase: String, error: Throwable): String =
+        buildString {
+            append("phase=")
+            append(phase)
+            append(" status=")
+            append(if (error is ApiException) error.statusCode else "unknown")
+            append(" class=")
+            append(authorizationErrorClass(error))
+        }
+
     companion object {
+        private const val TAG = "RealmwiseGoogleAuth"
         private const val CHANNEL = "realmwise/google_drive"
         private const val DROPBOX_CHANNEL = "realmwise/dropbox_oauth"
         private const val ONEDRIVE_CHANNEL = "realmwise/onedrive_oauth"
@@ -360,7 +439,9 @@ class MainActivity : FlutterActivity() {
         private val ONEDRIVE_REDIRECT_URI = BuildConfig.MICROSOFT_ONEDRIVE_REDIRECT_URI
         private const val DROPBOX_REDIRECT_URI = "com.realmwise.rpg.tracker://oauth2redirect/dropbox"
         private const val DRIVE_APPDATA_SCOPE = "https://www.googleapis.com/auth/drive.appdata"
-        private const val REQUEST_CODE = 4207
+        // Dedicated monotonic range; deliberately disjoint from diagnostics.
+        private const val GOOGLE_RESOLUTION_REQUEST_CODE_START = 4300
+        private const val GOOGLE_RESOLUTION_REQUEST_CODE_END = 32767
         private const val DIAGNOSTIC_CREATE_REQUEST_CODE = 4210
     }
 }

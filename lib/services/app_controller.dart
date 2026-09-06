@@ -199,6 +199,16 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  void _clearAutomaticSyncState() {
+    _automaticSyncTimer?.cancel();
+    _automaticSyncTimer = null;
+    automaticSyncEnabled = false;
+    automaticSyncOwnershipValid = false;
+    automaticSyncError = null;
+    automaticSyncLastAttempt = null;
+    automaticSyncLastSuccess = null;
+  }
+
   Future<T> _serialize<T>(Future<T> Function() action) {
     final result = _operationTail.then((_) => action());
     _operationTail = result.then<void>((_) {}, onError: (_, _) {});
@@ -453,8 +463,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       syncCoordinator.resetRuntime();
       syncMetadata = null;
       _selectedProvider = null;
-      automaticSyncEnabled = false;
-      automaticSyncOwnershipValid = false;
+      _clearAutomaticSyncState();
       _sessionBaselineWorkIds.clear();
       sessionNewWorkIds.clear();
       error = exception.toString();
@@ -712,6 +721,16 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
     try {
       syncMetadata = await syncCoordinator.connect(provider, identity);
+      automaticSyncEnabled = syncMetadata?.automaticSyncEnabled ?? false;
+      automaticSyncOwnershipValid =
+          automaticSyncEnabled &&
+          syncMetadata?.deviceId == deviceId &&
+          syncMetadata?.leaseToken != null &&
+          (syncMetadata?.leaseExpiresAt?.isAfter(DateTime.now().toUtc()) ??
+              false);
+      automaticSyncError = null;
+      automaticSyncLastAttempt = null;
+      automaticSyncLastSuccess = null;
       if (_pendingConnectionCancellationRequested &&
           identical(_pendingConnectionProvider, provider)) {
         throw const SyncCancelledException();
@@ -750,6 +769,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         await syncCoordinator.failConnection(error);
         syncMetadata = syncCoordinator.metadata;
       }
+      _clearAutomaticSyncState();
       notifyListeners();
       rethrow;
     } finally {
@@ -1100,6 +1120,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     await syncCoordinator.disconnect();
     syncMetadata = null;
     _selectedProvider = null;
+    _clearAutomaticSyncState();
     notifyListeners();
   }
 

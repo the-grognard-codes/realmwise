@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'sync_contract.dart';
 import 'sync_metadata.dart';
 import 'sync_debug.dart';
+import 'diagnostic_logging.dart';
 
 enum SyncOutcome { uploaded, alreadySynced }
 
@@ -326,6 +327,12 @@ class SyncCoordinator {
       await metadataStorage.write(metadata!);
       return metadata!;
     } catch (error) {
+      SyncDebug.trace('provider.connect.failure', {
+        'provider': value.provider,
+        'operation': 'connect',
+        'outcome': 'failure',
+        'errorClass': error.runtimeType.toString(),
+      }, DiagnosticSeverity.error);
       final previous = await metadataStorage.read(catalogIdentity);
       metadata = SyncMetadata(
         catalogIdentity: catalogIdentity,
@@ -395,6 +402,7 @@ class SyncCoordinator {
       throw StateError('Connect Google Drive before syncing.');
     }
     SyncDebug.trace('coordinator.sync.start', {
+      'provider': p.provider,
       'hasFingerprint': localFingerprint != null,
       'hasRevision': current.revision != null,
     });
@@ -441,15 +449,21 @@ class SyncCoordinator {
             );
             await metadataStorage.write(metadata!);
             SyncDebug.trace('coordinator.sync.noop_reconciled_revision', {
+              'provider': p.provider,
               'revision': remote.revision.value,
             });
           }
           lastOutcome = SyncOutcome.alreadySynced;
-          SyncDebug.trace('coordinator.sync.noop', {'decision': true});
+          SyncDebug.trace('coordinator.sync.noop', {
+            'provider': p.provider,
+            'decision': true,
+          });
           return metadata!;
         }
       } catch (_) {
-        SyncDebug.trace('coordinator.sync.remote_check_error');
+        SyncDebug.trace('coordinator.sync.remote_check_error', {
+          'provider': p.provider,
+        });
         // Metadata lookup failure must not suppress an upload attempt.
       }
     }
@@ -482,6 +496,7 @@ class SyncCoordinator {
       onProgress?.call(progress!);
     } catch (error) {
       SyncDebug.trace('coordinator.sync.upload_error', {
+        'provider': p.provider,
         'type': error.runtimeType.toString(),
       });
       metadata = SyncMetadata(
@@ -533,6 +548,7 @@ class SyncCoordinator {
     }
     lastOutcome = SyncOutcome.uploaded;
     SyncDebug.trace('coordinator.sync.uploaded', {
+      'provider': p.provider,
       'revision': result.metadata.revision.value,
     });
     return metadata!;

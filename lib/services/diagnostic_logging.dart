@@ -42,6 +42,7 @@ class DiagnosticSanitizer {
   );
   static final _allowed = <String>{
     'provider',
+    'phase',
     'operation',
     'outcome',
     'status',
@@ -55,11 +56,21 @@ class DiagnosticSanitizer {
     'schemaVersion',
   };
 
+  static const _providers = {'google_drive', 'onedrive', 'dropbox'};
+
   static Map<String, Object?> fields(Map<String, Object?> input) =>
       Map<String, Object?>.fromEntries(
         input.entries
             .where((e) => _allowed.contains(e.key) && !_unsafe.hasMatch(e.key))
-            .map((e) => MapEntry(e.key, value(e.value))),
+            .map(
+              (e) => MapEntry(
+                e.key,
+                e.key == 'provider' &&
+                        (e.value is! String || !_providers.contains(e.value))
+                    ? 'unknown'
+                    : value(e.value),
+              ),
+            ),
       );
 
   static Object? value(Object? input) {

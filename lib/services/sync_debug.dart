@@ -10,29 +10,31 @@ class SyncDebug {
   static void Function(String message)? logger;
   static DiagnosticLogger? diagnosticLogger;
 
-  static void trace(String action, [Map<String, Object?> fields = const {}]) {
+  static void trace(
+    String action, [
+    Map<String, Object?> fields = const {},
+    DiagnosticSeverity? severity,
+  ]) {
     final lowered = action.toLowerCase();
-    final severity =
-        (lowered.contains('error') ||
-            lowered.contains('failed') ||
-            lowered.contains('failure') ||
-            lowered.contains('conflict') ||
-            lowered.contains('auth') ||
-            lowered.contains('transport') ||
-            lowered.contains('retry'))
-        ? (lowered.contains('error') ||
-                  lowered.contains('failed') ||
-                  lowered.contains('failure') ||
-                  lowered.contains('auth') ||
-                  lowered.contains('retry')
-              ? DiagnosticSeverity.error
-              : DiagnosticSeverity.warning)
-        : DiagnosticSeverity.debug;
+    final resolvedSeverity =
+        severity ??
+        ((lowered.contains('error') ||
+                lowered.contains('failed') ||
+                lowered.contains('failure') ||
+                lowered.contains('conflict') ||
+                lowered.contains('transport') ||
+                lowered.contains('retry'))
+            ? (lowered.contains('error') ||
+                      lowered.contains('failed') ||
+                      lowered.contains('failure')
+                  ? DiagnosticSeverity.error
+                  : DiagnosticSeverity.warning)
+            : DiagnosticSeverity.debug);
     final diagnosticSink = diagnosticLogger;
     if (diagnosticSink != null) {
       // Keep this call non-blocking and let the sanitizer enforce the field
       // allowlist. Sync actions are intentionally stable event names.
-      unawaited(diagnosticSink.log(severity, 'sync.$action', fields));
+      unawaited(diagnosticSink.log(resolvedSeverity, 'sync.$action', fields));
     }
     if (!kDebugMode) return;
     final details = fields.entries.map((e) => '${e.key}=${e.value}').join(' ');
