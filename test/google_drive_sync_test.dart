@@ -314,6 +314,43 @@ void main() {
     },
   );
 
+  for (final entry in const {
+    'authorize': 'authorize',
+    'launch_resolution': 'launch_consent',
+    'get_authorization_result': 'parse_consent',
+    'activity_result': 'activity_result',
+    'private-unrecognized-phase': 'authorize',
+  }.entries) {
+    test(
+      'Android diagnostic export preserves safe phase ${entry.key}',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'realmwise-auth-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final logger = DiagnosticLogger(directory: directory);
+        SyncDebug.diagnosticLogger = logger;
+        addTearDown(() => SyncDebug.diagnosticLogger = null);
+        final auth = androidAuthenticator(
+          SequencedAndroidAuthorization([
+            PlatformException(
+              code: 'authorization_failed',
+              details: {'phase': entry.key, 'status': 10},
+            ),
+          ]),
+        );
+        await expectLater(
+          auth.authenticate(),
+          throwsA(isA<PlatformException>()),
+        );
+        await logger.flush();
+        final text = await (await logger.files()).single.readAsString();
+        expect(text, contains('"operation":"${entry.value}"'));
+        expect(text, isNot(contains('private-unrecognized-phase')));
+      },
+    );
+  }
+
   test(
     'Android diagnostics retain only mapped phase and error class',
     () async {
