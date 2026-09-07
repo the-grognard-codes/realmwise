@@ -1942,9 +1942,9 @@
     {
       "type": "library",
       "name": "file_picker",
-      "version": "12.1.2",
+      "version": "12.2.0",
       "scope": "required",
-      "purl": "pkg:dart/file_picker@11.0.2",
+      "purl": "pkg:dart/file_picker@12.2.0",
       "properties": [
         {
           "name": "pub:dependency",
