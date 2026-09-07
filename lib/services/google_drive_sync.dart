@@ -336,14 +336,16 @@ class GoogleDriveOAuthAuthenticator implements SyncAuthenticator {
 
   static String _platformPhase(Object? details) {
     if (details is! Map) return 'authorize';
-    const allowed = {
-      'authorize',
-      'launch_resolution',
-      'get_authorization_result',
-      'activity_result',
+    // Keep fixed labels below the sanitizer's 16-character secret threshold.
+    // Native phase names otherwise disappear from exported diagnostics.
+    const mapped = {
+      'authorize': 'authorize',
+      'launch_resolution': 'launch_consent',
+      'get_authorization_result': 'parse_consent',
+      'activity_result': 'activity_result',
     };
     final phase = details['phase'];
-    return phase is String && allowed.contains(phase) ? phase : 'authorize';
+    return phase is String ? mapped[phase] ?? 'authorize' : 'authorize';
   }
 
   static String _platformErrorClass(Object? details) {
