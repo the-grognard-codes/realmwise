@@ -2945,9 +2945,9 @@
     {
       "type": "library",
       "name": "android_file_picker",
-      "version": "1.0.3",
+      "version": "1.1.0",
       "scope": "required",
-      "purl": "pkg:dart/android_file_picker@1.0.3",
+      "purl": "pkg:dart/android_file_picker@1.1.0",
       "properties": [
         {
           "name": "pub:dependency",
@@ -3003,9 +3003,9 @@
     {
       "type": "library",
       "name": "file_picker_darwin",
-      "version": "1.0.4",
+      "version": "1.1.0",
       "scope": "required",
-      "purl": "pkg:dart/file_picker_darwin@1.0.4",
+      "purl": "pkg:dart/file_picker_darwin@1.1.0",
       "properties": [
         {
           "name": "pub:dependency",
@@ -3032,9 +3032,9 @@
     {
       "type": "library",
       "name": "file_picker_linux",
-      "version": "1.0.2",
+      "version": "1.1.0",
       "scope": "required",
-      "purl": "pkg:dart/file_picker_linux@1.0.2",
+      "purl": "pkg:dart/file_picker_linux@1.1.0",
       "properties": [
         {
           "name": "pub:dependency",
