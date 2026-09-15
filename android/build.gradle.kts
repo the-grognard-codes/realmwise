@@ -7,7 +7,7 @@ buildscript {
 
     dependencies {
         // Override AGP's bundled KGP to meet Flutter's minimum.
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.10")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.20")
     }
 }
 
