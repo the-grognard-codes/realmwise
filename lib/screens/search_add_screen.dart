@@ -68,12 +68,14 @@ class SearchAddScreen extends StatefulWidget {
 class _SearchAddScreenState extends State<SearchAddScreen> {
   static const _lookupModePreferenceKey = 'realmwise.lookup_mode';
   final _query = TextEditingController();
+  final _queryFocus = FocusNode();
   LookupMode _mode = LookupMode.isbn;
   List<WorkCandidate> _results = const [];
   bool _searching = false;
   String? _message;
   bool _cameraPermissionDenied = false;
   bool _modeChanged = false;
+  bool _bulkAdd = false;
 
   @override
   void initState() {
@@ -82,10 +84,34 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
         ? LookupMode.isbn
         : widget.initialTitle?.trim().isNotEmpty == true
         ? LookupMode.title
-        : LookupMode.author;
+        : widget.initialAuthors?.trim().isNotEmpty == true
+        ? LookupMode.author
+        : LookupMode.isbn;
     _query.text = _queryForMode(_mode);
     _restoreLookupMode();
     if (_isAndroid) _loadCameraPermission();
+    _focusQuery();
+  }
+
+  void _focusQuery() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _queryFocus.requestFocus();
+    });
+  }
+
+  void _focusQueryAfterEditorCloses() {
+    final animation = ModalRoute.of(context)?.secondaryAnimation;
+    if (animation == null || animation.status == AnimationStatus.dismissed) {
+      _focusQuery();
+      return;
+    }
+    late final AnimationStatusListener listener;
+    listener = (status) {
+      if (status != AnimationStatus.dismissed) return;
+      animation.removeStatusListener(listener);
+      if (mounted) _focusQuery();
+    };
+    animation.addStatusListener(listener);
   }
 
   Future<void> _restoreLookupMode() async {
@@ -99,9 +125,13 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
       _mode = savedMode;
       _query.text = _queryForMode(savedMode);
     });
+    _focusQuery();
   }
 
-  Future<void> _changeLookupMode(LookupMode mode) async {
+  Future<void> _changeLookupMode(
+    LookupMode mode, {
+    bool focusQuery = true,
+  }) async {
     setState(() {
       _modeChanged = true;
       _mode = mode;
@@ -109,6 +139,7 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
       _results = const [];
       _message = null;
     });
+    if (focusQuery) _focusQuery();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_lookupModePreferenceKey, mode.name);
   }
@@ -144,7 +175,25 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
   @override
   void dispose() {
     _query.dispose();
+    _queryFocus.dispose();
     super.dispose();
+  }
+
+  void _startNextBulkAdd() {
+    setState(() {
+      _query.clear();
+      _results = const [];
+      _message = null;
+    });
+    _focusQueryAfterEditorCloses();
+  }
+
+  void _handleSaved() {
+    if (_bulkAdd) {
+      _startNextBulkAdd();
+    } else {
+      widget.onSaved();
+    }
   }
 
   Future<void> _search() async {
@@ -246,8 +295,7 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
         ),
       );
       if (saved == true) {
-        widget.onSaved();
-        if (mounted) setState(() => _results = const []);
+        _handleSaved();
       }
     } finally {
       if (mounted) setState(() => _searching = false);
@@ -267,7 +315,7 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
         ),
       ),
     );
-    if (saved == true) widget.onSaved();
+    if (saved == true) _handleSaved();
   }
 
   Future<void> _scanWithCamera() async {
@@ -304,7 +352,9 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
     );
     controller.dispose();
     if (!mounted || isbn == null) return;
-    if (_mode != LookupMode.isbn) await _changeLookupMode(LookupMode.isbn);
+    if (_mode != LookupMode.isbn) {
+      await _changeLookupMode(LookupMode.isbn, focusQuery: false);
+    }
     _query.text = isbn;
     await _search();
   }
@@ -358,6 +408,8 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
             TextField(
               key: ValueKey(_mode),
               controller: _query,
+              focusNode: _queryFocus,
+              autofocus: true,
               keyboardType: _mode == LookupMode.isbn
                   ? TextInputType.number
                   : TextInputType.text,
@@ -390,6 +442,18 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
                   onPressed: _searching ? null : _manual,
                   icon: const Icon(Icons.edit_note),
                   label: const Text('Add manually'),
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Bulk Add'),
+                    Switch(
+                      value: _bulkAdd,
+                      onChanged: _searching
+                          ? null
+                          : (value) => setState(() => _bulkAdd = value),
+                    ),
+                  ],
                 ),
                 if (_isAndroid && !_cameraPermissionDenied)
                   OutlinedButton.icon(
