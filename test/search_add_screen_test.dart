@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:realmwise/models/catalog_models.dart';
+import 'package:realmwise/screens/book_editor_screen.dart';
 import 'package:realmwise/screens/search_add_screen.dart';
 import 'package:realmwise/services/app_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,16 +14,26 @@ void main() {
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
 
-  Future<void> waitForVisibleText(WidgetTester tester, String text) async {
-    final finder = find.text(text);
+  Future<void> waitForAbsent(WidgetTester tester, Finder finder) async {
     for (var attempt = 0; attempt < 100; attempt++) {
-      if (finder.evaluate().isNotEmpty) return;
+      if (finder.evaluate().isEmpty) return;
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 50)),
       );
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
     }
-    fail('Timed out waiting for "$text".');
+    fail('Timed out waiting for $finder to be removed.');
+  }
+
+  Future<void> waitForFocus(WidgetTester tester, Finder finder) async {
+    for (var attempt = 0; attempt < 20; attempt++) {
+      if (finder.evaluate().length == 1) {
+        final field = tester.widget<TextField>(finder);
+        if (field.focusNode?.hasFocus ?? false) return;
+      }
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    fail('Timed out waiting for focus on $finder.');
   }
 
   testWidgets('defaults to ISBN and keeps focus when lookup modes change', (
@@ -116,11 +127,13 @@ void main() {
         await tester.pump(const Duration(milliseconds: 300));
         await tester.enterText(find.bySemanticsLabel('Book title *'), 'First');
         await tester.tap(find.text('Save'));
-        await waitForVisibleText(tester, 'Find a work');
+        await waitForAbsent(tester, find.byType(BookEditorScreen));
 
         expect(savedCalls, 0);
-        expect(find.text('Find a work'), findsOneWidget);
-        final searchField = tester.widget<TextField>(find.byType(TextField));
+        expect(find.byType(SearchAddScreen), findsOneWidget);
+        final searchFieldFinder = find.byKey(const ValueKey(LookupMode.isbn));
+        await waitForFocus(tester, searchFieldFinder);
+        final searchField = tester.widget<TextField>(searchFieldFinder);
         expect(searchField.controller?.text, isEmpty);
         expect(searchField.focusNode?.hasFocus, isTrue);
 
@@ -130,7 +143,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 300));
         await tester.enterText(find.bySemanticsLabel('Book title *'), 'Second');
         await tester.tap(find.text('Save'));
-        await waitForVisibleText(tester, 'Find a work');
+        await waitForAbsent(tester, find.byType(BookEditorScreen));
 
         expect(savedCalls, 1);
         final records = (await tester.runAsync(

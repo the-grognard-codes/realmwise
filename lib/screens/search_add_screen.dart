@@ -99,6 +99,21 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
     });
   }
 
+  void _focusQueryAfterEditorCloses() {
+    final animation = ModalRoute.of(context)?.secondaryAnimation;
+    if (animation == null || animation.status == AnimationStatus.dismissed) {
+      _focusQuery();
+      return;
+    }
+    late final AnimationStatusListener listener;
+    listener = (status) {
+      if (status != AnimationStatus.dismissed) return;
+      animation.removeStatusListener(listener);
+      if (mounted) _focusQuery();
+    };
+    animation.addStatusListener(listener);
+  }
+
   Future<void> _restoreLookupMode() async {
     final prefs = await SharedPreferences.getInstance();
     final savedMode = LookupMode.values
@@ -170,7 +185,7 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
       _results = const [];
       _message = null;
     });
-    _focusQuery();
+    _focusQueryAfterEditorCloses();
   }
 
   void _handleSaved() {
