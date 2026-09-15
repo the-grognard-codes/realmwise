@@ -13,6 +13,18 @@ void main() {
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
 
+  Future<void> waitForVisibleText(WidgetTester tester, String text) async {
+    final finder = find.text(text);
+    for (var attempt = 0; attempt < 100; attempt++) {
+      if (finder.evaluate().isNotEmpty) return;
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
+      await tester.pump();
+    }
+    fail('Timed out waiting for "$text".');
+  }
+
   testWidgets('defaults to ISBN and keeps focus when lookup modes change', (
     tester,
   ) async {
@@ -104,8 +116,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 300));
         await tester.enterText(find.bySemanticsLabel('Book title *'), 'First');
         await tester.tap(find.text('Save'));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 500));
+        await waitForVisibleText(tester, 'Find a work');
 
         expect(savedCalls, 0);
         expect(find.text('Find a work'), findsOneWidget);
@@ -119,8 +130,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 300));
         await tester.enterText(find.bySemanticsLabel('Book title *'), 'Second');
         await tester.tap(find.text('Save'));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 500));
+        await waitForVisibleText(tester, 'Find a work');
 
         expect(savedCalls, 1);
         final records = (await tester.runAsync(
