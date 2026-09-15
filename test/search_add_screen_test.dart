@@ -22,10 +22,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: SearchAddScreen(
-          controller: controller,
-          onSaved: () {},
-        ),
+        home: SearchAddScreen(controller: controller, onSaved: () {}),
       ),
     );
     await tester.pump();
@@ -51,25 +48,28 @@ void main() {
     expect(searchField().focusNode?.hasFocus, isTrue);
   });
 
-  testWidgets('restores a prior lookup mode and keeps the search field focused', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues({'realmwise.lookup_mode': 'title'});
-    final controller = AppController();
-    addTearDown(controller.dispose);
+  testWidgets(
+    'restores a prior lookup mode and keeps the search field focused',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'realmwise.lookup_mode': 'title',
+      });
+      final controller = AppController();
+      addTearDown(controller.dispose);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: SearchAddScreen(controller: controller, onSaved: () {}),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SearchAddScreen(controller: controller, onSaved: () {}),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
 
-    final searchField = tester.widget<TextField>(find.byType(TextField));
-    expect(searchField.key, const ValueKey(LookupMode.title));
-    expect(searchField.focusNode?.hasFocus, isTrue);
-  });
+      final searchField = tester.widget<TextField>(find.byType(TextField));
+      expect(searchField.key, const ValueKey(LookupMode.title));
+      expect(searchField.focusNode?.hasFocus, isTrue);
+    },
+  );
 
   testWidgets(
     'Bulk Add starts a fresh focused form after saving and preserves normal save behavior',
@@ -126,10 +126,7 @@ void main() {
         final records = (await tester.runAsync(
           () => controller.catalog.listRecords(),
         ))!;
-        expect(records.map((record) => record.work.title), [
-          'First',
-          'Second',
-        ]);
+        expect(records.map((record) => record.work.title), ['First', 'Second']);
       } finally {
         await tester.runAsync(() => controller.database.close());
         controller.dispose();
