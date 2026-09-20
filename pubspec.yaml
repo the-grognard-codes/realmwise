@@ -21,7 +21,7 @@ dependencies:
   package_info_plus: ^10.2.1
   permission_handler: ^13.0.1
   shared_preferences: ^2.3.3
-  flutter_secure_storage: ^11.0.0
+  flutter_secure_storage: ^11.2.0
   sqflite: ^2.4.1
   sqflite_common_ffi: ^2.3.4+4
   xml: ^7.0.1
