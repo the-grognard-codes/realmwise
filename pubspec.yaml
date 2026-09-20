@@ -10,7 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
-  archive: ^4.2.0
+  archive: ^4.3.0
   crypto: ^3.0.3
   file_picker: ^12.2.0
   http: ^1.2.2
