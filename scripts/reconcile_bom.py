@@ -36,6 +36,12 @@ for name, pkg in locked.items():
         component['version'] = pkg['version']
         updated += 1
 
+    purl_type = 'dart' if pkg['source'] == 'hosted' else 'generic'
+    expected_purl = f"pkg:{purl_type}/{name}@{pkg['version']}"
+    if component.get('purl') != expected_purl:
+        component['purl'] = expected_purl
+        updated += 1
+
     if pkg['source'] == 'hosted':
         expected_hashes = [{'alg': 'SHA-256', 'content': pkg['sha256']}]
         if component.get('hashes') != expected_hashes:

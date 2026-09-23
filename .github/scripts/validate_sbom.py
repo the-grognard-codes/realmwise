@@ -40,6 +40,10 @@ for name, package in locked.items():
     component = components[name]
     if component.get("version") != package["version"]:
         raise SystemExit(f"bom.json has an incorrect version for {name}.")
+    purl_type = "dart" if package["source"] == "hosted" else "generic"
+    expected_purl = f"pkg:{purl_type}/{name}@{package['version']}"
+    if component.get("purl") != expected_purl:
+        raise SystemExit(f"bom.json has an incorrect package URL for {name}.")
     if package["source"] == "hosted":
         hashes = component.get("hashes", [])
         if {item.get("content") for item in hashes} != {package["sha256"]}:
