@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Architecture review for Realmwise</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+  </script>
+  <style>
+    :root { color-scheme: light; }
+    body { background: #f7f5f1; color: #172033; }
+    .seam { border-top: 2px dashed #64748b; }
+    .deep { background: linear-gradient(145deg, #111827, #263449); }
+    .diagram { min-height: 330px; }
+    .flow-box { border: 1px solid #cbd5e1; background: white; border-radius: .7rem; padding: .75rem; }
+    .flow-arrow { color: #b42318; font-size: 1.25rem; line-height: 1; text-align: center; }
+    .inner-box { border: 1px solid #718096; background: rgba(255,255,255,.08); border-radius: .5rem; padding: .6rem; }
+    .badge-strong { background: #d1fae5; color: #065f46; }
+    .badge-explore { background: #fef3c7; color: #92400e; }
+  </style>
+</head>
+<body class="font-sans antialiased">
+  <main class="mx-auto max-w-6xl space-y-10 px-5 py-10 md:px-8">
+    <header class="border-b border-stone-300 pb-6">
+      <div class="flex flex-wrap items-baseline justify-between gap-3">
+        <h1 class="font-serif text-3xl font-semibold tracking-tight">Architecture review <span class="text-slate-500">/ Realmwise</span></h1>
+        <p class="text-sm text-slate-500">23 September 2026</p>
+      </div>
+      <div class="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-600">
+        <span><i class="mr-1 inline-block h-3 w-3 border border-slate-400 align-middle"></i> solid box = module</span>
+        <span><i class="mr-1 inline-block w-5 border-t-2 border-dashed border-slate-500 align-middle"></i> dashed line = seam</span>
+        <span><i class="mr-1 inline-block w-5 border-t-2 border-red-600 align-middle"></i> red line = leakage</span>
+        <span><i class="mr-1 inline-block h-3 w-3 bg-slate-800 align-middle"></i> dark box = deep module</span>
+      </div>
+      <p class="mt-3 text-xs text-slate-500">Domain note: no root CONTEXT.md or docs/adr/ directory was found; names here follow the code.</p>
+    </header>
+
+    <section id="candidates" class="space-y-8">
+      <article id="book-intake" class="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm">
+        <div class="p-6 md:p-8">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="rounded-full px-3 py-1 text-xs font-semibold badge-explore">Worth exploring</span>
+            <span class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">mock</span>
+          </div>
+          <h2 class="mt-3 font-serif text-2xl font-semibold">Deepen book lookup and intake</h2>
+          <p class="mt-2 text-sm"><strong>Files</strong> <code class="font-mono text-xs">lib/screens/search_add_screen.dart</code>, <code class="font-mono text-xs">lib/services/external_catalog_service.dart</code>, <code class="font-mono text-xs">lib/services/catalog_service.dart</code>, <code class="font-mono text-xs">test/search_add_screen_test.dart</code></p>
+
+          <div class="mt-6 grid gap-4 lg:grid-cols-2">
+            <div>
+              <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-500">Before · flow leaks into the screen</p>
+              <div class="diagram rounded-xl border border-slate-200 bg-stone-50 p-4">
+                <pre class="mermaid">
+flowchart LR
+  Screen["SearchAddScreen<br/>query, mode, selection"]
+  Prefs["SharedPreferences"]
+  Controller["AppController"]
+  Lookup["ExternalCatalogService<br/>OpenLibrary + RPGGeek"]
+  Catalog["CatalogService<br/>ISBN lookup"]
+  Editor["BookEditorScreen"]
+  Camera["Permission + scanner"]
+  Screen --> Prefs
+  Screen --> Controller
+  Controller --> Lookup
+  Controller --> Catalog
+  Screen --> Editor
+  Screen -. platform .-> Camera
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  linkStyle 0,1,4,5 stroke:#dc2626,stroke-width:2px;
+                </pre>
+              </div>
+            </div>
+            <div>
+              <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-500">After · one focused seam</p>
+              <div class="diagram flex items-center justify-center rounded-xl border border-slate-200 bg-stone-50 p-5">
+                <div class="grid w-full grid-cols-[1fr_auto_1.35fr] items-center gap-3">
+                  <div class="flow-box text-center">
+                    <div class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Module</div>
+                    <div class="mt-1 font-mono text-sm">SearchAddScreen</div>
+                    <div class="mt-2 text-xs text-slate-600">renders, captures input,<br>keeps platform scanning</div>
+                  </div>
+                  <div class="flex flex-col items-center gap-2">
+                    <span class="flow-arrow">→</span>
+                    <span class="w-12 border-t-2 border-dashed border-slate-500"></span>
+                    <span class="text-[10px] text-slate-500">small interface</span>
+                  </div>
+                  <div class="deep rounded-xl p-4 text-white shadow-lg">
+                    <div class="text-[10px] font-semibold uppercase tracking-widest text-emerald-300">Deep module · Book intake</div>
+                    <div class="mt-3 grid grid-cols-2 gap-2 text-xs">
+                      <div class="inner-box">mode + lookup</div>
+                      <div class="inner-box">candidate enrichment</div>
+                      <div class="inner-box">duplicate choice</div>
+                      <div class="inner-box">bulk-add outcome</div>
+                    </div>
+                    <div class="mt-3 text-[11px] text-slate-300">External lookup and catalog work stay behind the seam.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-5 grid gap-5 md:grid-cols-[1fr_1fr]">
+            <p class="text-sm leading-6"><strong>Problem</strong> SearchAddScreen coordinates mode preferences, remote lookup, candidate enrichment, duplicate handling, editor navigation, bulk-add reset, and camera scanning.</p>
+            <p class="text-sm leading-6"><strong>Solution</strong> Concentrate the lookup and selection flow in a Book intake module while the screen renders and handles platform scanning.</p>
+          </div>
+          <div class="mt-4">
+            <p class="text-xs font-semibold uppercase tracking-widest text-slate-500">Wins</p>
+            <ul class="mt-2 flex flex-wrap gap-2 text-xs">
+              <li class="rounded-full bg-emerald-50 px-3 py-1 text-emerald-900">locality: selection rules meet</li>
+              <li class="rounded-full bg-emerald-50 px-3 py-1 text-emerald-900">leverage: one intake seam</li>
+              <li class="rounded-full bg-emerald-50 px-3 py-1 text-emerald-900">tests cross one interface</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article id="catalog-recovery" class="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm">
+        <div class="p-6 md:p-8">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="rounded-full px-3 py-1 text-xs font-semibold badge-strong">Strong</span>
+            <span class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">local-substitutable</span>
+          </div>
+          <h2 class="mt-3 font-serif text-2xl font-semibold">Concentrate local catalog recovery</h2>
+          <p class="mt-2 text-sm"><strong>Files</strong> <code class="font-mono text-xs">lib/screens/settings_screen.dart</code>, <code class="font-mono text-xs">lib/services/backup_service.dart</code>, <code class="font-mono text-xs">lib/services/catalog_service.dart</code>, <code class="font-mono text-xs">lib/services/app_controller.dart</code>, <code class="font-mono text-xs">lib/data/database_service.dart</code></p>
+
+          <div class="mt-6 grid gap-4 lg:grid-cols-2">
+            <div>
+              <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-500">Before · recovery uses several entry points</p>
+              <div class="diagram flex flex-col justify-center gap-2 rounded-xl border border-slate-200 bg-stone-50 p-4">
+                <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                  <div class="flow-box text-center"><div class="text-[10px] uppercase tracking-widest text-slate-500">SettingsScreen</div><div class="mt-1 text-xs">snapshot passes databasePath + handle</div></div>
+                  <div class="flow-arrow">→</div>
+                  <div class="flow-box text-center"><div class="text-[10px] uppercase tracking-widest text-slate-500">BackupService</div><div class="mt-1 text-xs">WAL checkpoint, copy, prune</div></div>
+                </div>
+                <div class="flow-arrow">↓ <span class="text-[10px] text-slate-500">red lines show leaked recovery detail</span></div>
+                <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                  <div class="flow-box text-center"><div class="text-[10px] uppercase tracking-widest text-slate-500">SettingsScreen</div><div class="mt-1 text-xs">asks CatalogService for backup list</div></div>
+                  <div class="flow-arrow">→</div>
+                  <div class="flow-box text-center"><div class="text-[10px] uppercase tracking-widest text-slate-500">CatalogService</div><div class="mt-1 text-xs">scans backup folder</div></div>
+                </div>
+                <div class="flow-arrow">↓</div>
+                <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                  <div class="flow-box text-center"><div class="text-[10px] uppercase tracking-widest text-slate-500">SettingsScreen</div><div class="mt-1 text-xs">passes selected file to restore</div></div>
+                  <div class="flow-arrow">→</div>
+                  <div class="flow-box text-center"><div class="text-[10px] uppercase tracking-widest text-slate-500">AppController → DatabaseService</div><div class="mt-1 text-xs">copy, open, resume session</div></div>
+                </div>
+              </div>
+            </div>
+            <div>
+              <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-500">After · recovery owns its implementation</p>
+              <div class="diagram flex items-center justify-center rounded-xl border border-slate-200 bg-stone-50 p-5">
+                <div class="grid w-full grid-cols-[.8fr_auto_1.5fr] items-center gap-3">
+                  <div class="flow-box text-center">
+                    <div class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Module</div>
+                    <div class="mt-1 font-mono text-sm">SettingsScreen</div>
+                    <div class="mt-2 text-xs text-slate-600">choose, confirm,<br>show result</div>
+                  </div>
+                  <div class="flex flex-col items-center gap-2">
+                    <span class="flow-arrow">→</span>
+                    <span class="w-12 border-t-2 border-dashed border-slate-500"></span>
+                    <span class="text-[10px] text-slate-500">small interface</span>
+                  </div>
+                  <div class="deep rounded-xl p-4 text-white shadow-lg">
+                    <div class="text-[10px] font-semibold uppercase tracking-widest text-emerald-300">Deep module · Catalog recovery</div>
+                    <div class="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                      <div class="inner-box">list snapshots</div>
+                      <div class="inner-box">WAL-safe creation</div>
+                      <div class="inner-box">retention rules</div>
+                      <div class="inner-box">restore + reopen</div>
+                    </div>
+                    <div class="mt-3 text-[11px] text-slate-300">Database paths and lifecycle details stay inside.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-5 grid gap-5 md:grid-cols-[1fr_1fr]">
+            <p class="text-sm leading-6"><strong>Problem</strong> Snapshot creation, listing, and restore cross SettingsScreen, BackupService, CatalogService, AppController, and DatabaseService; the screen passes raw database details to create a snapshot.</p>
+            <p class="text-sm leading-6"><strong>Solution</strong> Gather listing, WAL-safe snapshots, retention, and restore in one Catalog recovery module reached through one interface.</p>
+          </div>
+          <div class="mt-4">
+            <p class="text-xs font-semibold uppercase tracking-widest text-slate-500">Wins</p>
+            <ul class="mt-2 flex flex-wrap gap-2 text-xs">
+              <li class="rounded-full bg-emerald-50 px-3 py-1 text-emerald-900">locality: recovery rules meet</li>
+              <li class="rounded-full bg-emerald-50 px-3 py-1 text-emerald-900">leverage: settings uses one interface</li>
+              <li class="rounded-full bg-emerald-50 px-3 py-1 text-emerald-900">tests cross the recovery interface</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section id="top-recommendation" class="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 md:p-8">
+      <p class="text-xs font-semibold uppercase tracking-widest text-emerald-800">Top recommendation</p>
+      <h2 class="mt-2 font-serif text-2xl font-semibold"><a class="underline decoration-emerald-400 underline-offset-4" href="#book-intake">Deepen book lookup and intake</a></h2>
+      <p class="mt-2 max-w-3xl text-sm leading-6">It is the clearest recent hotspot, and its lookup, selection, and bulk-add paths already cross several modules and a concrete AppController in tests.</p>
+    </section>
+  </main>
+</body>
+</html>
