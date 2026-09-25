@@ -57,12 +57,17 @@ void main() {
     await intake.search();
     expect(lookup.calls, ['title:Seed title:key']);
     expect(intake.state.results.single.title, 'Found');
+    intake.setQuery('changed title');
+    expect(intake.state.results.single.title, 'Found');
 
     await intake.changeMode(LookupMode.author);
     expect(intake.state.results, isEmpty);
     lookup.results = const [];
     await intake.search();
     expect(lookup.calls.last, 'author:Seed author:key');
+    expect(intake.state.message, contains('No works were found'));
+    expect(intake.state.messageKind, BookIntakeMessageKind.noResults);
+    intake.setQuery('changed author');
     expect(intake.state.message, contains('No works were found'));
     expect(intake.state.messageKind, BookIntakeMessageKind.noResults);
 
@@ -152,7 +157,13 @@ void main() {
       expect(result, isA<IntakeRefreshCandidate>());
       expect((result as IntakeRefreshCandidate).candidate.title, 'Updated');
       expect(catalog.lookups, isEmpty);
-      expect(refresh.manual(), isA<IntakeIgnored>());
+      final refreshManual = refresh.manual() as IntakeEditorRequest;
+      expect(refreshManual.record.work.title, '');
+      expect(refreshManual.record.copies, hasLength(1));
+      expect(
+        refresh.completeEditor(refreshManual, saved: true),
+        isA<IntakeSaved>(),
+      );
     },
   );
 

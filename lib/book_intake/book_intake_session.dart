@@ -1,3 +1,7 @@
+// Named dependency parameters initialize private fields to keep the session
+// boundary as the only access point for intake operations.
+// ignore_for_file: prefer_initializing_formals
+
 import 'package:flutter/foundation.dart';
 
 import '../models/catalog_models.dart';
@@ -92,15 +96,19 @@ final class IntakeSaved extends BookIntakeOutcome {
 /// outcomes, then report their choices back with the issued request objects.
 class BookIntakeSession extends ChangeNotifier {
   BookIntakeSession({
-    required this.lookup,
-    required this.catalog,
-    required this.preferences,
-    required this.keyProvider,
+    required BookIntakeLookup lookup,
+    required BookIntakeCatalog catalog,
+    required BookIntakePreferences preferences,
+    required BookIntakeKeyProvider keyProvider,
     this.refreshOnly = false,
     String? initialIsbn,
     String? initialTitle,
     String? initialAuthors,
-  }) : _seeds = {
+  }) : _lookup = lookup,
+       _catalog = catalog,
+       _preferences = preferences,
+       _keyProvider = keyProvider,
+       _seeds = {
          LookupMode.isbn: initialIsbn ?? '',
          LookupMode.title: initialTitle ?? '',
          LookupMode.author: initialAuthors ?? '',
@@ -115,10 +123,10 @@ class BookIntakeSession extends ChangeNotifier {
     _query = _seeds[_mode]!;
   }
 
-  final BookIntakeLookup lookup;
-  final BookIntakeCatalog catalog;
-  final BookIntakePreferences preferences;
-  final BookIntakeKeyProvider keyProvider;
+  final BookIntakeLookup _lookup;
+  final BookIntakeCatalog _catalog;
+  final BookIntakePreferences _preferences;
+  final BookIntakeKeyProvider _keyProvider;
   final Map<LookupMode, String> _seeds;
   final bool refreshOnly;
   late LookupMode _mode;
@@ -159,7 +167,7 @@ class BookIntakeSession extends ChangeNotifier {
   }
 
   Future<void> restoreMode() async {
-    final mode = await preferences.readMode();
+    final mode = await _preferences.readMode();
     if (_disposed || _modeChanged || mode == null || mode == _mode) return;
     _invalidate();
     _mode = mode;
@@ -180,16 +188,13 @@ class BookIntakeSession extends ChangeNotifier {
     _message = null;
     _messageKind = null;
     _emit();
-    await preferences.writeMode(mode);
+    await _preferences.writeMode(mode);
   }
 
   void setQuery(String query) {
     if (_disposed || query == _query) return;
     _invalidate();
     _query = query;
-    _results = const [];
-    _message = null;
-    _messageKind = null;
     _emit();
   }
 
@@ -211,16 +216,16 @@ class BookIntakeSession extends ChangeNotifier {
     _messageKind = null;
     _emit();
     try {
-      final key = await keyProvider.rpgGeekKey();
+      final key = await _keyProvider.rpgGeekKey();
       if (!_current(generation)) return;
       final results = switch (mode) {
-        LookupMode.isbn => await lookup.searchByIsbn(query, apiKey: key),
-        LookupMode.title => await lookup.searchByTitleOrAuthor(
+        LookupMode.isbn => await _lookup.searchByIsbn(query, apiKey: key),
+        LookupMode.title => await _lookup.searchByTitleOrAuthor(
           term: query,
           author: false,
           apiKey: key,
         ),
-        LookupMode.author => await lookup.searchByTitleOrAuthor(
+        LookupMode.author => await _lookup.searchByTitleOrAuthor(
           term: query,
           author: true,
           apiKey: key,
@@ -254,16 +259,16 @@ class BookIntakeSession extends ChangeNotifier {
     _messageKind = null;
     _emit();
     try {
-      final key = await keyProvider.rpgGeekKey();
+      final key = await _keyProvider.rpgGeekKey();
       if (!_current(generation)) return const IntakeIgnored();
       final enriched = candidate.rpgGeekId.trim().isNotEmpty
-          ? await lookup.fetchRpgGeekDetails(candidate, key)
+          ? await _lookup.fetchRpgGeekDetails(candidate, key)
           : candidate;
       if (!_current(generation)) return const IntakeIgnored();
       if (refreshOnly) return IntakeRefreshCandidate(enriched);
       final existing = enriched.isbn13.isEmpty
           ? null
-          : await catalog.findByIsbn(enriched.isbn13);
+          : await _catalog.findByIsbn(enriched.isbn13);
       if (!_current(generation)) return const IntakeIgnored();
       if (existing != null) {
         return _duplicate = IntakeDuplicateRequest(++_requestId, existing);
@@ -300,7 +305,7 @@ class BookIntakeSession extends ChangeNotifier {
   }
 
   BookIntakeOutcome manual() {
-    if (_disposed || refreshOnly) return const IntakeIgnored();
+    if (_disposed) return const IntakeIgnored();
     _invalidate();
     _emit();
     return _editor = IntakeEditorRequest(
