@@ -5,10 +5,11 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/catalog_models.dart';
+import '../book_intake/book_intake_session.dart';
 import '../services/app_controller.dart';
 import 'book_editor_screen.dart';
 
-enum LookupMode { isbn, title, author }
+export '../book_intake/book_intake_session.dart' show LookupMode;
 
 /// Returns true only for an ISBN-13 represented by exactly 13 ASCII digits.
 bool isValidIsbn13(String value) {
