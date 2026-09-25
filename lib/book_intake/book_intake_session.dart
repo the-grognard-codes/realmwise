@@ -8,7 +8,19 @@ import '../models/catalog_models.dart';
 
 enum LookupMode { isbn, title, author }
 
-enum BookIntakeMessageKind { noResults, failure }
+sealed class BookIntakeFeedback {
+  const BookIntakeFeedback();
+}
+
+final class BookIntakeNoResults extends BookIntakeFeedback {
+  const BookIntakeNoResults();
+}
+
+/// Only messages supplied by an intake adapter may be shown to the visitor.
+final class BookIntakeFailure extends BookIntakeFeedback implements Exception {
+  const BookIntakeFailure([this.userMessage]);
+  final String? userMessage;
+}
 
 abstract interface class BookIntakeLookup {
   Future<List<WorkCandidate>> searchByIsbn(
@@ -47,8 +59,7 @@ class BookIntakeState {
     required this.results,
     required this.loading,
     required this.bulkAdd,
-    this.message,
-    this.messageKind,
+    this.feedback,
   });
 
   final LookupMode mode;
@@ -56,8 +67,7 @@ class BookIntakeState {
   final List<WorkCandidate> results;
   final bool loading;
   final bool bulkAdd;
-  final String? message;
-  final BookIntakeMessageKind? messageKind;
+  final BookIntakeFeedback? feedback;
 }
 
 sealed class BookIntakeOutcome {
@@ -134,8 +144,7 @@ class BookIntakeSession extends ChangeNotifier {
   List<WorkCandidate> _results = const [];
   bool _loading = false;
   bool _bulkAdd = false;
-  String? _message;
-  BookIntakeMessageKind? _messageKind;
+  BookIntakeFeedback? _feedback;
   bool _modeChanged = false;
   bool _disposed = false;
   int _generation = 0;
@@ -149,8 +158,7 @@ class BookIntakeSession extends ChangeNotifier {
     results: List.unmodifiable(_results),
     loading: _loading,
     bulkAdd: _bulkAdd,
-    message: _message,
-    messageKind: _messageKind,
+    feedback: _feedback,
   );
 
   bool _current(int generation) => !_disposed && generation == _generation;
@@ -173,8 +181,7 @@ class BookIntakeSession extends ChangeNotifier {
     _mode = mode;
     _query = _seeds[mode]!;
     _results = const [];
-    _message = null;
-    _messageKind = null;
+    _feedback = null;
     _emit();
   }
 
@@ -185,8 +192,7 @@ class BookIntakeSession extends ChangeNotifier {
     _mode = mode;
     _query = _seeds[mode]!;
     _results = const [];
-    _message = null;
-    _messageKind = null;
+    _feedback = null;
     _emit();
     await _preferences.writeMode(mode);
   }
@@ -212,8 +218,7 @@ class BookIntakeSession extends ChangeNotifier {
     final query = _query;
     _loading = true;
     _results = const [];
-    _message = null;
-    _messageKind = null;
+    _feedback = null;
     _emit();
     try {
       final key = await _keyProvider.rpgGeekKey();
@@ -233,14 +238,12 @@ class BookIntakeSession extends ChangeNotifier {
       };
       if (!_current(generation)) return;
       _results = results;
-      _message = results.isEmpty
-          ? 'No works were found in OpenLibrary. Check the search, try a title, or add the book manually.'
-          : null;
-      _messageKind = results.isEmpty ? BookIntakeMessageKind.noResults : null;
-    } catch (error) {
+      _feedback = results.isEmpty ? const BookIntakeNoResults() : null;
+    } on BookIntakeFailure catch (failure) {
+      if (_current(generation)) _feedback = failure;
+    } catch (_) {
       if (_current(generation)) {
-        _message = error.toString();
-        _messageKind = BookIntakeMessageKind.failure;
+        _feedback = const BookIntakeFailure();
       }
     } finally {
       if (_current(generation)) {
@@ -255,8 +258,7 @@ class BookIntakeSession extends ChangeNotifier {
     _invalidate();
     final generation = _generation;
     _loading = true;
-    _message = null;
-    _messageKind = null;
+    _feedback = null;
     _emit();
     try {
       final key = await _keyProvider.rpgGeekKey();
@@ -274,10 +276,12 @@ class BookIntakeSession extends ChangeNotifier {
         return _duplicate = IntakeDuplicateRequest(++_requestId, existing);
       }
       return _editor = IntakeEditorRequest(++_requestId, enriched.toRecord());
-    } catch (error) {
+    } on BookIntakeFailure catch (failure) {
+      if (_current(generation)) _feedback = failure;
+      return const IntakeIgnored();
+    } catch (_) {
       if (_current(generation)) {
-        _message = error.toString();
-        _messageKind = BookIntakeMessageKind.failure;
+        _feedback = const BookIntakeFailure();
       }
       return const IntakeIgnored();
     } finally {
@@ -330,8 +334,7 @@ class BookIntakeSession extends ChangeNotifier {
       _invalidate();
       _query = '';
       _results = const [];
-      _message = null;
-      _messageKind = null;
+      _feedback = null;
       _emit();
     }
     return IntakeSaved(startNext: _bulkAdd);

@@ -1,8 +1,11 @@
 import 'dart:async';
 
+import 'package:http/http.dart' as http;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:realmwise/book_intake/book_intake_adapters.dart';
 import 'package:realmwise/book_intake/book_intake_session.dart';
 import 'package:realmwise/models/catalog_models.dart';
+import 'package:realmwise/services/external_catalog_service.dart';
 
 void main() {
   late _Lookup lookup;
@@ -25,6 +28,22 @@ void main() {
     catalog = _Catalog();
     preferences = _Preferences();
     keyProvider = _KeyProvider();
+  });
+
+  test('production lookup adapter converts curated catalog failures', () async {
+    final client = http.Client();
+    addTearDown(client.close);
+    final adapter = ExternalCatalogIntakeLookup(ExternalCatalogService(client));
+    await expectLater(
+      adapter.searchByIsbn('invalid', apiKey: ''),
+      throwsA(
+        isA<BookIntakeFailure>().having(
+          (failure) => failure.userMessage,
+          'userMessage',
+          'Enter a valid 10 or 13 digit ISBN.',
+        ),
+      ),
+    );
   });
 
   test('restores a saved mode unless the visitor has changed it', () async {
@@ -65,20 +84,71 @@ void main() {
     lookup.results = const [];
     await intake.search();
     expect(lookup.calls.last, 'author:Seed author:key');
-    expect(intake.state.message, contains('No works were found'));
-    expect(intake.state.messageKind, BookIntakeMessageKind.noResults);
+    expect(intake.state.feedback, isA<BookIntakeNoResults>());
     intake.setQuery('changed author');
-    expect(intake.state.message, contains('No works were found'));
-    expect(intake.state.messageKind, BookIntakeMessageKind.noResults);
+    expect(intake.state.feedback, isA<BookIntakeNoResults>());
 
     await intake.changeMode(LookupMode.isbn);
     intake.setQuery('9781234567897');
     lookup.failure = StateError('offline');
     await intake.search();
     expect(lookup.calls.last, 'isbn:9781234567897:key');
-    expect(intake.state.message, contains('offline'));
-    expect(intake.state.messageKind, BookIntakeMessageKind.failure);
+    expect(intake.state.feedback, isA<BookIntakeFailure>());
+    expect((intake.state.feedback as BookIntakeFailure).userMessage, isNull);
     expect(intake.state.loading, isFalse);
+  });
+
+  test('passes through only typed, curated lookup failures', () async {
+    final intake = session();
+    addTearDown(intake.dispose);
+    lookup.failure = const BookIntakeFailure('Could not reach OpenLibrary.');
+    await intake.search();
+    expect(
+      (intake.state.feedback as BookIntakeFailure).userMessage,
+      'Could not reach OpenLibrary.',
+    );
+
+    lookup.failure = StateError('provider token=secret');
+    await intake.search();
+    expect((intake.state.feedback as BookIntakeFailure).userMessage, isNull);
+
+    lookup.failure = null;
+    catalog.failure = StateError('database path=secret');
+    final outcome = await intake.select(
+      const WorkCandidate(title: 'Hit', isbn13: '9781234567897'),
+    );
+    expect(outcome, isA<IntakeIgnored>());
+    expect((intake.state.feedback as BookIntakeFailure).userMessage, isNull);
+  });
+
+  test('ISBN-13 with no catalog match requests a new editor', () async {
+    final intake = session();
+    addTearDown(intake.dispose);
+    final editor = await intake.select(
+      const WorkCandidate(title: 'Unowned', isbn13: '9781234567897'),
+    );
+    expect(catalog.lookups, ['9781234567897']);
+    expect(editor, isA<IntakeEditorRequest>());
+    expect((editor as IntakeEditorRequest).record.work.title, 'Unowned');
+  });
+
+  test('canceling a duplicate leaves no editor request', () async {
+    final intake = session();
+    addTearDown(intake.dispose);
+    catalog.result = const CatalogRecord(work: BookWork(title: 'Owned'));
+    final duplicate =
+        await intake.select(
+              const WorkCandidate(title: 'Hit', isbn13: '9781234567897'),
+            )
+            as IntakeDuplicateRequest;
+    expect(
+      intake.chooseDuplicate(duplicate, IntakeDuplicateChoice.cancel),
+      isA<IntakeIgnored>(),
+    );
+    expect(
+      intake.chooseDuplicate(duplicate, IntakeDuplicateChoice.edit),
+      isA<IntakeIgnored>(),
+    );
   });
 
   test('enriches then requests duplicate choice and editor handoff', () async {
@@ -249,11 +319,13 @@ class _Lookup implements BookIntakeLookup {
 
 class _Catalog implements BookIntakeCatalog {
   CatalogRecord? result;
+  Object? failure;
   final lookups = <String>[];
 
   @override
   Future<CatalogRecord?> findByIsbn(String isbn13) async {
     lookups.add(isbn13);
+    if (failure != null) throw failure!;
     return result;
   }
 }

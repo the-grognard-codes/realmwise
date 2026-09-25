@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:path/path.dart' as path;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../book_intake/book_intake_adapters.dart';
 import '../models/catalog_models.dart';
 import '../services/app_controller.dart';
 import '../widgets/autocomplete_field.dart';
@@ -404,9 +405,13 @@ class _BookEditorScreenState extends State<BookEditorScreen>
         builder: (context) => SearchAddScreen(
           controller: widget.controller,
           selectionOnly: true,
-          initialIsbn: _record.work.isbn13,
-          initialTitle: _record.work.title,
-          initialAuthors: _record.work.authors.join(', '),
+          createIntakeSession: () => createBookIntakeSession(
+            controller: widget.controller,
+            refreshOnly: true,
+            initialIsbn: _record.work.isbn13,
+            initialTitle: _record.work.title,
+            initialAuthors: _record.work.authors.join(', '),
+          ),
           onSaved: () {},
         ),
       ),

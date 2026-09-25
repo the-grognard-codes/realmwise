@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'book_intake/book_intake_adapters.dart';
 import 'debug/api_debug_harness.dart';
 import 'screens/catalog_screen.dart';
 import 'screens/database_gateway.dart';
@@ -247,6 +248,8 @@ class _CatalogShellState extends State<CatalogShell> {
       CatalogScreen(controller: widget.controller),
       SearchAddScreen(
         controller: widget.controller,
+        createIntakeSession: () =>
+            createBookIntakeSession(controller: widget.controller),
         onSaved: () => setState(() => _page = 0),
         onBack: () => setState(() => _page = 0),
       ),
