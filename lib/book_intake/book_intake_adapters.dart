@@ -28,25 +28,38 @@ class ExternalCatalogIntakeLookup implements BookIntakeLookup {
   const ExternalCatalogIntakeLookup(this.service);
   final ExternalCatalogService service;
 
+  Future<T> _lookup<T>(Future<T> Function() action) async {
+    try {
+      return await action();
+    } on CatalogLookupException catch (error) {
+      throw BookIntakeFailure(error.message);
+    }
+  }
+
   @override
   Future<List<WorkCandidate>> searchByIsbn(
     String query, {
     required String apiKey,
-  }) => service.searchByIsbn(query, apiKey: apiKey);
+  }) => _lookup(() => service.searchByIsbn(query, apiKey: apiKey));
 
   @override
   Future<List<WorkCandidate>> searchByTitleOrAuthor({
     required String term,
     required bool author,
     required String apiKey,
-  }) =>
-      service.searchByTitleOrAuthor(term: term, author: author, apiKey: apiKey);
+  }) => _lookup(
+    () => service.searchByTitleOrAuthor(
+      term: term,
+      author: author,
+      apiKey: apiKey,
+    ),
+  );
 
   @override
   Future<WorkCandidate> fetchRpgGeekDetails(
     WorkCandidate candidate,
     String apiKey,
-  ) => service.fetchRpgGeekDetails(candidate, apiKey);
+  ) => _lookup(() => service.fetchRpgGeekDetails(candidate, apiKey));
 }
 
 class CatalogIntakeCatalog implements BookIntakeCatalog {

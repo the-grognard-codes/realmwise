@@ -4,7 +4,6 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../models/catalog_models.dart';
-import '../book_intake/book_intake_adapters.dart';
 import '../book_intake/book_intake_session.dart';
 import '../services/app_controller.dart';
 import 'book_editor_screen.dart';
@@ -41,15 +40,13 @@ class SearchAddScreen extends StatefulWidget {
     super.key,
     required this.controller,
     required this.onSaved,
+    required this.createIntakeSession,
     this.onBack,
     this.selectionOnly = false,
-    this.initialIsbn,
-    this.initialTitle,
-    this.initialAuthors,
-    this.intakeSession,
   });
   final AppController controller;
   final VoidCallback onSaved;
+  final BookIntakeSession Function() createIntakeSession;
 
   /// Handles leaving the screen when it is embedded in another navigation UI.
   ///
@@ -59,14 +56,6 @@ class SearchAddScreen extends StatefulWidget {
   /// When true, selecting a remote result returns the enriched candidate
   /// instead of opening a new editor route.
   final bool selectionOnly;
-  final String? initialIsbn;
-  final String? initialTitle;
-  final String? initialAuthors;
-
-  /// Optional visit session, useful when embedding the screen with controlled
-  /// intake dependencies. The screen owns its lifetime.
-  final BookIntakeSession? intakeSession;
-
   @override
   State<SearchAddScreen> createState() => _SearchAddScreenState();
 }
@@ -82,15 +71,7 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
   @override
   void initState() {
     super.initState();
-    _intake =
-        widget.intakeSession ??
-        createBookIntakeSession(
-          controller: widget.controller,
-          refreshOnly: widget.selectionOnly,
-          initialIsbn: widget.initialIsbn,
-          initialTitle: widget.initialTitle,
-          initialAuthors: widget.initialAuthors,
-        );
+    _intake = widget.createIntakeSession();
     _query.text = _state.query;
     _intake.addListener(_syncIntakeState);
     _intake.restoreMode();
@@ -397,13 +378,19 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
                   padding: EdgeInsets.all(28),
                   child: Center(child: CircularProgressIndicator()),
                 ),
-              if (state.message != null)
+              if (state.feedback != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 24),
                   child: Card(
                     child: Padding(
                       padding: const EdgeInsets.all(16),
-                      child: Text(state.message!),
+                      child: Text(switch (state.feedback!) {
+                        BookIntakeNoResults() =>
+                          'No works were found in OpenLibrary. Check the search, try a title, or add the book manually.',
+                        BookIntakeFailure(:final userMessage) =>
+                          userMessage ??
+                              'Could not complete the lookup. Please try again or add the book manually.',
+                      }),
                     ),
                   ),
                 ),

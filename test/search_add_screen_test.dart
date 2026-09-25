@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:realmwise/book_intake/book_intake_adapters.dart';
 import 'package:realmwise/book_intake/book_intake_session.dart' as intake;
 import 'package:realmwise/models/catalog_models.dart';
 import 'package:realmwise/screens/book_editor_screen.dart';
@@ -49,7 +50,12 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: SearchAddScreen(controller: controller, onSaved: () {}),
+        home: SearchAddScreen(
+          controller: controller,
+          createIntakeSession: () =>
+              createBookIntakeSession(controller: controller),
+          onSaved: () {},
+        ),
       ),
     );
     await tester.pump();
@@ -86,7 +92,12 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: SearchAddScreen(controller: controller, onSaved: () {}),
+          home: SearchAddScreen(
+            controller: controller,
+            createIntakeSession: () =>
+                createBookIntakeSession(controller: controller),
+            onSaved: () {},
+          ),
         ),
       );
       await tester.pump();
@@ -119,6 +130,8 @@ void main() {
           MaterialApp(
             home: SearchAddScreen(
               controller: controller,
+              createIntakeSession: () =>
+                  createBookIntakeSession(controller: controller),
               onSaved: () => savedCalls++,
             ),
           ),
@@ -173,6 +186,8 @@ void main() {
       MaterialApp(
         home: SearchAddScreen(
           controller: controller,
+          createIntakeSession: () =>
+              createBookIntakeSession(controller: controller),
           onSaved: () {},
           onBack: () {},
         ),
@@ -195,8 +210,12 @@ void main() {
         initialRoute: '/search',
         routes: {
           '/': (context) => const Scaffold(body: Text('Catalog')),
-          '/search': (context) =>
-              SearchAddScreen(controller: controller, onSaved: () {}),
+          '/search': (context) => SearchAddScreen(
+            controller: controller,
+            createIntakeSession: () =>
+                createBookIntakeSession(controller: controller),
+            onSaved: () {},
+          ),
         },
       ),
     );
@@ -226,7 +245,7 @@ void main() {
         MaterialApp(
           home: SearchAddScreen(
             controller: controller,
-            intakeSession: session,
+            createIntakeSession: () => session,
             onSaved: () {},
           ),
         ),
@@ -298,7 +317,7 @@ void main() {
                       MaterialPageRoute(
                         builder: (context) => SearchAddScreen(
                           controller: controller,
-                          intakeSession: session,
+                          createIntakeSession: () => session,
                           selectionOnly: true,
                           onSaved: () {},
                         ),
@@ -340,7 +359,7 @@ void main() {
       MaterialApp(
         home: SearchAddScreen(
           controller: controller,
-          intakeSession: session,
+          createIntakeSession: () => session,
           onSaved: () {},
         ),
       ),
@@ -361,6 +380,59 @@ void main() {
       tester.widget<TextField>(find.byType(TextField)).key,
       const ValueKey(LookupMode.title),
     );
+  });
+
+  testWidgets('renders a stable message for unexpected lookup failures', (
+    tester,
+  ) async {
+    final lookup = _Lookup()..failure = StateError('provider token=secret');
+    final controller = AppController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SearchAddScreen(
+          controller: controller,
+          createIntakeSession: () => _session(lookup, _Catalog()),
+          onSaved: () {},
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Search OpenLibrary'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'Could not complete the lookup. Please try again or add the book manually.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('provider token'), findsNothing);
+  });
+
+  testWidgets('creates one session for a visit across parent rebuilds', (
+    tester,
+  ) async {
+    final controller = AppController();
+    addTearDown(controller.dispose);
+    var creations = 0;
+    intake.BookIntakeSession factory() {
+      creations++;
+      return _session(_Lookup(), _Catalog());
+    }
+
+    Widget screen() => MaterialApp(
+      home: SearchAddScreen(
+        controller: controller,
+        createIntakeSession: factory,
+        onSaved: () {},
+      ),
+    );
+    await tester.pumpWidget(screen());
+    await tester.pumpWidget(screen());
+    expect(creations, 1);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(screen());
+    expect(creations, 2);
   });
 
   testWidgets('Android camera action follows permission status', (
@@ -385,7 +457,12 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: SearchAddScreen(controller: controller, onSaved: () {}),
+        home: SearchAddScreen(
+          controller: controller,
+          createIntakeSession: () =>
+              createBookIntakeSession(controller: controller),
+          onSaved: () {},
+        ),
       ),
     );
     await tester.pump();
@@ -395,7 +472,12 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await tester.pumpWidget(
       MaterialApp(
-        home: SearchAddScreen(controller: controller, onSaved: () {}),
+        home: SearchAddScreen(
+          controller: controller,
+          createIntakeSession: () =>
+              createBookIntakeSession(controller: controller),
+          onSaved: () {},
+        ),
       ),
     );
     await tester.pump();
@@ -422,19 +504,26 @@ class _Lookup implements intake.BookIntakeLookup {
   ];
   WorkCandidate? enriched;
   Future<WorkCandidate>? pendingEnrichment;
+  Object? failure;
 
   @override
   Future<List<WorkCandidate>> searchByIsbn(
     String query, {
     required String apiKey,
-  }) async => results;
+  }) async {
+    if (failure != null) throw failure!;
+    return results;
+  }
 
   @override
   Future<List<WorkCandidate>> searchByTitleOrAuthor({
     required String term,
     required bool author,
     required String apiKey,
-  }) async => results;
+  }) async {
+    if (failure != null) throw failure!;
+    return results;
+  }
 
   @override
   Future<WorkCandidate> fetchRpgGeekDetails(
