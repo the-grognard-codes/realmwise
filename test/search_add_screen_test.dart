@@ -1,7 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:realmwise/book_intake/book_intake_session.dart' as intake;
 import 'package:realmwise/models/catalog_models.dart';
 import 'package:realmwise/screens/book_editor_screen.dart';
 import 'package:realmwise/screens/search_add_screen.dart';
@@ -205,4 +209,261 @@ void main() {
     expect(find.text('Catalog'), findsOneWidget);
     expect(find.text('Find a work'), findsNothing);
   });
+
+  testWidgets(
+    'duplicate dialog delegates choices and opens the chosen editor',
+    (tester) async {
+      final lookup = _Lookup();
+      final catalog = _Catalog()
+        ..existing = const CatalogRecord(
+          work: BookWork(title: 'Owned copy'),
+          copies: [UserCopy()],
+        );
+      final session = _session(lookup, catalog);
+      final controller = AppController();
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SearchAddScreen(
+            controller: controller,
+            intakeSession: session,
+            onSaved: () {},
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('Search OpenLibrary'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Select'));
+      await tester.pumpAndSettle();
+      expect(find.text('This work is already cataloged'), findsOneWidget);
+      expect(catalog.lookups, ['9781234567897']);
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.byType(BookEditorScreen), findsNothing);
+
+      await tester.tap(find.text('Select'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Add copy'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<BookEditorScreen>(find.byType(BookEditorScreen))
+            .record
+            .copies,
+        hasLength(2),
+      );
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Select'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Edit existing'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<BookEditorScreen>(find.byType(BookEditorScreen))
+            .record
+            .copies,
+        hasLength(1),
+      );
+    },
+  );
+
+  testWidgets(
+    'refresh selection returns enriched candidate without duplicate dialog',
+    (tester) async {
+      final lookup = _Lookup()
+        ..results = const [WorkCandidate(title: 'Hit', rpgGeekId: '42')]
+        ..enriched = const WorkCandidate(
+          title: 'Refreshed',
+          isbn13: '9781234567897',
+        );
+      final catalog = _Catalog()
+        ..existing = const CatalogRecord(work: BookWork(title: 'Owned'));
+      final session = _session(lookup, catalog, refreshOnly: true);
+      final controller = AppController();
+      addTearDown(controller.dispose);
+      WorkCandidate? selected;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () async =>
+                    selected = await Navigator.push<WorkCandidate>(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => SearchAddScreen(
+                          controller: controller,
+                          intakeSession: session,
+                          selectionOnly: true,
+                          onSaved: () {},
+                        ),
+                      ),
+                    ),
+                child: const Text('Open intake'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open intake'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Add manually'));
+      await tester.pumpAndSettle();
+      expect(find.byType(BookEditorScreen), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Search OpenLibrary'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Select'));
+      await tester.pumpAndSettle();
+
+      expect(selected?.title, 'Refreshed');
+      expect(catalog.lookups, isEmpty);
+      expect(find.text('This work is already cataloged'), findsNothing);
+    },
+  );
+
+  testWidgets('superseded selection does not open an editor', (tester) async {
+    final pending = Completer<WorkCandidate>();
+    final lookup = _Lookup()
+      ..results = const [WorkCandidate(title: 'Hit', rpgGeekId: '42')]
+      ..pendingEnrichment = pending.future;
+    final session = _session(lookup, _Catalog());
+    final controller = AppController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SearchAddScreen(
+          controller: controller,
+          intakeSession: session,
+          onSaved: () {},
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Search OpenLibrary'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Select'));
+    await tester.pump();
+    await tester.tap(find.text('Title'));
+    await tester.pump();
+    pending.complete(const WorkCandidate(title: 'Stale'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(BookEditorScreen), findsNothing);
+    expect(find.text('This work is already cataloged'), findsNothing);
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).key,
+      const ValueKey(LookupMode.title),
+    );
+  });
+
+  testWidgets('Android camera action follows permission status', (
+    tester,
+  ) async {
+    const channel = MethodChannel('flutter.baseflow.com/permissions/methods');
+    var status = 0; // Denied still allows a permission request.
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      (call) async => status,
+    );
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      );
+    });
+    final controller = AppController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SearchAddScreen(controller: controller, onSaved: () {}),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Scan with Camera'), findsOneWidget);
+
+    status = 4; // Permanently denied hides the action.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SearchAddScreen(controller: controller, onSaved: () {}),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Scan with Camera'), findsNothing);
+    debugDefaultTargetPlatformOverride = null;
+  });
+}
+
+intake.BookIntakeSession _session(
+  _Lookup lookup,
+  _Catalog catalog, {
+  bool refreshOnly = false,
+}) => intake.BookIntakeSession(
+  lookup: lookup,
+  catalog: catalog,
+  preferences: const _Preferences(),
+  keyProvider: const _KeyProvider(),
+  refreshOnly: refreshOnly,
+);
+
+class _Lookup implements intake.BookIntakeLookup {
+  List<WorkCandidate> results = const [
+    WorkCandidate(title: 'Hit', isbn13: '9781234567897'),
+  ];
+  WorkCandidate? enriched;
+  Future<WorkCandidate>? pendingEnrichment;
+
+  @override
+  Future<List<WorkCandidate>> searchByIsbn(
+    String query, {
+    required String apiKey,
+  }) async => results;
+
+  @override
+  Future<List<WorkCandidate>> searchByTitleOrAuthor({
+    required String term,
+    required bool author,
+    required String apiKey,
+  }) async => results;
+
+  @override
+  Future<WorkCandidate> fetchRpgGeekDetails(
+    WorkCandidate candidate,
+    String apiKey,
+  ) => pendingEnrichment ?? Future.value(enriched ?? candidate);
+}
+
+class _Catalog implements intake.BookIntakeCatalog {
+  CatalogRecord? existing;
+  final lookups = <String>[];
+
+  @override
+  Future<CatalogRecord?> findByIsbn(String isbn13) async {
+    lookups.add(isbn13);
+    return existing;
+  }
+}
+
+class _Preferences implements intake.BookIntakePreferences {
+  const _Preferences();
+  @override
+  Future<intake.LookupMode?> readMode() async => null;
+  @override
+  Future<void> writeMode(intake.LookupMode mode) async {}
+}
+
+class _KeyProvider implements intake.BookIntakeKeyProvider {
+  const _KeyProvider();
+  @override
+  Future<String> rpgGeekKey() async => '';
 }
