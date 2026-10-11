@@ -52,7 +52,7 @@ jobs:
           Compress-Archive -Path (Join-Path $releaseDir '*') -DestinationPath (Join-Path $outputDir $zipName) -CompressionLevel Optimal
           $hash = (Get-FileHash -LiteralPath (Join-Path $outputDir $zipName) -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $zipName" | Set-Content -LiteralPath (Join-Path $outputDir 'SHA256SUMS-windows.txt') -Encoding ascii
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: realmwise-release-windows
           path: ${{ runner.temp }}/realmwise-windows-release
