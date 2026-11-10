@@ -75,8 +75,13 @@ class ImageStorageService {
   static const _maxRemoteBytes = 10 * 1024 * 1024;
   static const _maxRedirects = 5;
   String? _rootPath;
-  static final _processStaging =
-      'process-$pid-${DateTime.now().microsecondsSinceEpoch}';
+  static var _stagingStamp = DateTime.now().microsecondsSinceEpoch;
+
+  static String _newProcessStaging() {
+    final now = DateTime.now().microsecondsSinceEpoch;
+    _stagingStamp = now > _stagingStamp ? now : _stagingStamp + 1;
+    return 'process-$pid-$_stagingStamp';
+  }
 
   static final Map<String, _EditStagingOwner> _stagingOwners = {};
   static Future<void> _stagingTail = Future.value();
@@ -88,9 +93,12 @@ class ImageStorageService {
   }
 
   Future<Directory> createEditStaging() => _serializeStaging(() async {
-    final folder = Directory(path.join(rootPath, '.staging', _processStaging));
-    var owner = _stagingOwners[folder.path];
+    final stagingRoot = path.join(rootPath, '.staging');
+    var owner = _stagingOwners[stagingRoot];
     if (owner == null) {
+      // Never reuse an ownership path: cleanup may still hold an old, unlinked
+      // lock handle after the previous owner released it.
+      final folder = Directory(path.join(stagingRoot, _newProcessStaging()));
       final lockFile = File('${folder.path}.lock');
       await lockFile.parent.create(recursive: true);
       final handle = await lockFile.open(mode: FileMode.append);
@@ -103,9 +111,9 @@ class ImageStorageService {
         rethrow;
       }
       owner = _EditStagingOwner(folder, lockFile, handle);
-      _stagingOwners[folder.path] = owner;
+      _stagingOwners[stagingRoot] = owner;
     }
-    final edit = await folder.createTemp('edit-');
+    final edit = await owner.directory.createTemp('edit-');
     owner.edits.add(edit.path);
     return edit;
   });
@@ -113,7 +121,8 @@ class ImageStorageService {
   Future<void> discardEditStaging(
     Directory directory,
   ) => _serializeStaging(() async {
-    final owner = _stagingOwners[directory.parent.path];
+    final stagingRoot = directory.parent.parent.path;
+    final owner = _stagingOwners[stagingRoot];
     try {
       for (var attempt = 0; ; attempt++) {
         try {
@@ -138,10 +147,13 @@ class ImageStorageService {
               await owner.directory.delete();
             }
           } finally {
-            await owner.handle.unlock();
-            await owner.handle.close();
-            if (await owner.lockFile.exists()) await owner.lockFile.delete();
-            _stagingOwners.remove(owner.directory.path);
+            _stagingOwners.remove(stagingRoot);
+            try {
+              await owner.handle.unlock();
+            } finally {
+              await owner.handle.close();
+              await _deleteStagingLock(owner.lockFile);
+            }
           }
         }
       }
@@ -165,7 +177,9 @@ class ImageStorageService {
       }
     }
     for (final process in processes) {
-      if (_stagingOwners.containsKey(process) ||
+      if (_stagingOwners.values.any(
+            (owner) => owner.directory.path == process,
+          ) ||
           await FileSystemEntity.type(process, followLinks: false) ==
               FileSystemEntityType.link)
         continue;
@@ -183,10 +197,19 @@ class ImageStorageService {
       } finally {
         if (acquired) await handle!.unlock();
         await handle?.close();
-        if (acquired && await lockFile.exists()) await lockFile.delete();
+        if (acquired) await _deleteStagingLock(lockFile);
       }
     }
   });
+
+  Future<void> _deleteStagingLock(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } on FileSystemException {
+      // A concurrent cleanup may still have this file open on Windows. It is
+      // abandoned now; a later cleanup can retry without retaining an owner.
+    }
+  }
 
   ImageStorageService _stagingStorage(Directory directory) =>
       ImageStorageService(null, resolver: _resolver, transport: _transport)

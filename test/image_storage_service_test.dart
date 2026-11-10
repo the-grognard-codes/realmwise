@@ -107,6 +107,43 @@ Future<void> main(List<String> args) async {
     },
   );
 
+  test('a retired owner with an open lock cannot affect the next edit', () async {
+    final folder = await Directory.systemTemp.createTemp('retired_staging_');
+    PathProviderPlatform.instance = _FakePathProvider(folder.path);
+    final storage = ImageStorageService(null);
+    await storage.initialize('${folder.path}/images');
+    final first = await storage.createEditStaging();
+    final concurrent = await storage.createEditStaging();
+    expect(concurrent.parent.path, first.parent.path);
+    final oldLock = File('${first.parent.path}.lock');
+    final staleHandle = await oldLock.open(mode: FileMode.append);
+    Directory? next;
+    try {
+      await storage.discardEditStaging(first);
+      expect(await concurrent.exists(), isTrue);
+      await storage.discardEditStaging(concurrent);
+      expect(await first.parent.exists(), isFalse);
+      // Windows refuses deletion while another cleanup has the lock file open.
+      // Discard must still release the in-memory owner and allow another edit.
+      if (Platform.isWindows) expect(await oldLock.exists(), isTrue);
+      next = await storage.createEditStaging();
+      expect(next.parent.path, isNot(first.parent.path));
+      final image = File('${next.path}/photo.png');
+      await image.writeAsBytes([4, 5, 6]);
+      // A cleanup holding the retired file can only target its retired folder.
+      await staleHandle.lock(FileLock.exclusive);
+      expect(await first.parent.exists(), isFalse);
+      expect(await image.readAsBytes(), [4, 5, 6]);
+      await staleHandle.unlock();
+    } finally {
+      await staleHandle.close();
+      if (next != null) await storage.discardEditStaging(next);
+      await storage.cleanupAbandonedEdits();
+      expect(await oldLock.exists(), isFalse);
+      await folder.delete(recursive: true);
+    }
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
