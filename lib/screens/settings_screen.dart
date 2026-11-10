@@ -80,7 +80,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     try {
       final key = await widget.controller.rpgGeekKey();
-      final backups = await widget.controller.catalog.listBackups();
+      final backups = await widget.controller.recovery.restorePoints();
       if (mounted)
         setState(() {
           _key.text = key;
@@ -525,7 +525,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final backup = picked?.path;
     if (backup != null)
       await _run(
-        () => widget.controller.restoreFromBackup(backup),
+        () async => widget.controller.restoreFromBackup(
+          await widget.controller.recovery.inspectRestorePoint(backup),
+        ),
         success: 'Backup restored into the active database.',
       );
   }
@@ -1680,9 +1682,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     onPressed: _busy
                         ? null
                         : () => _run(
-                            () => widget.controller.restoreFromBackup(
-                              backup.path,
-                            ),
+                            () => widget.controller.restoreFromBackup(backup),
                             success:
                                 'Backup restored into the active database.',
                           ),

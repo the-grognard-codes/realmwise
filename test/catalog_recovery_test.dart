@@ -7,6 +7,7 @@ import 'package:realmwise/data/database_service.dart';
 import 'package:realmwise/models/catalog_models.dart';
 import 'package:realmwise/services/catalog_bundle_service.dart';
 import 'package:realmwise/services/catalog_recovery.dart';
+import 'package:realmwise/services/diagnostic_logging.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -68,6 +69,48 @@ void main() {
     );
     expect(await File(protective[1].path).exists(), isTrue);
   });
+
+  test(
+    'listing and retention isolate catalogs with a shared filename prefix',
+    () async {
+      final folder = Directory(p.join(dir.path, 'backups'));
+      await folder.create();
+      final other = File(
+        p.join(folder.path, 'catalog_old_2025-01-01T12-00-00-000.backup.db'),
+      );
+      await other.writeAsBytes([1]);
+      await File(
+        p.join(folder.path, 'catalog_old_manual-1700000000000000.backup.db'),
+      ).writeAsBytes([1]);
+      for (var i = 0; i < 14; i++) {
+        await recovery.snapshot(SnapshotKind.routine);
+      }
+      final points = await recovery.restorePoints();
+      expect(points, hasLength(12));
+      expect(
+        points.any((point) => point.name.startsWith('catalog_old_')),
+        isFalse,
+      );
+      expect(await other.exists(), isTrue);
+    },
+  );
+
+  test(
+    'kind markers in the catalog basename do not affect snapshot kind',
+    () async {
+      await database.close();
+      await database.open(p.join(dir.path, 'catalog_manual-edition.db'));
+      for (var i = 0; i < 14; i++) {
+        await recovery.snapshot(SnapshotKind.routine);
+      }
+      final points = await recovery.restorePoints();
+      expect(points, hasLength(12));
+      expect(
+        points.every((point) => point.kind == SnapshotKind.routine),
+        isTrue,
+      );
+    },
+  );
 
   test('legacy database and bundle names retain their kinds', () async {
     final folder = Directory(p.join(dir.path, 'backups'));
@@ -237,6 +280,71 @@ void main() {
     });
   }
 
+  test(
+    'rollback failure preserves the original exception and rollback file',
+    () async {
+      final original = StateError('primary reopen failure');
+      final events = _DiagnosticCapture();
+      final previousLogger = DiagnosticDiagnostics.logger;
+      DiagnosticDiagnostics.logger = events;
+      addTearDown(() => DiagnosticDiagnostics.logger = previousLogger);
+      final active = database.databasePath;
+      var attempts = 0;
+      recovery = CatalogRecovery(
+        database: database,
+        reopen: (_) async {
+          attempts++;
+          if (attempts == 1) throw original;
+          throw const FileSystemException('secondary rollback reopen failure');
+        },
+      );
+      await expectLater(
+        recovery.replaceCatalog(await replacement()),
+        throwsA(same(original)),
+      );
+      expect(recovery.isReplacing, isFalse);
+      await database.open(active);
+      expect(
+        (await database.databaseHandle.query('works')).single['title'],
+        'Original',
+      );
+    },
+  );
+
+  test(
+    'WAL replacement removes stale active, staged and extracted sidecars',
+    () async {
+      await database.databaseHandle.rawQuery('PRAGMA journal_mode=WAL');
+      await database.databaseHandle.insert('works', {
+        'title': 'Committed in WAL',
+      });
+      final active = database.databasePath;
+      recovery = CatalogRecovery(
+        database: database,
+        copyFile: (file, target) async {
+          // Simulate sidecars left behind by a previous process after close.
+          for (final suffix in ['-wal', '-shm', '-journal']) {
+            await File('$active$suffix').writeAsBytes([1, 2, 3]);
+            await File('${file.path}$suffix').writeAsBytes([1, 2, 3]);
+          }
+          return file.copy(target);
+        },
+      );
+      await recovery.replaceCatalog(await replacement());
+      expect(
+        (await database.databaseHandle.query('works')).single['title'],
+        'Replacement',
+      );
+      expect(
+        dir.listSync().where((file) => file.path.contains('.replace-')),
+        isEmpty,
+      );
+      for (final suffix in ['-wal', '-shm', '-journal']) {
+        expect(await File('$active$suffix').exists(), isFalse);
+      }
+    },
+  );
+
   test('invalid source is rejected before waiting for sync', () async {
     var waited = false;
     recovery = CatalogRecovery(
@@ -258,4 +366,18 @@ void main() {
       'Original',
     );
   });
+}
+
+class _DiagnosticCapture extends DiagnosticLogger {
+  final events = <String>[];
+  @override
+  Future<void> log(
+    DiagnosticSeverity severity,
+    String event, [
+    Map<String, Object?> fields = const {},
+  ]) async {
+    events.add(event);
+    expect(fields.keys, contains('errorClass'));
+    expect(fields.values, isNot(contains('secondary rollback reopen failure')));
+  }
 }

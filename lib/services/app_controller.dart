@@ -73,12 +73,14 @@ class _InMemorySyncMetadataStorage implements SyncMetadataStorage {
 class AppController extends ChangeNotifier with WidgetsBindingObserver {
   AppController({
     TokenStorage? tokenStorage,
+    DateTime Function()? clock,
     this.imageRootPathOverride,
     SyncProvider? syncProvider,
     SyncProvider? googleDriveProvider,
     SyncProvider? oneDriveProvider,
     SyncProvider? dropboxProvider,
-  }) : database = DatabaseService(),
+  }) : clock = clock ?? DateTime.now,
+       database = DatabaseService(),
        _http = http.Client(),
        _tokenStorage = tokenStorage ?? SecureStorageService(),
        _providers = {
@@ -90,6 +92,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     DiagnosticDiagnostics.logger = diagnostics;
   }
 
+  final DateTime Function() clock;
   final DatabaseService database;
 
   static Map<String, SyncProvider> _providerEntry(SyncProvider? provider) =>
@@ -101,8 +104,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   late final CatalogRecovery recovery = CatalogRecovery(
     database: database,
     waitForSync: _cancelAndAwaitSync,
-    reopen: (file) => _openDatabase(file, recovering: true),
+    reopen: _openDatabase,
+    clock: clock,
     rehydrate: () => catalog.rehydrateMissingImages(),
+    onReady: _resumeAfterRecovery,
   );
   final ExportService exporter = ExportService();
   final CatalogBundleService bundles = CatalogBundleService();
@@ -114,7 +119,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   late final CatalogService catalog = CatalogService(
     database: database,
     images: imageStorage,
-    recovery: recovery,
   );
   late final ExternalCatalogService lookup = ExternalCatalogService(
     _http,
@@ -165,6 +169,23 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _automaticSyncTimer;
   Future<void>? _automaticFuture;
   Future<void> _operationTail = Future<void>.value();
+  // A remote download may initiate its own replacement. Its zone lets that
+  // replacement drain other sync work without waiting on its own caller.
+  final _syncActivityZone = Object();
+  final Set<Future<void>> _syncActivities = {};
+
+  Future<T> _trackSyncActivity<T>(Future<T> Function() action) {
+    if (identical(Zone.current[_syncActivityZone], this)) return action();
+    if (isSyncing) return Future.error(const SyncBusyException());
+    if (recovery.isReplacing)
+      return Future.error(StateError('Catalog replacement is in progress.'));
+    final operation = runZoned(action, zoneValues: {_syncActivityZone: this});
+    final settled = operation.then<void>((_) {}, onError: (Object _) {});
+    _syncActivities.add(settled);
+    unawaited(settled.whenComplete(() => _syncActivities.remove(settled)));
+    return operation;
+  }
+
   bool automaticSyncEnabled = false;
   String deviceId = '';
   String deviceName = '';
@@ -179,7 +200,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   /// must never authorize an automatic upload.
   bool automaticSyncOwnershipValid = false;
   SyncProgress? syncProgress;
-  bool get isSyncing => _syncFuture != null || syncCoordinator.isSyncing;
+  bool get isSyncing =>
+      _syncActivities.isNotEmpty ||
+      _syncFuture != null ||
+      syncCoordinator.isSyncing;
   void cancelSync() => syncCoordinator.cancel();
 
   Future<void> _cancelAndAwaitSync() async {
@@ -193,6 +217,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         // Lifecycle changes intentionally absorb cancellation/failure; the
         // catalog remains intact and the next open can restore its metadata.
       }
+    }
+    if (!identical(Zone.current[_syncActivityZone], this)) {
+      await Future.wait(_syncActivities.toList());
     }
     final automatic = _automaticFuture;
     if (automatic != null) {
@@ -356,13 +383,21 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  Future<void> openDatabase(String databasePath, {bool remember = true}) =>
-      _openDatabase(databasePath, remember: remember);
+  Future<void> openDatabase(String databasePath, {bool remember = true}) async {
+    if (_syncCoordinatorInitialized) await _cancelAndAwaitSync();
+    await _openDatabase(databasePath, remember: remember);
+    try {
+      await recovery.start();
+      await _resumeAfterRecovery();
+    } on Object {
+      await closeDatabase();
+      rethrow;
+    }
+  }
 
   Future<void> _openDatabase(
     String databasePath, {
     bool remember = true,
-    bool recovering = false,
   }) async {
     // A connection belongs to one catalog identity. Do not carry a live
     // provider/session into a different database, but retain its saved setup
@@ -380,7 +415,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       // metadata in that case.
     }
     _ensureSyncCoordinator(prefs);
-    if (!recovering) await _cancelAndAwaitSync();
     syncCoordinator.resetRuntime();
     syncMetadata = null;
     _selectedProvider = null;
@@ -455,14 +489,11 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       hierarchyOrder = savedHierarchy == 'gameSystemBookTypeSetting'
           ? CatalogHierarchyOrder.gameSystemBookTypeSetting
           : CatalogHierarchyOrder.gameSystemSettingBookType;
-      if (!recovering) await recovery.start();
       if (remember) {
         if (prefs != null) {
           await prefs.setString('last_database_path', database.databasePath);
         }
       }
-      if (!recovering) notifyListeners();
-      if (!recovering && automaticSyncEnabled) scheduleAutomaticSync();
     } catch (exception) {
       // Opening the database is a transaction from the UI's perspective. If
       // image storage (or any later bootstrap step) fails, leave no live DB
@@ -551,7 +582,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> takeOverAutomaticSync() async {
+  Future<void> takeOverAutomaticSync() =>
+      _trackSyncActivity(_takeOverAutomaticSyncInternal);
+
+  Future<void> _takeOverAutomaticSyncInternal() async {
     if (!syncCoordinator.isConnected) {
       throw StateError('Connect a cloud provider first.');
     }
@@ -626,7 +660,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _validateAutomaticRemote() async {
+  Future<void> _validateAutomaticRemote() =>
+      _trackSyncActivity(_validateAutomaticRemoteInternal);
+
+  Future<void> _validateAutomaticRemoteInternal() async {
     final temporary = await getTemporaryDirectory();
     final bundlePath = path.join(
       temporary.path,
@@ -820,6 +857,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> disconnectOneDrive() => disconnectGoogleDrive();
 
   Future<void> syncNow() {
+    if (_syncActivities.isNotEmpty)
+      return Future.error(const SyncBusyException());
     if (recovery.isReplacing) return Future.error(const SyncBusyException());
     final running = _syncFuture;
     if (running != null) return Future<void>.error(const SyncBusyException());
@@ -875,6 +914,18 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     SyncConflictChoice choice, {
     required SyncClassificationResult decision,
     required String localFingerprint,
+  }) => _trackSyncActivity(
+    () => _resolveSyncDecisionInternal(
+      choice,
+      decision: decision,
+      localFingerprint: localFingerprint,
+    ),
+  );
+
+  Future<bool> _resolveSyncDecisionInternal(
+    SyncConflictChoice choice, {
+    required SyncClassificationResult decision,
+    required String localFingerprint,
   }) async {
     if (choice == SyncConflictChoice.cancel) return false;
     if (!database.isOpen) throw StateError('Open a catalog first.');
@@ -885,7 +936,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     );
     try {
       Future<void> localBackup() async {
-        await recovery.snapshot(SnapshotKind.manual);
+        await recovery.snapshot(SnapshotKind.preConflict);
       }
 
       if (choice == SyncConflictChoice.downloadReplaceLocal) {
@@ -942,6 +993,18 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<bool> downloadRemoteBundle({
+    SyncRemoteMetadata? expectedRemote,
+    String? expectedLocalFingerprint,
+    Future<void> Function()? backup,
+  }) => _trackSyncActivity(
+    () => _downloadRemoteBundleInternal(
+      expectedRemote: expectedRemote,
+      expectedLocalFingerprint: expectedLocalFingerprint,
+      backup: backup,
+    ),
+  );
+
+  Future<bool> _downloadRemoteBundleInternal({
     SyncRemoteMetadata? expectedRemote,
     String? expectedLocalFingerprint,
     Future<void> Function()? backup,
@@ -1127,12 +1190,14 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> restoreFromBackup(String backupFile) async {
-    await recovery.replaceCatalog(
-      backupFile,
-      bundle: backupFile.endsWith('.realmwise') || backupFile.endsWith('.zip'),
-      imageRootPath: imageStorage.rootPath,
-    );
+  Future<void> restoreFromBackup(RestorePoint point) async {
+    await recovery.restore(point, imageRootPath: imageStorage.rootPath);
+    notifyListeners();
+  }
+
+  Future<void> _resumeAfterRecovery() async {
+    if (automaticSyncEnabled && automaticSyncOwnershipValid)
+      scheduleAutomaticSync();
     notifyListeners();
   }
 

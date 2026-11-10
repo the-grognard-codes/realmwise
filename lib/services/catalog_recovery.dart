@@ -12,6 +12,8 @@ enum SnapshotKind {
   routine('Automatic'),
   manual('Manual'),
   preImport('Before import'),
+  preRestore('Before restore'),
+  preConflict('Before conflict'),
   preDownload('Before download'),
   preRemoteOverwrite('Before remote overwrite');
 
@@ -19,14 +21,18 @@ enum SnapshotKind {
   final String label;
 }
 
+enum RestorePointFormat { database, bundle }
+
 class RestorePoint {
   const RestorePoint({
     required this.path,
     required this.kind,
     required this.timestamp,
+    this.format = RestorePointFormat.database,
   });
   final String path;
   final SnapshotKind kind;
+  final RestorePointFormat format;
   final DateTime timestamp;
   String get name => p.basename(path);
 }
@@ -38,6 +44,7 @@ class CatalogRecovery {
     Future<void> Function()? waitForSync,
     Future<void> Function(String)? reopen,
     Future<bool> Function()? rehydrate,
+    Future<void> Function()? onReady,
     DateTime Function()? clock,
     CatalogBundleService? bundles,
     Future<File> Function(File, String)? copyFile,
@@ -45,6 +52,7 @@ class CatalogRecovery {
   }) : waitForSync = waitForSync ?? (() async {}),
        reopen = reopen ?? database.open,
        rehydrate = rehydrate ?? (() async => false),
+       onReady = onReady ?? (() async {}),
        clock = clock ?? DateTime.now,
        bundles = bundles ?? CatalogBundleService(),
        copyFile = copyFile ?? ((file, target) => file.copy(target)),
@@ -54,13 +62,16 @@ class CatalogRecovery {
   final Future<void> Function() waitForSync;
   final Future<void> Function(String) reopen;
   final Future<bool> Function() rehydrate;
+  final Future<void> Function() onReady;
   final DateTime Function() clock;
   final CatalogBundleService bundles;
   final Future<File> Function(File, String) copyFile, renameFile;
   Timer? _timer;
   Future<void> _snapshots = Future.value();
   int _lastStamp = 0;
-  bool isReplacing = false;
+  bool _isReplacing = false;
+  bool get isReplacing => _isReplacing;
+  bool _quiesced = false;
 
   Directory get _folder =>
       Directory(p.join(p.dirname(database.databasePath), 'backups'));
@@ -71,6 +82,8 @@ class CatalogRecovery {
 
   String _kindName(SnapshotKind kind) => switch (kind) {
     SnapshotKind.preImport => 'pre-import',
+    SnapshotKind.preRestore => 'pre-restore',
+    SnapshotKind.preConflict => 'pre-conflict',
     SnapshotKind.preDownload => 'pre-download',
     SnapshotKind.preRemoteOverwrite => 'pre-remote-overwrite',
     _ => kind.name,
@@ -106,7 +119,7 @@ class CatalogRecovery {
   }
 
   Future<RestorePoint> snapshot(SnapshotKind kind, {List<int>? bundleBytes}) {
-    if (isReplacing)
+    if (_quiesced)
       return Future.error(StateError('Catalog replacement is in progress.'));
     final operation = _snapshots.then(
       (_) => _snapshot(kind, bundleBytes: bundleBytes),
@@ -158,7 +171,7 @@ class CatalogRecovery {
           );
         } finally {
           await clean.close();
-          if (await File(extracted).exists()) await File(extracted).delete();
+          await _deleteDatabaseFiles(extracted);
           if (await Directory('$destination.assets.tmp').exists())
             await Directory('$destination.assets.tmp').delete(recursive: true);
         }
@@ -168,10 +181,13 @@ class CatalogRecovery {
       return RestorePoint(
         path: destination,
         kind: kind,
+        format: bundleBytes == null
+            ? RestorePointFormat.database
+            : RestorePointFormat.bundle,
         timestamp: DateTime.fromMicrosecondsSinceEpoch(stamp, isUtc: true),
       );
     } finally {
-      if (await temporary.exists()) await temporary.delete();
+      await _deleteDatabaseFiles(temporary.path);
     }
   }
 
@@ -180,34 +196,34 @@ class CatalogRecovery {
     final points = <RestorePoint>[];
     await for (final entity in _folder.list()) {
       if (entity is! File) continue;
+      final prefix = '${p.basenameWithoutExtension(database.databasePath)}_';
       final name = p.basename(entity.path);
-      if (!name.endsWith('.backup.db') &&
-          !name.contains('_pre-remote-overwrite-'))
-        continue;
-      if (!name.endsWith('.backup.db') && !name.endsWith('.realmwise'))
-        continue;
-      final kind =
-          SnapshotKind.values
-              .where((kind) => name.contains('_${_kindName(kind)}-'))
-              .firstOrNull ??
-          SnapshotKind.routine;
-      final stamp = RegExp(r'-(\d{13,})(?:\.backup\.db|\.realmwise)$')
-          .firstMatch(name);
+      if (!name.startsWith(prefix)) continue;
+      final suffix = name.substring(prefix.length);
+      final typed = RegExp(
+        '^(${SnapshotKind.values.map(_kindName).join('|')})-(\\d{13,})(\\.backup\\.db|\\.realmwise)\$',
+      ).firstMatch(suffix);
+      final legacy = RegExp(
+        r'^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(?:-(\d+))?\.backup\.db$',
+      ).firstMatch(suffix);
+      if (typed == null && legacy == null) continue;
+      final kind = typed == null
+          ? SnapshotKind.routine
+          : SnapshotKind.values.firstWhere(
+              (kind) => _kindName(kind) == typed[1],
+            );
       try {
         var timestamp = (await entity.stat()).modified.toUtc();
-        final legacy = RegExp(
-          r'_(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(?:-(\d+))?',
-        ).firstMatch(name);
         if (legacy != null) {
           timestamp =
               DateTime.tryParse(
                 '${legacy[1]}T${legacy[2]}:${legacy[3]}:${legacy[4]}.${legacy[5] ?? "000"}',
               )?.toUtc() ??
               timestamp;
-        } else if (stamp != null) {
+        } else if (typed != null) {
           try {
             timestamp = DateTime.fromMicrosecondsSinceEpoch(
-              int.parse(stamp[1]!),
+              int.parse(typed[2]!),
               isUtc: true,
             );
           } on ArgumentError {
@@ -217,7 +233,14 @@ class CatalogRecovery {
           }
         }
         points.add(
-          RestorePoint(path: entity.path, kind: kind, timestamp: timestamp),
+          RestorePoint(
+            path: entity.path,
+            kind: kind,
+            timestamp: timestamp,
+            format: suffix.endsWith('.realmwise')
+                ? RestorePointFormat.bundle
+                : RestorePointFormat.database,
+          ),
         );
       } on FileSystemException {
         /* A restore point may have disappeared. */
@@ -228,21 +251,69 @@ class CatalogRecovery {
   }
 
   Future<void> _trim(SnapshotKind kind) async {
-    final prefix = '${p.basenameWithoutExtension(database.databasePath)}_';
-    final points = (await restorePoints()).where(
-      (point) =>
-          point.kind == kind && p.basename(point.path).startsWith(prefix),
-    );
+    final points = (await restorePoints()).where((point) => point.kind == kind);
     for (final old in points.skip(kind == SnapshotKind.routine ? 12 : 5)) {
-      await File(old.path).delete();
+      await _deleteDatabaseFiles(old.path);
     }
   }
 
+  Future<RestorePoint> inspectRestorePoint(String file) async {
+    final format = file.endsWith('.realmwise') || file.endsWith('.zip')
+        ? RestorePointFormat.bundle
+        : RestorePointFormat.database;
+    if (format == RestorePointFormat.bundle) {
+      await bundles.validateBundle(file);
+    } else {
+      await _validate(file);
+    }
+    return RestorePoint(
+      path: file,
+      kind: SnapshotKind.manual,
+      timestamp: (await File(file).stat()).modified.toUtc(),
+      format: format,
+    );
+  }
+
+  Future<void> restore(RestorePoint point, {String? imageRootPath}) =>
+      replaceCatalog(
+        point.path,
+        snapshotKind: SnapshotKind.preRestore,
+        bundle: point.format == RestorePointFormat.bundle,
+        imageRootPath: imageRootPath,
+      );
+
+  Future<void> _deleteSidecars(String file) async {
+    for (final suffix in ['-wal', '-shm', '-journal']) {
+      final sidecar = File('$file$suffix');
+      if (await sidecar.exists()) await sidecar.delete();
+    }
+  }
+
+  Future<void> _deleteDatabaseFiles(String file) async {
+    if (await File(file).exists()) await File(file).delete();
+    await _deleteSidecars(file);
+  }
+
+  void _reportFailure(String operation, Object error) {
+    DiagnosticDiagnostics.emit(
+      DiagnosticSeverity.warning,
+      'recovery.$operation.error',
+      {
+        'operation': operation,
+        'outcome': 'failed',
+        'errorClass': error.runtimeType.toString(),
+      },
+    );
+  }
+
   Future<void> scrubLegacyTokens() async {
-    for (final point in await restorePoints()) {
-      if (!point.path.endsWith('.backup.db')) continue;
+    if (!await _folder.exists()) return;
+    // Privacy migration also covers old snapshots with unrecognized names.
+    // Listing and retention remain scoped to the active catalog.
+    await for (final file in _folder.list()) {
+      if (file is! File || !file.path.endsWith('.backup.db')) continue;
       try {
-        await _scrub(File(point.path));
+        await _scrub(file);
       } on Object catch (error) {
         DiagnosticDiagnostics.emit(
           DiagnosticSeverity.warning,
@@ -313,7 +384,7 @@ class CatalogRecovery {
     if (isReplacing)
       throw StateError('Catalog replacement is already in progress.');
     if (!database.isOpen) throw StateError('No active database to replace.');
-    isReplacing = true;
+    _isReplacing = true;
     final active = database.databasePath;
     final stamp = _stamp();
     final staged = '$active.replace-$stamp.tmp';
@@ -336,41 +407,60 @@ class CatalogRecovery {
       await waitForSync();
       await stop();
       quiesced = true;
+      _quiesced = true;
       await _snapshot(snapshotKind);
       await database.close();
+      await _deleteSidecars(active);
       // Copy first so copy failure cannot destroy the original catalog.
       await copyFile(File(staged), '$staged.ready');
       await renameFile(File(active), rollback);
       moved = true;
+      await _deleteSidecars(active);
       await renameFile(File('$staged.ready'), active);
       await reopen(active);
       await rehydrate();
       committed = true;
     } catch (_) {
-      if (quiesced) {
-        await database.close();
-        if (moved) {
-          if (await File(active).exists()) await File(active).delete();
-          // Rollback deliberately uses native operations, independent of a
-          // failing injected replacement operation.
-          await File(rollback).rename(active);
+      try {
+        if (quiesced) {
+          await database.close();
+          await _deleteSidecars(active);
+          if (moved) {
+            await _deleteDatabaseFiles(active);
+            // Roll back independently of injected replacement operations.
+            await File(rollback).rename(active);
+          }
+          await reopen(active);
         }
-        await reopen(active);
+      } on Object catch (rollbackError) {
+        _reportFailure('rollback', rollbackError);
       }
       rethrow;
     } finally {
-      for (final file in [staged, '$staged.ready']) {
-        if (await File(file).exists()) await File(file).delete();
+      // Cleanup must not mask a replacement/rollback failure.
+      try {
+        for (final file in [staged, '$staged.ready']) {
+          await _deleteDatabaseFiles(file);
+        }
+        if (committed) await _deleteDatabaseFiles(rollback);
+        if (!committed &&
+            imageStaging != null &&
+            await Directory(imageStaging).exists()) {
+          await Directory(imageStaging).delete(recursive: true);
+        }
+      } on Object catch (cleanupError) {
+        _reportFailure('cleanup', cleanupError);
       }
-      if (committed && await File(rollback).exists())
-        await File(rollback).delete();
-      if (!committed &&
-          imageStaging != null &&
-          await Directory(imageStaging).exists()) {
-        await Directory(imageStaging).delete(recursive: true);
+      _quiesced = false;
+      _isReplacing = false;
+      if (quiesced && database.isOpen) {
+        try {
+          await start(snapshotNow: false);
+          await onReady();
+        } on Object catch (restartError) {
+          _reportFailure('restart', restartError);
+        }
       }
-      isReplacing = false;
-      if (quiesced && database.isOpen) await start(snapshotNow: false);
     }
   }
 }

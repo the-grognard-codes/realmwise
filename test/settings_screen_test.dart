@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:realmwise/screens/settings_screen.dart';
 import 'package:realmwise/services/app_controller.dart';
+import 'package:realmwise/services/catalog_recovery.dart';
 import 'package:realmwise/theme/app_theme.dart';
 
 class _FakePathProvider extends PathProviderPlatform {
@@ -58,6 +59,7 @@ void main() {
         controllerCreated = true;
         await controller.initialize();
         initialized = true;
+        await controller.recovery.snapshot(SnapshotKind.preRestore);
       });
       await tester.pumpWidget(
         MaterialApp(home: SettingsScreen(controller: controller)),
@@ -116,6 +118,8 @@ void main() {
       expect(find.text('Open RPGGeek API application page'), findsOneWidget);
       expect(find.textContaining('product and series details'), findsOneWidget);
       await _selectTab(tester, 'Database');
+      await _pumpUntilVisible(tester, find.textContaining('Before restore |'));
+      expect(find.textContaining('Before restore |'), findsOneWidget);
       expect(find.text('Local Image Library'), findsOneWidget);
       expect(find.text('Manual Device Sync'), findsOneWidget);
       expect(find.text('Database and Recovery'), findsOneWidget);

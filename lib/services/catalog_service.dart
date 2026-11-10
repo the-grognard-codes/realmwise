@@ -4,16 +4,10 @@ import '../data/database_service.dart';
 import '../models/catalog_models.dart';
 import 'image_storage_service.dart';
 import 'diagnostic_logging.dart';
-import 'catalog_recovery.dart';
 
 /// Coordinates database records with their local image files.
 class CatalogService {
-  CatalogService({
-    required this.database,
-    required this.images,
-    CatalogRecovery? recovery,
-  }) : recovery = recovery ?? CatalogRecovery(database: database);
-  final CatalogRecovery recovery;
+  CatalogService({required this.database, required this.images});
   final DatabaseService database;
   final ImageStorageService images;
 
@@ -132,6 +126,4 @@ class CatalogService {
       rethrow;
     }
   }
-
-  Future<List<RestorePoint>> listBackups() => recovery.restorePoints();
 }
