@@ -8,6 +8,7 @@ Realmwise is a local-first Flutter app for cataloging tabletop RPG books, shippe
 
 Claude is the **planner and reviewer**. Codex writes the code.
 
+- Plan: write each feature or improvement as a spec in `docs/spec/` using the template in [`docs/spec/README.md`](docs/spec/README.md), then mirror it as a GitHub issue with the same sections. Add the spec to the index in that README.
 - Plan: turn ideas into specs and tickets on GitHub Issues (`/grill-with-docs` → `/to-spec` → `/to-tickets`). Tickets ready for Codex get the `ready-for-agent` label.
 - Review: review Codex's branches and PRs against the originating issue and this repo's standards (`/two-axis-review <fixed-point>`, or the built-in `/code-review` for a bug hunt).
 - Do not edit `lib/`, `test/`, platform folders, or workflows unless the user explicitly asks. Report findings instead, with `file:line` and a concrete failure scenario.
