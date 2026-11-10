@@ -67,6 +67,64 @@ class ImageStorageService {
   static const _maxRemoteBytes = 10 * 1024 * 1024;
   static const _maxRedirects = 5;
   String? _rootPath;
+  static final _processStaging =
+      'process-$pid-${DateTime.now().microsecondsSinceEpoch}';
+
+  Future<Directory> createEditStaging() async {
+    final folder = Directory(path.join(rootPath, '.staging', _processStaging));
+    await folder.create(recursive: true);
+    return folder.createTemp('edit-');
+  }
+
+  Future<void> cleanupAbandonedEdits() async {
+    final folder = Directory(path.join(rootPath, '.staging'));
+    if (!await folder.exists()) return;
+    await for (final entry in folder.list(followLinks: false)) {
+      if (entry is Directory &&
+          path.basename(entry.path) != _processStaging &&
+          RegExp(r'^process-\d+-\d+$').hasMatch(path.basename(entry.path))) {
+        await entry.delete(recursive: true);
+      }
+    }
+  }
+
+  ImageStorageService _stagingStorage(Directory directory) =>
+      ImageStorageService(null, resolver: _resolver, transport: _transport)
+        .._rootPath = directory.path;
+
+  Future<BookImage> stageFile({
+    required Directory directory,
+    required BookWork work,
+    required String sourcePath,
+    required String label,
+    required bool cover,
+  }) => _stagingStorage(
+    directory,
+  ).importFile(work: work, sourcePath: sourcePath, label: label, cover: cover);
+
+  Future<BookImage> stageRemoteCover({
+    required Directory directory,
+    required BookWork work,
+    required String remoteUrl,
+  }) =>
+      _stagingStorage(directory)
+          .downloadRemoteCover(work: work, remoteUrl: remoteUrl);
+
+  Future<BookImage> publishStagedImage(BookImage image, BookWork work) async {
+    final destination = await _availableFile(
+      work: work,
+      label: image.sourceType == ImageSourceType.remoteCache
+          ? 'remote'
+          : image.caption,
+      extension: _extensionFor(image.localPath, fallback: '.jpg'),
+      cover: image.isCover,
+    );
+    await File(image.localPath).rename(destination.path);
+    return image.copyWith(localPath: destination.path);
+  }
+
+  bool isManagedImage(String file) =>
+      path.isWithin(path.absolute(rootPath), path.absolute(file));
 
   String get rootPath =>
       _rootPath ??

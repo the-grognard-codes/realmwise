@@ -12,6 +12,23 @@ import '../services/diagnostic_logging.dart';
 class DatabaseService {
   Database? _database;
   String? _databasePath;
+  int catalogGeneration = 0;
+  Future<void> _catalogFilesTail = Future.value();
+
+  /// Keeps image publication and database snapshots consistent with each other.
+  Future<T> withCatalogFiles<T>(Future<T> Function() action) {
+    final operation = _catalogFilesTail.then((_) => action());
+    _catalogFilesTail = operation.then<void>((_) {}, onError: (Object _) {});
+    return operation;
+  }
+
+  Future<bool> referencesImage(String file) async => (await _db.query(
+    'images',
+    columns: ['id'],
+    where: 'local_path = ?',
+    whereArgs: [file],
+    limit: 1,
+  )).isNotEmpty;
 
   String get databasePath {
     final value = _databasePath;
@@ -25,6 +42,7 @@ class DatabaseService {
   Database get databaseHandle => _db;
 
   Future<void> open(String filePath) async {
+    catalogGeneration++;
     await close();
     if (Platform.isWindows || Platform.isLinux) {
       sqfliteFfiInit();
@@ -345,7 +363,7 @@ class DatabaseService {
       'images',
       where: 'work_id = ?',
       whereArgs: [workId],
-      orderBy: 'is_cover DESC, sort_order, id',
+      orderBy: 'sort_order, id',
     );
     return CatalogRecord(
       work: BookWork.fromRow(workRows.single),
@@ -375,17 +393,7 @@ class DatabaseService {
         'title',
         'A title is required.',
       );
-    final deDuplicatedImages = <BookImage>[];
-    final coverIndex = record.images.indexWhere((image) => image.isCover);
-    for (var i = 0; i < record.images.length; i++) {
-      final image = record.images[i];
-      deDuplicatedImages.add(
-        image.copyWith(
-          isCover: coverIndex < 0 ? i == 0 : i == coverIndex,
-          sortOrder: i,
-        ),
-      );
-    }
+    final deDuplicatedImages = normalizeBookImages(record.images);
     late int workId;
     try {
       await _db.transaction((transaction) async {
@@ -508,8 +516,7 @@ class DatabaseService {
             if (copy.id == null) copyRow.remove('id');
             await tx.insert('copies', copyRow);
           }
-          for (var i = 0; i < record.images.length; i++) {
-            final image = record.images[i].copyWith(sortOrder: i);
+          for (final image in normalizeBookImages(record.images)) {
             final imageRow = image.toRow(workId);
             if (image.id == null) imageRow.remove('id');
             await tx.insert('images', imageRow);
@@ -644,4 +651,25 @@ class CatalogIconMapping {
     'zoom': zoom,
     'source_type': sourceType.name,
   };
+}
+
+/// Applies the shared image invariant to database-only bundle imports.
+Future<void> normalizeStoredCatalogImages(Database db) async {
+  await db.transaction((tx) async {
+    final rows = await tx.query('images', orderBy: 'work_id, sort_order, id');
+    final groups = <int, List<BookImage>>{};
+    for (final row in rows) {
+      (groups[row['work_id'] as int] ??= []).add(BookImage.fromRow(row));
+    }
+    for (final images in groups.values) {
+      for (final image in normalizeBookImages(images)) {
+        await tx.update(
+          'images',
+          {'sort_order': image.sortOrder, 'is_cover': image.isCover ? 1 : 0},
+          where: 'id = ?',
+          whereArgs: [image.id],
+        );
+      }
+    }
+  });
 }

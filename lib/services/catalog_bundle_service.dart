@@ -27,6 +27,22 @@ class CatalogBundleService {
     String? imageRootPath,
     bool includePersonalImages = false,
     MissingAssetPolicy missingAssetPolicy = MissingAssetPolicy.continueExport,
+  }) => database.withCatalogFiles(
+    () => _exportBundle(
+      database: database,
+      outputPath: outputPath,
+      imageRootPath: imageRootPath,
+      includePersonalImages: includePersonalImages,
+      missingAssetPolicy: missingAssetPolicy,
+    ),
+  );
+
+  Future<void> _exportBundle({
+    required DatabaseService database,
+    required String outputPath,
+    String? imageRootPath,
+    required bool includePersonalImages,
+    required MissingAssetPolicy missingAssetPolicy,
   }) async {
     if (!database.isOpen) throw StateError('No database is currently open.');
     final identity = await database.ensureCatalogIdentity();
@@ -397,6 +413,12 @@ class CatalogBundleService {
       } finally {
         await db.close();
       }
+    }
+    final normalized = await databaseFactory.openDatabase(targetPath);
+    try {
+      await normalizeStoredCatalogImages(normalized);
+    } finally {
+      await normalized.close();
     }
     return targetPath;
   }

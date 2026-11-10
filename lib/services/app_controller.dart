@@ -178,6 +178,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   void cancelSync() => syncCoordinator.cancel();
 
   Future<void> _cancelAndAwaitSync() async {
+    await catalog.discardEdits();
     _automaticSyncTimer?.cancel();
     final running = _syncFuture;
     if (running != null) {
@@ -423,6 +424,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       sessionNewWorkIds.clear();
       final imageFolder = await database.getSetting('image_folder');
       await imageStorage.initialize(imageFolder ?? imageRootPathOverride);
+      await catalog.cleanupAbandonedEdits();
       final savedTheme = await database.getSetting('theme_seed');
       seedName = canonicalThemeName(savedTheme);
       if (savedTheme != seedName) {
@@ -1259,6 +1261,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       bundles.validateBundle(bundlePath);
 
   Future<void> _quiesceForBundleSwap() async {
+    await catalog.discardEdits();
     await backups.stop();
     await database.close();
   }
@@ -1440,8 +1443,11 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _automaticSyncTimer?.cancel();
-    unawaited(backups.stop());
-    unawaited(database.close());
+    unawaited(() async {
+      await catalog.discardEdits();
+      await backups.stop();
+      await database.close();
+    }());
     _http.close();
     super.dispose();
   }
