@@ -122,7 +122,7 @@ Each provider adapter then carries only storage-specific behavior: where the bun
 - Create a new branch for this work.
 - Preserve unrelated working-tree changes.
 - Follow existing repository conventions.
-- Do not commit or push unless explicitly requested.
+- Stage and commit the work on that branch, push it, and open a PR that references the originating issue (`Closes #103`). Do not merge the PR or enable auto-merge without the user's explicit consent; Claude reviews every PR first.
 - The sync contract must hold for all three providers and keep the single-active-device lease model. No silent merges.
 - Secrets go through `TokenStorage` only.
 - A change to one platform's runtime path (`*_runtime.dart`) must be mirrored in the other.

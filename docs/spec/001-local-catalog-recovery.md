@@ -92,7 +92,7 @@ Today one "recover my catalog" concept is spread over four modules and five code
 - Create a new branch for this work.
 - Preserve unrelated working-tree changes.
 - Follow existing repository conventions.
-- Do not commit or push unless explicitly requested.
+- Stage and commit the work on that branch, push it, and open a PR that references the originating issue (`Closes #101`). Do not merge the PR or enable auto-merge without the user's explicit consent; Claude reviews every PR first.
 - Existing catalogs and existing snapshot folders must keep working with no manual step.
 - Snapshots must not contain OAuth tokens or the RPGGeek key (keep the legacy-token scrub).
 - Do not add new responsibilities to `AppController`. It should lose code in this change.

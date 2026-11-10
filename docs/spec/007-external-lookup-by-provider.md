@@ -56,7 +56,7 @@ Make adding a third lookup provider cheap, and let each provider's parsing be ch
 - Create a new branch for this work.
 - Preserve unrelated working-tree changes.
 - Follow existing repository conventions.
-- Do not commit or push unless explicitly requested.
+- Stage and commit the work on that branch, push it, and open a PR that references the originating issue (`Closes #107`). Do not merge the PR or enable auto-merge without the user's explicit consent; Claude reviews every PR first.
 - Must stay consistent with ADR 0001: provider-specific lookup stays out of `lib/book_intake/`.
 - The RPGGeek key is read only through `TokenStorage`.
 
