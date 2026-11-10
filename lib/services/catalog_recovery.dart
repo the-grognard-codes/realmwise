@@ -49,6 +49,7 @@ class CatalogRecovery {
     CatalogBundleService? bundles,
     Future<File> Function(File, String)? copyFile,
     Future<File> Function(File, String)? renameFile,
+    Future<void> Function(File)? deleteFile,
   }) : waitForSync = waitForSync ?? (() async {}),
        reopen = reopen ?? database.open,
        rehydrate = rehydrate ?? (() async => false),
@@ -56,7 +57,12 @@ class CatalogRecovery {
        clock = clock ?? DateTime.now,
        bundles = bundles ?? CatalogBundleService(),
        copyFile = copyFile ?? ((file, target) => file.copy(target)),
-       renameFile = renameFile ?? ((file, target) => file.rename(target));
+       renameFile = renameFile ?? ((file, target) => file.rename(target)),
+       deleteFile =
+           deleteFile ??
+           ((file) async {
+             await file.delete();
+           });
 
   final DatabaseService database;
   final Future<void> Function() waitForSync;
@@ -66,6 +72,7 @@ class CatalogRecovery {
   final DateTime Function() clock;
   final CatalogBundleService bundles;
   final Future<File> Function(File, String) copyFile, renameFile;
+  final Future<void> Function(File) deleteFile;
   Timer? _timer;
   Future<void> _snapshots = Future.value();
   int _lastStamp = 0;
@@ -334,12 +341,12 @@ class CatalogRecovery {
   Future<void> _deleteSidecars(String file) async {
     for (final suffix in ['-wal', '-shm', '-journal']) {
       final sidecar = File('$file$suffix');
-      if (await sidecar.exists()) await sidecar.delete();
+      if (await sidecar.exists()) await deleteFile(sidecar);
     }
   }
 
   Future<void> _deleteDatabaseFiles(String file) async {
-    if (await File(file).exists()) await File(file).delete();
+    if (await File(file).exists()) await deleteFile(File(file));
     await _deleteSidecars(file);
   }
 
@@ -442,7 +449,7 @@ class CatalogRecovery {
         ? null
         : p.join(imageRootPath, 'recovery-$stamp');
     var moved = false, committed = false, quiesced = false;
-    var closing = false, installed = false;
+    var closing = false, installed = false, replacementRetained = false;
     try {
       if (bundle) {
         await bundles.extractDatabase(
@@ -488,6 +495,19 @@ class CatalogRecovery {
         } on Object catch (rollbackError) {
           _reportFailure('rollback', rollbackError);
         }
+        if (!originalRestored) {
+          try {
+            // A Windows delete can fail while replacing via rename still works.
+            // Remove replacement sidecars first so none can attach to the original.
+            if (installed) await _deleteSidecars(active);
+            await renameFile(File(rollback), active);
+            originalRestored = true;
+          } on Object catch (retryError) {
+            _reportFailure('rollback', retryError);
+          }
+        }
+        replacementRetained =
+            !originalRestored && installed && await File(active).exists();
         if (originalRestored) {
           if (moved) {
             try {
@@ -500,7 +520,10 @@ class CatalogRecovery {
               _reportFailure('rollback', sidecarError);
             }
           }
-          // A sidecar failure must not suppress reopening a restored main file.
+        }
+        if (originalRestored || replacementRetained) {
+          // Even if the original cannot return, keep the installed catalog usable.
+          // Its rollback file and referenced images remain available for recovery.
           try {
             await reopen(active);
           } on Object catch (reopenError) {
@@ -517,6 +540,7 @@ class CatalogRecovery {
         }
         if (committed) await _deleteDatabaseFiles(rollback);
         if (!committed &&
+            !replacementRetained &&
             imageStaging != null &&
             await Directory(imageStaging).exists()) {
           await Directory(imageStaging).delete(recursive: true);
@@ -529,7 +553,7 @@ class CatalogRecovery {
       if (quiesced && database.isOpen) {
         try {
           await start(snapshotNow: false);
-          await onReady();
+          if (!replacementRetained) await onReady();
         } on Object catch (restartError) {
           _reportFailure('restart', restartError);
         }

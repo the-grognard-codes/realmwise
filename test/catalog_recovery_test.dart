@@ -281,6 +281,91 @@ void main() {
     });
   }
 
+  for (final renameBlocked in [false, true]) {
+    test(
+      'replacement delete failure ${renameBlocked ? "reopens replacement" : "retries original rename"}',
+      () async {
+        final failure = StateError('primary rehydrate failure');
+        final active = database.databasePath;
+        final sourceDatabase = DatabaseService();
+        await sourceDatabase.open(await replacement());
+        final image = File(p.join(dir.path, 'cover.png'));
+        await image.writeAsBytes([1, 2, 3]);
+        final work = (await sourceDatabase.listRecords()).single.work;
+        await sourceDatabase.saveRecord(
+          CatalogRecord(
+            work: work,
+            images: [BookImage(localPath: image.path, isCover: true)],
+          ),
+        );
+        final source = p.join(dir.path, 'replacement.realmwise');
+        await CatalogBundleService().exportBundle(
+          database: sourceDatabase,
+          outputPath: source,
+          includePersonalImages: true,
+        );
+        await sourceDatabase.close();
+        final imageRoot = p.join(dir.path, 'restored-images');
+        final events = _DiagnosticCapture();
+        final previousLogger = DiagnosticDiagnostics.logger;
+        DiagnosticDiagnostics.logger = events;
+        addTearDown(() => DiagnosticDiagnostics.logger = previousLogger);
+        var ready = 0;
+        recovery = CatalogRecovery(
+          database: database,
+          deleteFile: (file) async {
+            if (file.path == active)
+              throw const FileSystemException('replacement delete blocked');
+            await file.delete();
+          },
+          renameFile: (file, target) async {
+            if (renameBlocked && file.path.contains('.rollback-')) {
+              throw const FileSystemException('original rename blocked');
+            }
+            return file.rename(target);
+          },
+          rehydrate: () async => throw failure,
+          onReady: () async {
+            ready++;
+          },
+        );
+        await expectLater(
+          recovery.replaceCatalog(
+            source,
+            bundle: true,
+            imageRootPath: imageRoot,
+          ),
+          throwsA(same(failure)),
+        );
+        expect(database.isOpen, isTrue);
+        expect(database.databasePath, active);
+        expect(
+          (await database.databaseHandle.query('works')).single['title'],
+          renameBlocked ? 'Replacement' : 'Original',
+        );
+        expect(ready, renameBlocked ? 0 : 1);
+        expect(events.events, contains('recovery.rollback.error'));
+        final originals = dir
+            .listSync()
+            .whereType<File>()
+            .where((file) => file.path.contains('.rollback-'))
+            .toList();
+        if (renameBlocked) {
+          final original = await databaseFactory.openDatabase(
+            originals.single.path,
+          );
+          try {
+            expect((await original.query('works')).single['title'], 'Original');
+          } finally {
+            await original.close();
+          }
+        } else {
+          expect(originals, isEmpty);
+        }
+      },
+    );
+  }
+
   test(
     'rollback failure preserves the original exception and rollback file',
     () async {
