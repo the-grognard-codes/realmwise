@@ -45,7 +45,6 @@ class CatalogRecovery {
     Future<void> Function(String)? reopen,
     Future<bool> Function()? rehydrate,
     Future<void> Function()? onReady,
-    Zone? lifecycleZone,
     DateTime Function()? clock,
     CatalogBundleService? bundles,
     Future<File> Function(File, String)? copyFile,
@@ -54,7 +53,6 @@ class CatalogRecovery {
        reopen = reopen ?? database.open,
        rehydrate = rehydrate ?? (() async => false),
        onReady = onReady ?? (() async {}),
-       _lifecycleZone = lifecycleZone ?? Zone.current,
        clock = clock ?? DateTime.now,
        bundles = bundles ?? CatalogBundleService(),
        copyFile = copyFile ?? ((file, target) => file.copy(target)),
@@ -65,7 +63,6 @@ class CatalogRecovery {
   final Future<void> Function(String) reopen;
   final Future<bool> Function() rehydrate;
   final Future<void> Function() onReady;
-  final Zone _lifecycleZone;
   final DateTime Function() clock;
   final CatalogBundleService bundles;
   final Future<File> Function(File, String) copyFile, renameFile;
@@ -95,26 +92,24 @@ class CatalogRecovery {
   Future<void> start({bool snapshotNow = true}) async {
     await stop();
     if (snapshotNow) await snapshot(SnapshotKind.routine);
-    _timer = _lifecycleZone.run(
-      () => Timer.periodic(const Duration(minutes: 10), (_) {
-        unawaited(
-          snapshot(SnapshotKind.routine).then<void>(
-            (_) {},
-            onError: (Object error) {
-              DiagnosticDiagnostics.emit(
-                DiagnosticSeverity.warning,
-                'backup.create.error',
-                {
-                  'operation': 'backup',
-                  'outcome': 'failed',
-                  'errorClass': error.runtimeType.toString(),
-                },
-              );
-            },
-          ),
-        );
-      }),
-    );
+    _timer = Timer.periodic(const Duration(minutes: 10), (_) {
+      unawaited(
+        snapshot(SnapshotKind.routine).then<void>(
+          (_) {},
+          onError: (Object error) {
+            DiagnosticDiagnostics.emit(
+              DiagnosticSeverity.warning,
+              'backup.create.error',
+              {
+                'operation': 'backup',
+                'outcome': 'failed',
+                'errorClass': error.runtimeType.toString(),
+              },
+            );
+          },
+        ),
+      );
+    });
   }
 
   Future<void> stop() async {
@@ -147,11 +142,7 @@ class CatalogRecovery {
     final temporary = File('$destination.tmp');
     try {
       if (bundleBytes == null) {
-        final result = await database.databaseHandle.rawQuery(
-          'PRAGMA wal_checkpoint(FULL)',
-        );
-        if (result.isNotEmpty && result.first.values.first != 0)
-          throw StateError('Catalog is busy; snapshot was not created.');
+        await _checkpoint('FULL');
         await File(database.databasePath).copy(temporary.path);
         await _scrub(temporary);
       } else {
@@ -287,14 +278,39 @@ class CatalogRecovery {
         imageRootPath: imageRootPath,
       );
 
-  Future<void> _checkpointForReplacement() async {
-    final result = await database.databaseHandle.rawQuery(
-      'PRAGMA wal_checkpoint(TRUNCATE)',
-    );
-    final row = result.single;
-    if (row['busy'] != 0 || row['log'] != row['checkpointed']) {
-      throw StateError('Catalog is in use; replacement was not started.');
+  static const _catalogBusyMessage =
+      'The catalog is busy with an export or another connection. '
+      'Wait for it to finish and retry this operation.';
+
+  Future<void> _checkpoint(String mode) async {
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final rows = await database.databaseHandle.rawQuery(
+        'PRAGMA wal_checkpoint($mode)',
+      );
+      final row = rows.single;
+      if (row['busy'] == 0 && row['log'] == row['checkpointed']) return;
+      if (attempt < 2)
+        await Future<void>.delayed(const Duration(milliseconds: 100));
     }
+    throw StateError(_catalogBusyMessage);
+  }
+
+  Future<void> _verifyEmptyWal(String file) async {
+    final wal = File('$file-wal');
+    if (await wal.exists() && await wal.length() != 0) {
+      throw StateError(_catalogBusyMessage);
+    }
+  }
+
+  Future<void> _checkpointForReplacement() async {
+    await _checkpoint('TRUNCATE');
+    await _verifyEmptyWal(database.databasePath);
+  }
+
+  Future<void> _discardEmptyWal(String file) async {
+    await _verifyEmptyWal(file);
+    final wal = File('$file-wal');
+    if (await wal.exists()) await wal.delete();
   }
 
   Future<void> _moveSidecars(
@@ -302,7 +318,7 @@ class CatalogRecovery {
     String destination,
     Future<File> Function(File, String) rename,
   ) async {
-    for (final suffix in ['-wal', '-shm', '-journal']) {
+    for (final suffix in ['-shm', '-journal']) {
       final file = File('$source$suffix');
       if (!await file.exists()) continue;
       if (await File('$destination$suffix').exists()) {
@@ -448,6 +464,9 @@ class CatalogRecovery {
       await database.close();
       // Copy first so copy failure cannot destroy the original catalog.
       await copyFile(File(staged), '$staged.ready');
+      // A WAL with committed pages must remain beside its original catalog.
+      // Refuse a concurrent writer; only an empty, checkpointed WAL is discarded.
+      await _discardEmptyWal(active);
       await renameFile(File(active), rollback);
       moved = true;
       await _moveSidecars(active, rollback, renameFile);
@@ -457,23 +476,37 @@ class CatalogRecovery {
       await rehydrate();
       committed = true;
     } catch (_) {
-      try {
-        if (closing) {
+      if (closing) {
+        var originalRestored = !moved;
+        try {
           await database.close();
           if (moved) {
             if (installed) await _deleteDatabaseFiles(active);
-            // Roll back independently of injected replacement operations.
             await File(rollback).rename(active);
-            await _moveSidecars(
-              rollback,
-              active,
-              (file, target) => file.rename(target),
-            );
+            originalRestored = true;
           }
-          await reopen(active);
+        } on Object catch (rollbackError) {
+          _reportFailure('rollback', rollbackError);
         }
-      } on Object catch (rollbackError) {
-        _reportFailure('rollback', rollbackError);
+        if (originalRestored) {
+          if (moved) {
+            try {
+              await _moveSidecars(
+                rollback,
+                active,
+                (file, target) => file.rename(target),
+              );
+            } on Object catch (sidecarError) {
+              _reportFailure('rollback', sidecarError);
+            }
+          }
+          // A sidecar failure must not suppress reopening a restored main file.
+          try {
+            await reopen(active);
+          } on Object catch (reopenError) {
+            _reportFailure('rollback', reopenError);
+          }
+        }
       }
       rethrow;
     } finally {
@@ -496,7 +529,7 @@ class CatalogRecovery {
       if (quiesced && database.isOpen) {
         try {
           await start(snapshotNow: false);
-          await _lifecycleZone.run(onReady);
+          await onReady();
         } on Object catch (restartError) {
           _reportFailure('restart', restartError);
         }

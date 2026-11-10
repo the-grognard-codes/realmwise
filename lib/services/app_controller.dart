@@ -97,7 +97,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   final DateTime Function() clock;
-  final Zone _lifecycleZone = Zone.current;
   final DatabaseService database;
 
   static Map<String, SyncProvider> _providerEntry(SyncProvider? provider) =>
@@ -113,7 +112,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     clock: clock,
     rehydrate: () => catalog.rehydrateMissingImages(),
     onReady: _resumeAfterRecovery,
-    lifecycleZone: _lifecycleZone,
   );
   final ExportService exporter = ExportService();
   final CatalogBundleService bundles = CatalogBundleService();
@@ -620,17 +618,15 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   void scheduleAutomaticSync({Duration debounce = const Duration(seconds: 5)}) {
     if (!automaticSyncEnabled || !automaticSyncOwnershipValid) return;
     _automaticSyncTimer?.cancel();
-    _automaticSyncTimer = _lifecycleZone.run(
-      () => Timer(debounce, () {
-        final running = _runAutomaticSync();
-        _automaticFuture = running;
-        unawaited(
-          running.whenComplete(() {
-            if (identical(_automaticFuture, running)) _automaticFuture = null;
-          }),
-        );
-      }),
-    );
+    _automaticSyncTimer = Timer(debounce, () {
+      final running = _runAutomaticSync();
+      _automaticFuture = running;
+      unawaited(
+        running.whenComplete(() {
+          if (identical(_automaticFuture, running)) _automaticFuture = null;
+        }),
+      );
+    });
   }
 
   Future<void> _runAutomaticSync() async {

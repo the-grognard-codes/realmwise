@@ -325,7 +325,7 @@ void main() {
         copyFile: (file, target) async {
           // Simulate sidecars left behind by a previous process after close.
           for (final suffix in ['-wal', '-shm', '-journal']) {
-            await File('$active$suffix').writeAsBytes([1, 2, 3]);
+            await File('$active$suffix').writeAsBytes([]);
             await File('${file.path}$suffix').writeAsBytes([1, 2, 3]);
           }
           return file.copy(target);
@@ -435,7 +435,8 @@ void main() {
           return file.rename(target);
         },
         reopen: (file) async {
-          for (final suffix in ['-wal', '-shm', '-journal']) {
+          expect(await File('$file-wal').exists(), isFalse);
+          for (final suffix in ['-shm', '-journal']) {
             expect(await File('$file$suffix').exists(), isTrue);
           }
           restoredSidecars = true;
@@ -454,31 +455,129 @@ void main() {
     },
   );
 
-  test('recovery timers and onReady run in their owner zone', () async {
-    late Zone owner;
-    Zone? readyZone;
-    final timerZones = <Zone>[];
-    recovery = runZoned(
-      () {
-        owner = Zone.current;
-        return CatalogRecovery(
-          database: database,
-          onReady: () async {
-            readyZone = Zone.current;
-          },
-        );
-      },
-      zoneSpecification: ZoneSpecification(
-        createPeriodicTimer: (self, parent, zone, period, callback) {
-          timerZones.add(zone);
-          return parent.createPeriodicTimer(zone, period, callback);
+  test(
+    'rollback reopens a restored main file even when a sidecar cannot return',
+    () async {
+      final active = database.databasePath;
+      final failure = StateError('replacement install failed');
+      var reopened = 0;
+      recovery = CatalogRecovery(
+        database: database,
+        copyFile: (file, target) async {
+          await File('$active-shm').writeAsBytes([]);
+          return file.copy(target);
         },
-      ),
-    );
-    await recovery.replaceCatalog(await replacement());
-    expect(timerZones, [same(owner)]);
-    expect(readyZone, same(owner));
-  });
+        renameFile: (file, target) async {
+          if (target == active) {
+            // Simulate a handle recreating the destination sidecar during rollback.
+            await File('$active-shm').writeAsBytes([]);
+            throw failure;
+          }
+          return file.rename(target);
+        },
+        reopen: (file) async {
+          reopened++;
+          await database.open(file);
+        },
+      );
+      await expectLater(
+        recovery.replaceCatalog(await replacement()),
+        throwsA(same(failure)),
+      );
+      expect(reopened, 1);
+      expect(database.isOpen, isTrue);
+      expect(
+        (await database.databaseHandle.query('works')).single['title'],
+        'Original',
+      );
+    },
+  );
+
+  test(
+    'new committed WAL pages refuse replacement before the original moves',
+    () async {
+      final active = database.databasePath;
+      await database.databaseHandle.rawQuery('PRAGMA journal_mode=WAL');
+      final other = await databaseFactory.openDatabase(
+        active,
+        options: OpenDatabaseOptions(singleInstance: false),
+      );
+      var renames = 0;
+      recovery = CatalogRecovery(
+        database: database,
+        copyFile: (file, target) async {
+          await other.insert('works', {'title': 'Concurrent WAL commit'});
+          return file.copy(target);
+        },
+        renameFile: (file, target) async {
+          renames++;
+          return file.rename(target);
+        },
+      );
+      try {
+        await expectLater(
+          recovery.replaceCatalog(await replacement()),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('retry'),
+            ),
+          ),
+        );
+        expect(renames, 0);
+        expect(database.isOpen, isTrue);
+        expect(
+          (await database.databaseHandle.query('works'))
+              .map((row) => row['title']),
+          containsAll(['Original', 'Concurrent WAL commit']),
+        );
+      } finally {
+        await other.close();
+      }
+    },
+  );
+
+  test(
+    'replacement retries a checkpoint while a short-lived reader finishes',
+    () async {
+      final source = await replacement();
+      await database.databaseHandle.rawQuery('PRAGMA journal_mode=WAL');
+      await database.databaseHandle.execute('PRAGMA busy_timeout=0');
+      await database.databaseHandle.insert('works', {'title': 'WAL row'});
+      final reader = await databaseFactory.openDatabase(
+        database.databasePath,
+        options: OpenDatabaseOptions(singleInstance: false),
+      );
+      await reader.execute('BEGIN');
+      await reader.rawQuery('SELECT * FROM works');
+      var released = false;
+      final releasing = Future<void>.delayed(
+        const Duration(milliseconds: 150),
+        () async {
+          await reader.execute('ROLLBACK');
+          await reader.close();
+          released = true;
+        },
+      );
+      recovery = CatalogRecovery(
+        database: database,
+        copyFile: (file, target) async {
+          expect(released, isTrue);
+          return file.copy(target);
+        },
+      );
+      try {
+        await recovery.replaceCatalog(source);
+        expect(
+          (await database.databaseHandle.query('works')).single['title'],
+          'Replacement',
+        );
+      } finally {
+        await releasing;
+      }
+    },
+  );
 
   test('invalid source is rejected before waiting for sync', () async {
     var waited = false;

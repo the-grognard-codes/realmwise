@@ -102,15 +102,6 @@ void main() {
     }
   });
 
-  test(
-    'automatic scheduling after a downloaded replacement uses the owner zone',
-    () async {
-      final owner = Zone.current;
-      await controller.downloadRemoteBundle(expectedRemote: _Provider.remote);
-      expect(controller.scheduleZone, same(owner));
-    },
-  );
-
   test('import waits for in-flight remote validation', () async {
     provider.holdMetadata = true;
     final validation = controller.takeOverAutomaticSync();
@@ -170,11 +161,9 @@ class _SchedulingController extends AppController {
   _SchedulingController(String root)
     : super(tokenStorage: _Tokens(), imageRootPathOverride: '$root/images');
   int schedules = 0;
-  Zone? scheduleZone;
   @override
   void scheduleAutomaticSync({Duration debounce = const Duration(seconds: 5)}) {
     schedules++;
-    scheduleZone = Zone.current;
   }
 }
 
