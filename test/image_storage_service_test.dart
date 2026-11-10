@@ -49,7 +49,7 @@ void main() {
   );
 
   test(
-    'cleanup preserves another live process staging and removes it after exit',
+    'cleanup preserves live process staging and a live lock without a folder',
     () async {
       final folder = await Directory.systemTemp.createTemp('staging_owner_');
       PathProviderPlatform.instance = _FakePathProvider(folder.path);
@@ -91,6 +91,9 @@ Future<void> main(List<String> args) async {
         );
         await storage.cleanupAbandonedEdits();
         expect(await File('${foreign.path}/photo.png').exists(), isTrue);
+        await foreign.delete(recursive: true);
+        await storage.cleanupAbandonedEdits();
+        expect(await File('${foreign.path}.lock').exists(), isTrue);
       } finally {
         child.stdin.writeln('exit');
         await child.stdin.flush();
@@ -99,11 +102,34 @@ Future<void> main(List<String> args) async {
       }
       await storage.cleanupAbandonedEdits();
       expect(await foreign.exists(), isFalse);
+      expect(await File('${foreign.path}.lock').exists(), isFalse);
       await folder.delete(recursive: true);
     },
   );
 
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'cleanup removes orphan process locks and leaves unrelated files intact',
+    () async {
+      final folder = await Directory.systemTemp.createTemp(
+        'orphan_staging_lock_',
+      );
+      PathProviderPlatform.instance = _FakePathProvider(folder.path);
+      final storage = ImageStorageService(null);
+      await storage.initialize('${folder.path}/images');
+      final staging = Directory('${storage.rootPath}/.staging');
+      await staging.create();
+      final orphan = File('${staging.path}/process-12-34.lock');
+      final unrelated = File('${staging.path}/other.lock');
+      await orphan.writeAsBytes([]);
+      await unrelated.writeAsBytes([1]);
+      await storage.cleanupAbandonedEdits();
+      expect(await orphan.exists(), isFalse);
+      expect(await unrelated.readAsBytes(), [1]);
+      await folder.delete(recursive: true);
+    },
+  );
 
   test('reuses legacy default image directory when present', () async {
     final folder = await Directory.systemTemp.createTemp('realmwise_images_');

@@ -151,19 +151,33 @@ class ImageStorageService {
   Future<void> cleanupAbandonedEdits() => _serializeStaging(() async {
     final folder = Directory(path.join(rootPath, '.staging'));
     if (!await folder.exists()) return;
+    final processes = <String>{};
+    final processName = RegExp(r'^process-\d+-\d+$');
+    final lockName = RegExp(r'^process-\d+-\d+\.lock$');
     await for (final entry in folder.list(followLinks: false)) {
-      if (entry is! Directory ||
-          _stagingOwners.containsKey(entry.path) ||
-          !RegExp(r'^process-\d+-\d+$').hasMatch(path.basename(entry.path)))
+      final name = path.basename(entry.path);
+      if (entry is Directory && processName.hasMatch(name)) {
+        processes.add(entry.path);
+      } else if (entry is File && lockName.hasMatch(name)) {
+        processes.add(
+          entry.path.substring(0, entry.path.length - '.lock'.length),
+        );
+      }
+    }
+    for (final process in processes) {
+      if (_stagingOwners.containsKey(process) ||
+          await FileSystemEntity.type(process, followLinks: false) ==
+              FileSystemEntityType.link)
         continue;
-      final lockFile = File('${entry.path}.lock');
+      final directory = Directory(process);
+      final lockFile = File('$process.lock');
       RandomAccessFile? handle;
       var acquired = false;
       try {
         handle = await lockFile.open(mode: FileMode.append);
         await handle.lock(FileLock.exclusive);
         acquired = true;
-        await entry.delete(recursive: true);
+        if (await directory.exists()) await directory.delete(recursive: true);
       } on FileSystemException {
         // Another app instance holds the lock, or ownership cannot be established.
       } finally {
