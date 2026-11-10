@@ -33,10 +33,6 @@ class _MemoryTokenStorage implements TokenStorage {
 }
 
 void main() {
-  test('missing backup modification time is safe', () {
-    expect(backupLastModifiedForSettings(File('missing-backup.db')), isNull);
-  });
-
   testWidgets('settings are grouped into local and cloud sync tabs', (
     tester,
   ) async {

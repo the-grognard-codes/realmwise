@@ -27,6 +27,32 @@ void main() {
   });
   tearDown(() => dir.delete(recursive: true));
 
+  test('snapshot restore keeps the active path and restores rows', () async {
+    final controller = AppController(
+      tokenStorage: _MemoryTokenStorage(),
+      imageRootPathOverride: p.join(dir.path, 'in-place-images'),
+    );
+    final active = p.join(dir.path, 'in-place.db');
+    await controller.openDatabase(active, remember: false);
+    await controller.database.databaseHandle.insert('works', {
+      'title': 'Original',
+    });
+    await controller.createManualSnapshot();
+    final snapshot = (await controller.catalog.listBackups()).first;
+    await controller.database.databaseHandle.insert('works', {
+      'title': 'Later',
+    });
+    await controller.restoreFromBackup(snapshot.path);
+    expect(controller.activeDatabasePath, active);
+    expect(
+      (await controller.database.databaseHandle.query('works'))
+          .map((row) => row['title']),
+      ['Original'],
+    );
+    await controller.closeDatabase();
+    controller.dispose();
+  });
+
   test('replaces active database and leaves recoverable backup', () async {
     final controller = AppController(
       tokenStorage: _MemoryTokenStorage(),

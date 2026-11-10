@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../services/app_controller.dart';
 import '../services/catalog_bundle_service.dart';
+import '../services/catalog_recovery.dart';
 import '../services/diagnostic_bundle_exporter.dart';
 import '../services/sync_coordinator.dart';
 import '../services/sync_contract.dart';
@@ -45,7 +46,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _showKey = false;
   bool _loading = true;
   bool _busy = false;
-  List<File> _backups = const [];
+  List<RestorePoint> _backups = const [];
   String _iconTier = 'gameSystem';
   String? _iconSection;
   String? _iconPreviewPath;
@@ -525,7 +526,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (backup != null)
       await _run(
         () => widget.controller.restoreFromBackup(backup),
-        success: 'Backup restored into a new active database.',
+        success: 'Backup restored into the active database.',
       );
   }
 
@@ -1597,9 +1598,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   );
 
   Widget _databaseRecoverySection() {
-    final validBackups = _backups
-        .where((backup) => backupLastModifiedForSettings(backup) != null)
-        .toList();
+    final validBackups = _backups;
     return _Section(
       title: 'Database and Recovery',
       child: Column(
@@ -1632,10 +1631,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onPressed: _busy
                     ? null
                     : () => _run(() async {
-                        await widget.controller.backups.createBackup(
-                          databasePath: widget.controller.database.databasePath,
-                          database: widget.controller.database.databaseHandle,
-                        );
+                        await widget.controller.createManualSnapshot();
                       }, success: 'Backup created.'),
                 icon: const Icon(Icons.save_as_outlined),
                 label: const Text('Backup DB'),
@@ -1668,22 +1664,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Text('No backup snapshot has been created yet.'),
             ),
           ...validBackups
-              .map(
-                (backup) => (
-                  backup: backup,
-                  modified: backupLastModifiedForSettings(backup),
-                ),
-              )
-              .where((entry) => entry.modified != null)
+              .map((backup) => (backup: backup, modified: backup.timestamp))
               .take(6)
               .map((entry) {
                 final backup = entry.backup;
-                final modified = entry.modified!;
+                final modified = entry.modified;
                 return ListTile(
                   dense: true,
                   leading: const Icon(Icons.history),
-                  title: Text(backup.uri.pathSegments.last),
-                  subtitle: Text(DateFormat.yMMMd().add_jm().format(modified)),
+                  title: Text(backup.name),
+                  subtitle: Text(
+                    '${backup.kind.label} | ${DateFormat.yMMMd().add_jm().format(modified.toLocal())}',
+                  ),
                   trailing: TextButton(
                     onPressed: _busy
                         ? null
@@ -1692,7 +1684,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               backup.path,
                             ),
                             success:
-                                'Backup restored into a new active database.',
+                                'Backup restored into the active database.',
                           ),
                     child: const Text('Restore'),
                   ),
@@ -1701,15 +1693,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
-  }
-}
-
-DateTime? backupLastModifiedForSettings(File backup) {
-  try {
-    if (!backup.existsSync()) return null;
-    return backup.lastModifiedSync();
-  } on FileSystemException {
-    return null;
   }
 }
 
