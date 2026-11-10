@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -7,6 +8,101 @@ import 'package:realmwise/models/catalog_models.dart';
 import 'package:realmwise/services/image_storage_service.dart';
 
 void main() {
+  test(
+    'staged image publication, rollback and discard preserve image bytes',
+    () async {
+      final folder = await Directory.systemTemp.createTemp('staged_storage_');
+      PathProviderPlatform.instance = _FakePathProvider(folder.path);
+      final storage = ImageStorageService(null);
+      await storage.initialize('${folder.path}/images');
+      final source = File('${folder.path}/source.png');
+      await source.writeAsBytes([1, 2, 3]);
+      final staging = await storage.createEditStaging();
+      try {
+        final staged = await storage.stageFile(
+          directory: staging,
+          work: const BookWork(title: 'Staged'),
+          sourcePath: source.path,
+          label: 'test',
+          cover: true,
+        );
+        expect(storage.isManagedImage(staged.localPath), isTrue);
+        expect(storage.isManagedImage(source.path), isFalse);
+        final published = await storage.publishStagedImage(
+          staged,
+          const BookWork(title: 'Staged'),
+        );
+        expect(published.localPath, isNot(contains('.staging')));
+        expect(await File(published.localPath).readAsBytes(), [1, 2, 3]);
+        await storage.rollbackPublishedImage(
+          published.localPath,
+          staged.localPath,
+        );
+        expect(await File(published.localPath).exists(), isFalse);
+        expect(await File(staged.localPath).readAsBytes(), [1, 2, 3]);
+      } finally {
+        await storage.discardEditStaging(staging);
+        expect(await staging.exists(), isFalse);
+        await folder.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'cleanup preserves another live process staging and removes it after exit',
+    () async {
+      final folder = await Directory.systemTemp.createTemp('staging_owner_');
+      PathProviderPlatform.instance = _FakePathProvider(folder.path);
+      final storage = ImageStorageService(null);
+      await storage.initialize('${folder.path}/images');
+      final foreign = Directory('${storage.rootPath}/.staging/process-42-123');
+      await foreign.create(recursive: true);
+      await File('${foreign.path}/photo.png').writeAsBytes([1]);
+      final script = File('${folder.path}/hold_lock.dart');
+      await script.writeAsString("""
+import 'dart:io';
+Future<void> main(List<String> args) async {
+  final file = await File(args.single).open(mode: FileMode.append);
+  await file.lock(FileLock.exclusive);
+  stdout.writeln('locked');
+  await stdin.first;
+  await file.close();
+}
+""");
+      var sdkFolder = File(Platform.resolvedExecutable).parent;
+      final executableName = Platform.isWindows ? 'dart.exe' : 'dart';
+      while (!await File('${sdkFolder.path}/dart-sdk/bin/$executableName')
+          .exists()) {
+        if (sdkFolder.parent.path == sdkFolder.path)
+          throw StateError('Dart SDK not found');
+        sdkFolder = sdkFolder.parent;
+      }
+      final child = await Process.start(
+        '${sdkFolder.path}/dart-sdk/bin/$executableName',
+        [script.path, '${foreign.path}.lock'],
+      );
+      try {
+        expect(
+          await child.stdout
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())
+              .first,
+          'locked',
+        );
+        await storage.cleanupAbandonedEdits();
+        expect(await File('${foreign.path}/photo.png').exists(), isTrue);
+      } finally {
+        child.stdin.writeln('exit');
+        await child.stdin.flush();
+        await child.exitCode;
+        await child.stdin.close();
+      }
+      await storage.cleanupAbandonedEdits();
+      expect(await foreign.exists(), isFalse);
+      await folder.delete(recursive: true);
+    },
+  );
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('reuses legacy default image directory when present', () async {

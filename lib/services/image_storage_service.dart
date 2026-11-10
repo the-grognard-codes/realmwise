@@ -56,6 +56,14 @@ class _DownloadedImage {
 enum _ImageFormat { jpeg, png, gif, bmp, webp }
 
 /// Keeps work imagery in a portable local folder and never relies on a URL at display time.
+class _EditStagingOwner {
+  _EditStagingOwner(this.directory, this.lockFile, this.handle);
+  final Directory directory;
+  final File lockFile;
+  final RandomAccessFile handle;
+  final Set<String> edits = {};
+}
+
 class ImageStorageService {
   ImageStorageService(
     http.Client? legacyClient, {
@@ -70,23 +78,101 @@ class ImageStorageService {
   static final _processStaging =
       'process-$pid-${DateTime.now().microsecondsSinceEpoch}';
 
-  Future<Directory> createEditStaging() async {
-    final folder = Directory(path.join(rootPath, '.staging', _processStaging));
-    await folder.create(recursive: true);
-    return folder.createTemp('edit-');
+  static final Map<String, _EditStagingOwner> _stagingOwners = {};
+  static Future<void> _stagingTail = Future.value();
+
+  Future<T> _serializeStaging<T>(Future<T> Function() action) {
+    final result = _stagingTail.then((_) => action());
+    _stagingTail = result.then<void>((_) {}, onError: (Object _) {});
+    return result;
   }
 
-  Future<void> cleanupAbandonedEdits() async {
+  Future<Directory> createEditStaging() => _serializeStaging(() async {
+    final folder = Directory(path.join(rootPath, '.staging', _processStaging));
+    var owner = _stagingOwners[folder.path];
+    if (owner == null) {
+      final lockFile = File('${folder.path}.lock');
+      await lockFile.parent.create(recursive: true);
+      final handle = await lockFile.open(mode: FileMode.append);
+      try {
+        // Acquire before creating the process folder so cleanup cannot race startup.
+        await handle.lock(FileLock.exclusive);
+        await folder.create();
+      } on Object {
+        await handle.close();
+        rethrow;
+      }
+      owner = _EditStagingOwner(folder, lockFile, handle);
+      _stagingOwners[folder.path] = owner;
+    }
+    final edit = await folder.createTemp('edit-');
+    owner.edits.add(edit.path);
+    return edit;
+  });
+
+  Future<void> discardEditStaging(
+    Directory directory,
+  ) => _serializeStaging(() async {
+    final owner = _stagingOwners[directory.parent.path];
+    try {
+      for (var attempt = 0; ; attempt++) {
+        try {
+          if (await directory.exists()) await directory.delete(recursive: true);
+          break;
+        } on FileSystemException catch (error) {
+          // A just-disposed Windows image codec can briefly retain its source.
+          if (!Platform.isWindows ||
+              error.osError?.errorCode != 32 ||
+              attempt == 2)
+            rethrow;
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+      }
+    } finally {
+      if (owner != null) {
+        owner.edits.remove(directory.path);
+        if (owner.edits.isEmpty) {
+          try {
+            if (await owner.directory.exists() &&
+                await owner.directory.list().isEmpty) {
+              await owner.directory.delete();
+            }
+          } finally {
+            await owner.handle.unlock();
+            await owner.handle.close();
+            if (await owner.lockFile.exists()) await owner.lockFile.delete();
+            _stagingOwners.remove(owner.directory.path);
+          }
+        }
+      }
+    }
+  });
+
+  Future<void> cleanupAbandonedEdits() => _serializeStaging(() async {
     final folder = Directory(path.join(rootPath, '.staging'));
     if (!await folder.exists()) return;
     await for (final entry in folder.list(followLinks: false)) {
-      if (entry is Directory &&
-          path.basename(entry.path) != _processStaging &&
-          RegExp(r'^process-\d+-\d+$').hasMatch(path.basename(entry.path))) {
+      if (entry is! Directory ||
+          _stagingOwners.containsKey(entry.path) ||
+          !RegExp(r'^process-\d+-\d+$').hasMatch(path.basename(entry.path)))
+        continue;
+      final lockFile = File('${entry.path}.lock');
+      RandomAccessFile? handle;
+      var acquired = false;
+      try {
+        handle = await lockFile.open(mode: FileMode.append);
+        await handle.lock(FileLock.exclusive);
+        acquired = true;
         await entry.delete(recursive: true);
+      } on FileSystemException {
+        // Another app instance holds the lock, or ownership cannot be established.
+      } finally {
+        if (acquired) await handle!.unlock();
+        await handle?.close();
+        if (acquired && await lockFile.exists()) await lockFile.delete();
       }
     }
-  }
+  });
 
   ImageStorageService _stagingStorage(Directory directory) =>
       ImageStorageService(null, resolver: _resolver, transport: _transport)
@@ -121,6 +207,10 @@ class ImageStorageService {
     );
     await File(image.localPath).rename(destination.path);
     return image.copyWith(localPath: destination.path);
+  }
+
+  Future<void> rollbackPublishedImage(String published, String staged) async {
+    if (await File(published).exists()) await File(published).rename(staged);
   }
 
   bool isManagedImage(String file) =>

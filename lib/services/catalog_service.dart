@@ -47,50 +47,50 @@ class CatalogService {
   Future<bool> rehydrateMissingImages() async {
     var changed = false;
     for (final record in await database.listRecords()) {
-      final restored = <BookImage>[];
+      final edit = beginEditing(record);
       var recordChanged = false;
-      for (final image in record.images) {
-        final localPath = image.localPath.trim();
-        final exists = localPath.isNotEmpty && await File(localPath).exists();
-        if (exists) {
-          restored.add(image);
-          continue;
+      final restored = <BookImage>[];
+      try {
+        for (final image in record.images) {
+          final localPath = image.localPath.trim();
+          final remoteUrl = image.remoteUrl.trim().isNotEmpty
+              ? image.remoteUrl.trim()
+              : (image.isCover ? record.work.remoteCoverUrl.trim() : '');
+          if ((localPath.isNotEmpty && await File(localPath).exists()) ||
+              image.sourceType != ImageSourceType.remoteCache ||
+              remoteUrl.isEmpty) {
+            restored.add(image);
+            continue;
+          }
+          try {
+            final downloaded = await images.stageRemoteCover(
+              directory: await edit._directory(),
+              work: record.work,
+              remoteUrl: remoteUrl,
+            );
+            restored.add(
+              downloaded.copyWith(
+                remoteUrl: image.remoteUrl.trim().isNotEmpty
+                    ? image.remoteUrl
+                    : downloaded.remoteUrl,
+                caption: image.caption,
+                isCover: image.isCover,
+                sortOrder: image.sortOrder,
+              ),
+            );
+            recordChanged = true;
+          } catch (_) {
+            // A network outage must not make restoring the catalog fail.
+            restored.add(image);
+          }
         }
-        if (image.sourceType != ImageSourceType.remoteCache) {
-          restored.add(image);
-          continue;
+        if (recordChanged) {
+          edit.update(record.copyWith(images: restored));
+          await edit.save();
+          changed = true;
         }
-        final remoteUrl = image.remoteUrl.trim().isNotEmpty
-            ? image.remoteUrl.trim()
-            : (image.isCover ? record.work.remoteCoverUrl.trim() : '');
-        if (remoteUrl.isEmpty) {
-          restored.add(image);
-          continue;
-        }
-        try {
-          final downloaded = await images.downloadRemoteCover(
-            work: record.work,
-            remoteUrl: remoteUrl,
-          );
-          restored.add(
-            downloaded.copyWith(
-              remoteUrl: image.remoteUrl.trim().isNotEmpty
-                  ? image.remoteUrl
-                  : downloaded.remoteUrl,
-              caption: image.caption,
-              isCover: image.isCover,
-              sortOrder: image.sortOrder,
-            ),
-          );
-          recordChanged = true;
-        } catch (_) {
-          // A network outage must not make restoring the catalog fail.
-          restored.add(image);
-        }
-      }
-      if (recordChanged) {
-        await database.saveRecord(record.copyWith(images: restored));
-        changed = true;
+      } finally {
+        await edit.discard();
       }
     }
     return changed;
@@ -98,10 +98,17 @@ class CatalogService {
 
   Future<void> delete(CatalogRecord record) async {
     try {
-      for (final image in record.images) {
-        await images.deleteImage(image);
-      }
-      if (record.work.id != null) await database.deleteRecord(record.work.id!);
+      await database.withCatalogFiles(() async {
+        if (record.work.id == null) return;
+        final stored = await database.getRecord(record.work.id!);
+        await database.deleteRecord(record.work.id!);
+        for (final image in stored.images) {
+          if (images.isManagedImage(image.localPath) &&
+              !await database.referencesImage(image.localPath)) {
+            await images.deleteImage(image);
+          }
+        }
+      });
     } on Object catch (error) {
       DiagnosticDiagnostics.emit(
         DiagnosticSeverity.error,
@@ -146,6 +153,8 @@ class CatalogEditSession {
   Future<Directory>? _staging;
   Future<void> _tail = Future.value();
   bool _closed = false;
+  bool _discardRequested = false;
+  Future<void>? _discardFuture;
 
   void _check() {
     if (_closed) throw StateError('This edit session has ended.');
@@ -166,6 +175,8 @@ class CatalogEditSession {
   }
 
   Future<T> _run<T>(Future<T> Function() action) {
+    if (_discardRequested)
+      return Future.error(StateError('This edit session has ended.'));
     final result = _tail.then((_) {
       _check();
       return action();
@@ -224,120 +235,135 @@ class CatalogEditSession {
     update(record.copyWith(images: normalizeBookImages(images)));
   }
 
-  void reorderImage(int oldIndex, int newIndex) {
-    _check();
-    final images = [...record.images];
-    final moved = images.removeAt(oldIndex);
-    images.insert(newIndex, moved);
-    update(record.copyWith(images: normalizeBookImages(images)));
-  }
-
-  Future<CatalogRecord> save() => _run(
-    () => catalog.database.withCatalogFiles(() async {
-      _check();
-      final originals = record.work.id == null
-          ? const <BookImage>[]
-          : (await catalog.database.getRecord(record.work.id!)).images;
-      if (record.images.isEmpty &&
-          record.work.remoteCoverUrl.trim().isNotEmpty) {
+  Future<CatalogRecord> save() async {
+    try {
+      return await _run(() async {
+        // Network work touches staging only; an offline cover must not block export.
         try {
           await _downloadCover();
-        } catch (error) {
-          _check(); /* Cover downloads are optional; retain the source URL. */
+        } on Object {
+          _check(); // Cover downloads are optional while the session remains valid.
         }
-      }
-      final published = <String, String>{};
-      late CatalogRecord saved;
-      try {
-        final images = <BookImage>[];
-        for (var image in normalizeBookImages(record.images)) {
-          final staging = _staging == null ? null : await _staging!;
-          var staged =
-              staging != null && p.isWithin(staging.path, image.localPath);
-          final original = originals
-              .where((old) => old.localPath == image.localPath)
-              .firstOrNull;
-          if (!staged &&
-              original != null &&
-              original.isCover != image.isCover &&
-              await File(image.localPath).exists()) {
-            final copy = await catalog.images.stageFile(
-              directory: await _directory(),
-              work: record.work,
-              sourcePath: image.localPath,
-              label: image.caption,
-              cover: image.isCover,
-            );
-            image = image.copyWith(localPath: copy.localPath);
-            staged = true;
-          }
-          if (staged) {
-            final stagedPath = image.localPath;
-            image = await catalog.images.publishStagedImage(image, record.work);
-            published[image.localPath] = stagedPath;
-          }
-          images.add(image);
-        }
-        _check();
-        saved = await catalog.database.saveRecord(
-          record.copyWith(images: images),
-        );
-      } catch (error) {
-        DiagnosticDiagnostics.emit(
-          DiagnosticSeverity.error,
-          'catalog.save.error',
-          {
-            'operation': 'save',
-            'outcome': 'failed',
-            'errorClass': error.runtimeType.toString(),
-          },
-        );
-        for (final file in published.entries) {
-          if (await File(file.key).exists())
-            await File(file.key).rename(file.value);
-        }
-        rethrow;
-      }
-      _record = saved;
-      _closed = true;
-      // A committed row must never point to a removed file. Clean old files only
-      // after the transaction, and retain files still referenced by another work.
-      final retained = saved.images.map((image) => image.localPath).toSet();
-      for (final original in originals) {
-        if (original.localPath.isEmpty || retained.contains(original.localPath))
-          continue;
-        try {
-          if (catalog.images.isManagedImage(original.localPath) &&
-              !await catalog.database.referencesImage(original.localPath)) {
-            await catalog.images.deleteImage(original);
-          }
-        } on Object catch (error) {
-          _cleanupFailure(error);
-        }
-      }
-      await _cleanup();
-      catalog._edits.remove(this);
+        return catalog.database.withCatalogFiles(_publishAndCommit);
+      });
+    } on Object catch (error) {
       DiagnosticDiagnostics.emit(
-        DiagnosticSeverity.debug,
-        'catalog.save.success',
-        const {'operation': 'save', 'outcome': 'success'},
+        DiagnosticSeverity.error,
+        'catalog.save.error',
+        {
+          'operation': 'save',
+          'outcome': 'failed',
+          'errorClass': error.runtimeType.toString(),
+        },
       );
-      return saved;
-    }),
-  );
+      rethrow;
+    }
+  }
 
-  Future<void> discard() async {
+  Future<CatalogRecord> _publishAndCommit() async {
+    _check();
+    final originals = record.work.id == null
+        ? const <BookImage>[]
+        : (await catalog.database.getRecord(record.work.id!)).images;
+    final published = <String, String>{};
+    late CatalogRecord saved;
+    try {
+      final images = await _publishImages(originals, published);
+      _check();
+      saved = await catalog.database.saveRecord(
+        record.copyWith(images: images),
+      );
+    } on Object {
+      await _rollbackPublication(published);
+      rethrow;
+    }
+    _record = saved;
     _closed = true;
-    await _tail;
-    catalog._edits.remove(this);
+    final retained = saved.images.map((image) => image.localPath).toSet();
+    for (final original in originals) {
+      if (original.localPath.isEmpty || retained.contains(original.localPath))
+        continue;
+      try {
+        if (catalog.images.isManagedImage(original.localPath) &&
+            !await catalog.database.referencesImage(original.localPath)) {
+          await catalog.images.deleteImage(original);
+        }
+      } on Object catch (error) {
+        _cleanupFailure(error);
+      }
+    }
     await _cleanup();
+    catalog._edits.remove(this);
+    DiagnosticDiagnostics.emit(
+      DiagnosticSeverity.debug,
+      'catalog.save.success',
+      const {'operation': 'save', 'outcome': 'success'},
+    );
+    return saved;
+  }
+
+  Future<List<BookImage>> _publishImages(
+    List<BookImage> originals,
+    Map<String, String> published,
+  ) async {
+    final images = <BookImage>[];
+    for (var image in normalizeBookImages(record.images)) {
+      final staging = _staging == null ? null : await _staging!;
+      var staged = staging != null && p.isWithin(staging.path, image.localPath);
+      final original = originals
+          .where((old) => old.localPath == image.localPath)
+          .firstOrNull;
+      if (!staged &&
+          original != null &&
+          original.isCover != image.isCover &&
+          await File(image.localPath).exists()) {
+        final copy = await catalog.images.stageFile(
+          directory: await _directory(),
+          work: record.work,
+          sourcePath: image.localPath,
+          label: image.caption,
+          cover: image.isCover,
+        );
+        image = image.copyWith(localPath: copy.localPath);
+        staged = true;
+      }
+      if (staged) {
+        final stagedPath = image.localPath;
+        image = await catalog.images.publishStagedImage(image, record.work);
+        published[image.localPath] = stagedPath;
+      }
+      images.add(image);
+    }
+    return images;
+  }
+
+  Future<void> _rollbackPublication(Map<String, String> published) async {
+    for (final file in published.entries) {
+      try {
+        await catalog.images.rollbackPublishedImage(file.key, file.value);
+      } on Object catch (error) {
+        _cleanupFailure(
+          error,
+        ); // Continue restoring other files; retain the primary error.
+      }
+    }
+  }
+
+  Future<void> discard() => _discardFuture ??= _discard();
+
+  Future<void> _discard() async {
+    _discardRequested = true;
+    await _tail;
+    _closed = true;
+    await _cleanup();
+    catalog._edits.remove(this);
   }
 
   Future<void> _cleanup() async {
     if (_staging == null) return;
     try {
       final folder = await _staging!;
-      if (await folder.exists()) await folder.delete(recursive: true);
+      await catalog.images.discardEditStaging(folder);
     } on Object catch (error) {
       _cleanupFailure(error);
     }

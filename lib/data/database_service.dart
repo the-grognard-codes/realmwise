@@ -12,7 +12,8 @@ import '../services/diagnostic_logging.dart';
 class DatabaseService {
   Database? _database;
   String? _databasePath;
-  int catalogGeneration = 0;
+  int _catalogGeneration = 0;
+  int get catalogGeneration => _catalogGeneration;
   Future<void> _catalogFilesTail = Future.value();
 
   /// Keeps image publication and database snapshots consistent with each other.
@@ -22,13 +23,19 @@ class DatabaseService {
     return operation;
   }
 
-  Future<bool> referencesImage(String file) async => (await _db.query(
-    'images',
-    columns: ['id'],
-    where: 'local_path = ?',
-    whereArgs: [file],
-    limit: 1,
-  )).isNotEmpty;
+  Future<bool> referencesImage(String file) async {
+    for (final table in ['images', 'catalog_icons']) {
+      if ((await _db.query(
+        table,
+        columns: ['local_path'],
+        where: 'local_path = ?',
+        whereArgs: [file],
+        limit: 1,
+      )).isNotEmpty)
+        return true;
+    }
+    return false;
+  }
 
   String get databasePath {
     final value = _databasePath;
@@ -42,7 +49,7 @@ class DatabaseService {
   Database get databaseHandle => _db;
 
   Future<void> open(String filePath) async {
-    catalogGeneration++;
+    _catalogGeneration++;
     await close();
     if (Platform.isWindows || Platform.isLinux) {
       sqfliteFfiInit();
@@ -393,7 +400,7 @@ class DatabaseService {
         'title',
         'A title is required.',
       );
-    final deDuplicatedImages = normalizeBookImages(record.images);
+    final normalizedImages = normalizeBookImages(record.images);
     late int workId;
     try {
       await _db.transaction((transaction) async {
@@ -429,7 +436,7 @@ class DatabaseService {
           final rowCopy = copy.toRow(workId)..remove('id');
           await transaction.insert('copies', rowCopy);
         }
-        for (final image in deDuplicatedImages) {
+        for (final image in normalizedImages) {
           final imageRow = image.toRow(workId)..remove('id');
           await transaction.insert('images', imageRow);
         }
