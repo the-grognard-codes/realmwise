@@ -329,14 +329,34 @@ void main() {
             ready++;
           },
         );
-        await expectLater(
-          recovery.replaceCatalog(
+        final replacing = recovery.replaceCatalog(
+          source,
+          bundle: true,
+          imageRootPath: imageRoot,
+        );
+        if (renameBlocked) {
+          final result = await replacing;
+          expect(result.needsAcknowledgement, isTrue);
+          expect(result.warning!.originalPath, contains('.rollback-'));
+          // A new service instance represents reopening after process exit.
+          final restarted = CatalogRecovery(database: database);
+          await restarted.loadWarning();
+          expect(restarted.warning!.originalPath, result.warning!.originalPath);
+          final later = await restarted.replaceCatalog(
             source,
             bundle: true,
             imageRootPath: imageRoot,
-          ),
-          throwsA(same(failure)),
-        );
+          );
+          expect(later.needsAcknowledgement, isTrue);
+          expect(later.warning!.originalPath, result.warning!.originalPath);
+          await restarted.stop();
+          await restarted.acknowledgeWarning();
+          await restarted.loadWarning();
+          expect(restarted.warning, isNull);
+        } else {
+          await expectLater(replacing, throwsA(same(failure)));
+          expect(recovery.warning, isNull);
+        }
         expect(database.isOpen, isTrue);
         expect(database.databasePath, active);
         expect(

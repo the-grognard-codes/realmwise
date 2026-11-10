@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -22,6 +23,22 @@ enum SnapshotKind {
 }
 
 enum RestorePointFormat { database, bundle }
+
+class CatalogRecoveryWarning {
+  const CatalogRecoveryWarning({required this.originalPath});
+  final String originalPath;
+
+  String get message =>
+      'Catalog replacement needs review. Automatic sync is paused until you '
+      'acknowledge the active catalog. The original was protected by a recovery '
+      'snapshot; its rollback location is $originalPath.';
+}
+
+class CatalogReplacementResult {
+  const CatalogReplacementResult({this.warning});
+  final CatalogRecoveryWarning? warning;
+  bool get needsAcknowledgement => warning != null;
+}
 
 class RestorePoint {
   const RestorePoint({
@@ -79,6 +96,36 @@ class CatalogRecovery {
   bool _isReplacing = false;
   bool get isReplacing => _isReplacing;
   bool _quiesced = false;
+  CatalogRecoveryWarning? warning;
+
+  File get _warningFile =>
+      File('${database.databasePath}.recovery-review.json');
+
+  /// The marker is outside the replaceable database and survives app restarts.
+  Future<void> loadWarning() async {
+    final file = _warningFile;
+    warning = null;
+    if (!await file.exists()) return;
+    // Even an interrupted marker write must keep automatic uploads blocked.
+    warning = const CatalogRecoveryWarning(
+      originalPath: 'See local restore points',
+    );
+    try {
+      final value =
+          jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      warning = CatalogRecoveryWarning(
+        originalPath: value['originalPath'] as String,
+      );
+    } on Object catch (error) {
+      _reportFailure('warning_read', error);
+    }
+  }
+
+  Future<void> acknowledgeWarning() async {
+    if (isReplacing) throw StateError('Catalog replacement is in progress.');
+    if (await _warningFile.exists()) await _warningFile.delete();
+    warning = null;
+  }
 
   Directory get _folder =>
       Directory(p.join(p.dirname(database.databasePath), 'backups'));
@@ -277,13 +324,15 @@ class CatalogRecovery {
     );
   }
 
-  Future<void> restore(RestorePoint point, {String? imageRootPath}) =>
-      replaceCatalog(
-        point.path,
-        snapshotKind: SnapshotKind.preRestore,
-        bundle: point.format == RestorePointFormat.bundle,
-        imageRootPath: imageRootPath,
-      );
+  Future<CatalogReplacementResult> restore(
+    RestorePoint point, {
+    String? imageRootPath,
+  }) => replaceCatalog(
+    point.path,
+    snapshotKind: SnapshotKind.preRestore,
+    bundle: point.format == RestorePointFormat.bundle,
+    imageRootPath: imageRootPath,
+  );
 
   static const _catalogBusyMessage =
       'The catalog is busy with an export or another connection. '
@@ -431,7 +480,7 @@ class CatalogRecovery {
 
   /// A bundle or database is staged beside the active file before quiescing.
   /// Successful imported images remain in their unique restore namespace.
-  Future<void> replaceCatalog(
+  Future<CatalogReplacementResult> replaceCatalog(
     String sourcePath, {
     SnapshotKind snapshotKind = SnapshotKind.preImport,
     bool bundle = false,
@@ -442,6 +491,7 @@ class CatalogRecovery {
     if (!database.isOpen) throw StateError('No active database to replace.');
     _isReplacing = true;
     final active = database.databasePath;
+    final warningFile = _warningFile;
     final stamp = _stamp();
     final staged = '$active.replace-$stamp.tmp';
     final rollback = '$active.rollback-$stamp.tmp';
@@ -450,6 +500,7 @@ class CatalogRecovery {
         : p.join(imageRootPath, 'recovery-$stamp');
     var moved = false, committed = false, quiesced = false;
     var closing = false, installed = false, replacementRetained = false;
+    var ownsWarning = false;
     try {
       if (bundle) {
         await bundles.extractDatabase(
@@ -467,6 +518,17 @@ class CatalogRecovery {
       _quiesced = true;
       await _snapshot(snapshotKind);
       await _checkpointForReplacement();
+      await loadWarning();
+      if (warning == null) {
+        // Persist before closing or replacing anything. A process interruption
+        // therefore cannot silently resume automatic uploads of an unreviewed catalog.
+        warning = CatalogRecoveryWarning(originalPath: rollback);
+        await warningFile.writeAsString(
+          jsonEncode({'originalPath': rollback}),
+          flush: true,
+        );
+        ownsWarning = true;
+      }
       closing = true;
       await database.close();
       // Copy first so copy failure cannot destroy the original catalog.
@@ -482,7 +544,7 @@ class CatalogRecovery {
       await reopen(active);
       await rehydrate();
       committed = true;
-    } catch (_) {
+    } catch (error) {
       if (closing) {
         var originalRestored = !moved;
         try {
@@ -531,7 +593,8 @@ class CatalogRecovery {
           }
         }
       }
-      rethrow;
+      if (!replacementRetained || !database.isOpen) rethrow;
+      _reportFailure('replacement_retained', error);
     } finally {
       // Cleanup must not mask a replacement/rollback failure.
       try {
@@ -547,17 +610,27 @@ class CatalogRecovery {
         }
       } on Object catch (cleanupError) {
         _reportFailure('cleanup', cleanupError);
+        if (committed) replacementRetained = true;
+      }
+      if (ownsWarning && !replacementRetained) {
+        try {
+          if (await warningFile.exists()) await warningFile.delete();
+          warning = null;
+        } on Object catch (warningError) {
+          _reportFailure('warning_clear', warningError);
+        }
       }
       _quiesced = false;
       _isReplacing = false;
       if (quiesced && database.isOpen) {
         try {
           await start(snapshotNow: false);
-          if (!replacementRetained) await onReady();
+          if (warning == null) await onReady();
         } on Object catch (restartError) {
           _reportFailure('restart', restartError);
         }
       }
     }
+    return CatalogReplacementResult(warning: warning);
   }
 }

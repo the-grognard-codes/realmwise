@@ -435,6 +435,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     await recovery.stop();
     try {
       await database.open(databasePath);
+      await recovery.loadWarning();
       final catalogIdentity = await database.ensureCatalogIdentity();
       syncMetadata = await syncCoordinator.metadataStorage.read(
         catalogIdentity,
@@ -616,7 +617,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void scheduleAutomaticSync({Duration debounce = const Duration(seconds: 5)}) {
-    if (!automaticSyncEnabled || !automaticSyncOwnershipValid) return;
+    if (recovery.warning != null ||
+        !automaticSyncEnabled ||
+        !automaticSyncOwnershipValid)
+      return;
     _automaticSyncTimer?.cancel();
     _automaticSyncTimer = Timer(debounce, () {
       final running = _runAutomaticSync();
@@ -630,7 +634,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _runAutomaticSync() async {
-    if (recovery.isReplacing ||
+    if (recovery.warning != null ||
+        recovery.isReplacing ||
         !automaticSyncEnabled ||
         !automaticSyncOwnershipValid ||
         isSyncing)
@@ -654,6 +659,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _automaticUploadInternal() async {
+    if (recovery.warning != null) return;
     if (!database.isOpen) throw StateError('Open a catalog first.');
     final temporary = await getTemporaryDirectory();
     final bundlePath = path.join(
@@ -1105,10 +1111,16 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
       if (backup != null) await backup();
-      await restoreDeviceBundle(
+      final replacement = await restoreDeviceBundle(
         bundlePath,
         snapshotKind: SnapshotKind.preDownload,
       );
+      if (replacement.needsAcknowledgement) {
+        // Do not mark a partially recovered download as the remote baseline.
+        // The persistent warning also fences refresh and lifecycle scheduling.
+        notifyListeners();
+        return true;
+      }
       if (runtimeSnapshot != null) {
         SyncMetadata? rebound;
         final registered = _providers[runtimeSnapshot.provider.provider];
@@ -1203,13 +1215,27 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> restoreFromBackup(RestorePoint point) async {
-    await recovery.restore(point, imageRootPath: imageStorage.rootPath);
+  Future<CatalogReplacementResult> restoreFromBackup(RestorePoint point) async {
+    final result = await recovery.restore(
+      point,
+      imageRootPath: imageStorage.rootPath,
+    );
     notifyListeners();
+    return result;
+  }
+
+  CatalogRecoveryWarning? get recoveryWarning =>
+      isOpen ? recovery.warning : null;
+
+  Future<void> acknowledgeRecoveryWarning() async {
+    await recovery.acknowledgeWarning();
+    await _resumeAfterRecovery();
   }
 
   Future<void> _resumeAfterRecovery() async {
-    if (automaticSyncEnabled && automaticSyncOwnershipValid)
+    if (recovery.warning == null &&
+        automaticSyncEnabled &&
+        automaticSyncOwnershipValid)
       scheduleAutomaticSync();
     notifyListeners();
   }
@@ -1254,17 +1280,18 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> restoreDeviceBundle(
+  Future<CatalogReplacementResult> restoreDeviceBundle(
     String bundlePath, {
     SnapshotKind snapshotKind = SnapshotKind.preImport,
   }) async {
-    await recovery.replaceCatalog(
+    final result = await recovery.replaceCatalog(
       bundlePath,
       bundle: true,
       snapshotKind: snapshotKind,
       imageRootPath: imageStorage.rootPath,
     );
     notifyListeners();
+    return result;
   }
 
   /// Validates an import without mutating the active catalog.

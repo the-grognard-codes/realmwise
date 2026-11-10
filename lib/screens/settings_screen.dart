@@ -93,13 +93,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _run(Future<void> Function() action, {String? success}) async {
+  Future<void> _run<T>(Future<T> Function() action, {String? success}) async {
     setState(() => _busy = true);
     try {
-      await action();
+      final result = await action();
       if (mounted && success != null)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(success)));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              result is CatalogReplacementResult && result.needsAcknowledgement
+                  ? 'Catalog replaced, but recovery needs review. Automatic sync is paused.'
+                  : success,
+            ),
+          ),
+        );
       await _load();
     } catch (error) {
       if (mounted)
@@ -358,8 +365,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             SyncOutcome.alreadySynced
         ? 'Already synced—no local changes.'
         : 'Catalog synced to $providerLabel.';
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          widget.controller.recoveryWarning == null ? message : 'Catalog is active, but recovery needs review. Automatic sync is paused.',
+        ),
+      ),
+    );
   }
 
   Future<void> _chooseImageFolder() async {

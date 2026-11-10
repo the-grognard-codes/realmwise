@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -67,6 +68,98 @@ void main() {
     await controller.closeDatabase();
     controller.dispose();
     await directory.delete(recursive: true);
+  });
+
+  for (final operation in ['import', 'restore', 'download']) {
+    test(
+      '$operation exposes retained replacement without reporting failure',
+      () async {
+        final active = controller.database.databasePath;
+        final point = await controller.recovery.snapshot(SnapshotKind.manual);
+        await controller.recovery.stop();
+        controller.recoveryOverride = CatalogRecovery(
+          database: controller.database,
+          reopen: (path) async {
+            await controller.database.open(path);
+            await controller.recovery.loadWarning();
+          },
+          rehydrate: () async => throw StateError('rehydrate failed'),
+          deleteFile: (file) async {
+            if (file.path == active)
+              throw const FileSystemException('delete blocked');
+            await file.delete();
+          },
+          renameFile: (file, target) async {
+            if (file.path.contains('.rollback-'))
+              throw const FileSystemException('rename blocked');
+            return file.rename(target);
+          },
+        );
+        if (operation == 'download') {
+          expect(
+            await controller.downloadRemoteBundle(
+              expectedRemote: _Provider.remote,
+            ),
+            isTrue,
+          );
+        } else {
+          final result = operation == 'import'
+              ? await controller.restoreDeviceBundle(bundle)
+              : await controller.restoreFromBackup(point);
+          expect(result.needsAcknowledgement, isTrue);
+        }
+        expect(controller.isOpen, isTrue);
+        expect(controller.recoveryWarning, isNotNull);
+        expect(
+          await File(controller.recoveryWarning!.originalPath).exists(),
+          isTrue,
+        );
+        expect(controller.schedules, 0);
+      },
+    );
+  }
+
+  test('recovery warning fences refresh, queued timers and lifecycle until acknowledgement', () async {
+    controller.useRealScheduler = true;
+    controller.automaticSyncEnabled = true;
+    controller.automaticSyncOwnershipValid = true;
+    // This timer was already queued when recovery recorded its warning.
+    controller.scheduleAutomaticSync(
+      debounce: const Duration(milliseconds: 50),
+    );
+    final active = controller.database.databasePath;
+    await File('$active.recovery-review.json')
+        .writeAsString('{"originalPath":"original.rollback.tmp"}');
+    await controller.recovery.loadWarning();
+    final exports = controller.exports;
+    controller.observeCatalogRecords(await controller.database.listRecords());
+    controller.didChangeAppLifecycleState(AppLifecycleState.paused);
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(controller.exports, exports);
+    await controller.closeDatabase();
+    await controller.openDatabase(active, remember: false);
+    expect(controller.recoveryWarning, isNotNull);
+    controller.automaticSyncEnabled = true;
+    controller.automaticSyncOwnershipValid = true;
+    controller.scheduleAutomaticSync(debounce: Duration.zero);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(controller.exports, exports);
+    await controller.acknowledgeRecoveryWarning();
+    expect(controller.recoveryWarning, isNull);
+    expect(await File('$active.recovery-review.json').exists(), isFalse);
+    controller.automaticSyncEnabled = false;
+    controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    controller.automaticSyncEnabled = true;
+    controller.automaticSyncOwnershipValid = true;
+    controller.scheduleAutomaticSync(debounce: Duration.zero);
+    for (
+      var attempt = 0;
+      attempt < 100 && controller.exports == exports;
+      attempt++
+    ) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(controller.exports, greaterThan(exports));
   });
 
   test(
@@ -161,9 +254,21 @@ class _SchedulingController extends AppController {
   _SchedulingController(String root)
     : super(tokenStorage: _Tokens(), imageRootPathOverride: '$root/images');
   int schedules = 0;
+  CatalogRecovery? recoveryOverride;
+  @override
+  CatalogRecovery get recovery => recoveryOverride ?? super.recovery;
+  int exports = 0;
+  bool useRealScheduler = false;
+  @override
+  Future<void> exportDeviceBundle(String outputPath) {
+    exports++;
+    return super.exportDeviceBundle(outputPath);
+  }
+
   @override
   void scheduleAutomaticSync({Duration debounce = const Duration(seconds: 5)}) {
     schedules++;
+    if (useRealScheduler) super.scheduleAutomaticSync(debounce: debounce);
   }
 }
 
