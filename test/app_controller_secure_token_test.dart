@@ -94,6 +94,7 @@ void main() {
     expect(controller.automaticSyncEnabled, isFalse);
     expect(controller.automaticSyncOwnershipValid, isFalse);
     expect(controller.automaticSyncError, isNull);
+    await controller.closeDatabase();
     controller.dispose();
     await folder.delete(recursive: true);
   });
@@ -123,6 +124,7 @@ void main() {
       expect(controller.automaticSyncEnabled, isFalse);
       expect(controller.automaticSyncOwnershipValid, isFalse);
       expect(controller.automaticSyncError, isNull);
+      await controller.closeDatabase();
       controller.dispose();
       await folder.delete(recursive: true);
     },
