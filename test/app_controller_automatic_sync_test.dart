@@ -65,6 +65,92 @@ void main() {
     await dir.delete(recursive: true);
   });
 
+  for (final setting in ['automatic', 'images']) {
+    test(
+      '$setting setting waits for renewal and remains persisted afterward',
+      () async {
+        provider.holdRenewal = true;
+        renewal.fire();
+        await provider.renewalStarted.future;
+        final changing = setting == 'automatic'
+            ? controller.setAutomaticSyncEnabled(false)
+            : controller.setIncludePersonalImagesInBundles(true);
+        await Future<void>.delayed(Duration.zero);
+        expect(provider.releases, 0);
+        provider.releaseRenewal.complete();
+        await changing;
+        if (setting == 'automatic') {
+          expect(controller.automaticSyncEnabled, isFalse);
+          expect(storage.value!.automaticSyncEnabled, isFalse);
+          expect(storage.value!.automaticSchedulerState, 'disabled');
+          expect(storage.value!.leaseToken, isNull);
+          expect(renewal.isActive, isFalse);
+          expect(provider.releases, 1);
+        } else {
+          expect(storage.value!.includePersonalImages, isTrue);
+          expect(controller.includePersonalImagesInBundles, isTrue);
+          expect(storage.value!.leaseExpiresAt, provider.lease!.expiresAt);
+          expect(storage.value!.automaticSyncEnabled, isTrue);
+        }
+      },
+    );
+  }
+
+  test('minimize flushes the pending upload once and stops renewal', () async {
+    controller.syncCoordinator.metadata = controller.syncCoordinator.metadata!
+        .copyWith(
+          revision: 'r1',
+          contentHash: 'h1',
+          lastSuccessfulLocalFingerprint: 'previous',
+        );
+    provider.holdUpload = true;
+    controller.scheduleAutomaticSync();
+    controller.didChangeAppLifecycleState(AppLifecycleState.hidden);
+    await provider.uploadStarted.future;
+    controller.didChangeAppLifecycleState(AppLifecycleState.paused);
+    provider.releaseUpload.complete();
+    while (controller.automaticSyncLastSuccess == null) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(provider.uploads, 1);
+    expect(renewal.isActive, isFalse);
+  });
+
+  test(
+    'restore through inactive refreshes an expired lease and restarts renewal',
+    () async {
+      controller.automaticSyncOwnershipValid = false;
+      final previousTimer = renewal;
+      controller.didChangeAppLifecycleState(AppLifecycleState.hidden);
+      now = now.add(const Duration(minutes: 25));
+      controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
+      controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await Future<void>.delayed(Duration.zero);
+      expect(provider.lease!.isValidAt(now), isTrue);
+      expect(identical(renewal, previousTimer), isFalse);
+      expect(renewal.isActive, isTrue);
+    },
+  );
+
+  test(
+    'desktop refocus keeps the timer without provider lease calls',
+    () async {
+      final reads = provider.leaseReads;
+      for (var i = 0; i < 20; i++) {
+        controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
+        controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      }
+      await Future<void>.delayed(Duration.zero);
+      expect(provider.leaseReads, reads);
+      expect(provider.renewals, 0);
+      expect(renewal.isActive, isTrue);
+      now = now.add(const Duration(minutes: 5));
+      renewal.fire();
+      await Future<void>.delayed(Duration.zero);
+      expect(provider.renewals, 1);
+    },
+  );
+
   test('inactive keeps pending upload and renews for 25 minutes', () async {
     controller.syncCoordinator.metadata = controller.syncCoordinator.metadata!
         .copyWith(
@@ -104,6 +190,7 @@ void main() {
       final syncResult = sync.then<void>((_) {}, onError: (Object _) {});
       await provider.uploadStarted.future;
       final token = controller.syncCoordinator.activeCancellation!;
+      controller.didChangeAppLifecycleState(AppLifecycleState.hidden);
       controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
       final closing = action == 'close'
           ? controller.closeDatabase()
@@ -232,6 +319,7 @@ void main() {
     controller.didChangeAppLifecycleState(AppLifecycleState.paused);
     expect(renewal.isActive, isFalse);
     now = now.add(const Duration(minutes: 25));
+    controller.didChangeAppLifecycleState(AppLifecycleState.hidden);
     controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
     await Future<void>.delayed(Duration.zero);
     expect(provider.lease!.isValidAt(now), isTrue);
@@ -289,6 +377,7 @@ void main() {
     final sync = controller.syncNow();
     await provider.uploadStarted.future;
     try {
+      controller.didChangeAppLifecycleState(AppLifecycleState.hidden);
       controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
       await Future<void>.delayed(Duration.zero);
       expect(provider.renewals, 0);
@@ -326,7 +415,9 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
   SyncLease? lease;
   String owner = 'device';
   int renewals = 0, uploads = 0, releases = 0;
-  bool loseOnRead = false;
+  bool loseOnRead = false, holdRenewal = false;
+  int leaseReads = 0;
+  final renewalStarted = Completer<void>(), releaseRenewal = Completer<void>();
   bool loseOnRenewal = false;
   bool holdUpload = false;
   final uploadStarted = Completer<void>(), releaseUpload = Completer<void>();
@@ -377,6 +468,7 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
     SyncRemoteTarget target,
     String catalogIdentity,
   ) async {
+    leaseReads++;
     if (loseOnRead) throw const SyncLeaseLostException();
     return owner == 'device' ? lease : null;
   }
@@ -409,6 +501,10 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
     required String token,
     required Duration duration,
   }) async {
+    if (holdRenewal) {
+      renewalStarted.complete();
+      await releaseRenewal.future;
+    }
     if (loseOnRenewal) throw const SyncLeaseLostException();
     if (!lease!.isValidAt(clock())) throw const SyncLeaseLostException();
     renewals++;

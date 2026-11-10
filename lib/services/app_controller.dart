@@ -167,6 +167,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _leaseRenewalTimer;
   Future<void>? _leaseRenewalFuture;
   bool _foreground = true;
+  bool _backgrounded = false;
   bool _disposed = false;
   Future<void>? _automaticFuture;
   Future<void> _operationTail = Future<void>.value();
@@ -542,7 +543,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> setAutomaticSyncEnabled(bool enabled) async {
+  Future<void> setAutomaticSyncEnabled(bool enabled) =>
+      _serialize(() => _setAutomaticSyncEnabled(enabled));
+
+  Future<void> _setAutomaticSyncEnabled(bool enabled) async {
     final metadata = syncCoordinator.metadata;
     if (metadata == null || !syncCoordinator.isConnected) {
       throw StateError(
@@ -685,20 +689,25 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final wasForeground = _foreground;
     // Desktop focus loss is inactive while the window remains visible.
     _foreground =
         state == AppLifecycleState.resumed ||
         state == AppLifecycleState.inactive;
     if (!_foreground) {
+      _backgrounded = true;
       _cancelAutomaticTimers();
     }
-    if (state == AppLifecycleState.resumed) {
+    if (state == AppLifecycleState.resumed && _backgrounded) {
+      _backgrounded = false;
       if (automaticSyncEnabled) {
         unawaited(_refreshAutomaticLease());
         _startLeaseRenewal();
       }
-    } else if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) {
+    } else if (wasForeground &&
+        (state == AppLifecycleState.hidden ||
+            state == AppLifecycleState.paused ||
+            state == AppLifecycleState.detached)) {
       // Best effort only: lifecycle callbacks must never delay closing.
       if (automaticSyncEnabled && automaticSyncOwnershipValid) {
         final running = _runAutomaticSync();
@@ -1199,7 +1208,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     includePersonalImages: includePersonalImagesInBundles,
   );
 
-  Future<void> setIncludePersonalImagesInBundles(bool value) async {
+  Future<void> setIncludePersonalImagesInBundles(bool value) =>
+      _serialize(() => _setIncludePersonalImagesInBundles(value));
+
+  Future<void> _setIncludePersonalImagesInBundles(bool value) async {
     includePersonalImagesInBundles = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('include_personal_images_in_bundles', value);

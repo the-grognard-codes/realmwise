@@ -249,11 +249,6 @@ class SyncCoordinator {
       },
       remoteTargetId: selected.id,
       remoteTargetName: selected.name,
-      revision: sameTarget ? current.revision : null,
-      contentHash: sameTarget ? current.contentHash : null,
-      lastSuccessfulLocalFingerprint: sameTarget
-          ? current.lastSuccessfulLocalFingerprint
-          : null,
       updatedAt: clock().toUtc(),
       state: SyncState.ready,
     );
@@ -285,11 +280,6 @@ class SyncCoordinator {
         },
       },
       accountDisplayName: restored.displayName ?? saved.accountDisplayName,
-      revision: sameAccount ? saved.revision : null,
-      contentHash: sameAccount ? saved.contentHash : null,
-      lastSuccessfulLocalFingerprint: sameAccount
-          ? saved.lastSuccessfulLocalFingerprint
-          : null,
       updatedAt: clock().toUtc(),
       state: target == null ? SyncState.connectedUnconfigured : SyncState.ready,
     );
@@ -331,11 +321,6 @@ class SyncCoordinator {
                 },
                 remoteTargetId: target?.id,
                 remoteTargetName: target?.name,
-                revision: sameTuple ? previous.revision : null,
-                contentHash: sameTuple ? previous.contentHash : null,
-                lastSuccessfulLocalFingerprint: sameTuple
-                    ? previous.lastSuccessfulLocalFingerprint
-                    : null,
                 state: target == null
                     ? SyncState.connectedUnconfigured
                     : SyncState.ready,
