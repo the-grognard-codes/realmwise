@@ -171,6 +171,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   bool _disposed = false;
   Future<void>? _automaticFuture;
   bool _automaticSyncPending = false;
+  bool _automaticBackgroundFlushPending = false;
   SyncCancellationToken? _automaticCancellation;
   SyncCancellationToken? _automaticTransferCancellation;
   Future<void> _operationTail = Future<void>.value();
@@ -192,7 +193,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   void cancelSync() => syncCoordinator.cancel();
 
   Future<void> _cancelAndAwaitSync() async {
+    _clearPendingAutomaticSync();
     _cancelAutomaticTimers();
+    _automaticCancellation?.cancel();
     syncCoordinator.cancel();
     final running = _syncFuture;
     if (running != null) {
@@ -214,8 +217,12 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _cancelAutomaticTimers() {
+  void _clearPendingAutomaticSync() {
     _automaticSyncPending = false;
+    _automaticBackgroundFlushPending = false;
+  }
+
+  void _cancelAutomaticTimers() {
     _leaseRenewalTimer?.cancel();
     _leaseRenewalTimer = null;
     _automaticSyncTimer?.cancel();
@@ -232,6 +239,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       error.toString().replaceFirst('Exception: ', '');
 
   void _clearAutomaticSyncState() {
+    _clearPendingAutomaticSync();
     _cancelAutomaticTimers();
     automaticSyncEnabled = false;
     automaticSyncOwnershipValid = false;
@@ -549,6 +557,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> setAutomaticSyncEnabled(bool enabled) {
     if (!enabled) {
+      _clearPendingAutomaticSync();
       _cancelAutomaticTimers();
       _automaticCancellation?.cancel();
       _automaticTransferCancellation?.cancel();
@@ -605,38 +614,53 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void scheduleAutomaticSync({Duration debounce = const Duration(seconds: 5)}) {
-    if (!_foreground ||
-        _disposed ||
-        !automaticSyncEnabled ||
-        !automaticSyncOwnershipValid)
+    if (_disposed || !automaticSyncEnabled || !automaticSyncOwnershipValid)
       return;
+    _automaticSyncPending = true;
+    if (!_foreground) return;
     _automaticSyncTimer?.cancel();
     _automaticSyncTimer = Timer(debounce, () {
-      final running = _runAutomaticSync();
-      _automaticFuture = running;
-      unawaited(
-        running.whenComplete(() {
-          if (identical(_automaticFuture, running)) _automaticFuture = null;
-        }),
-      );
+      _automaticSyncTimer = null;
+      _launchAutomaticSync();
     });
   }
 
-  Future<void> _runAutomaticSync() async {
-    if (_disposed || !automaticSyncEnabled || !automaticSyncOwnershipValid)
+  void _launchAutomaticSync() {
+    if (!_automaticSyncPending || _automaticCancellation != null) return;
+    final running = _runAutomaticSync();
+    _automaticFuture = running;
+    unawaited(
+      running.whenComplete(() {
+        if (identical(_automaticFuture, running)) _automaticFuture = null;
+      }),
+    );
+  }
+
+  void _resumePendingAutomaticSync() {
+    if (!_automaticSyncPending ||
+        _disposed ||
+        !automaticSyncEnabled ||
+        !automaticSyncOwnershipValid ||
+        _automaticCancellation != null ||
+        isSyncing ||
+        isConnectionPending)
       return;
-    if (_automaticCancellation != null) {
-      _automaticSyncPending = true;
-      // Keep the timer's tracked future tied to the active run so lifecycle
-      // draining still waits for it after a duplicate debounce fires.
-      await _automaticFuture;
-      return;
-    }
-    if (isSyncing || isConnectionPending) {
+    if (_foreground) {
       scheduleAutomaticSync();
-      return;
+    } else if (_automaticBackgroundFlushPending) {
+      scheduleMicrotask(_launchAutomaticSync);
     }
+  }
+
+  Future<void> _runAutomaticSync() async {
+    if (_disposed ||
+        !automaticSyncEnabled ||
+        !automaticSyncOwnershipValid ||
+        isSyncing ||
+        isConnectionPending)
+      return;
     _automaticSyncPending = false;
+    _automaticBackgroundFlushPending = false;
     final cancellation = SyncCancellationToken();
     _automaticCancellation = cancellation;
     automaticSyncLastAttempt = clock().toUtc();
@@ -661,10 +685,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     } finally {
       _automaticCancellation = null;
       _automaticTransferCancellation = null;
-      if (_automaticSyncPending && !cancellation.isCancelled) {
-        _automaticSyncPending = false;
-        scheduleAutomaticSync();
-      }
+      if (!cancellation.isCancelled) _resumePendingAutomaticSync();
     }
     if (!_disposed) notifyListeners();
   }
@@ -735,7 +756,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final wasForeground = _foreground;
-    final hadPendingUpload = _automaticSyncTimer?.isActive ?? false;
+    final hadPendingUpload =
+        _automaticSyncPending || (_automaticSyncTimer?.isActive ?? false);
     // Desktop focus loss is inactive while the window remains visible.
     _foreground =
         state == AppLifecycleState.resumed ||
@@ -758,13 +780,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       if (hadPendingUpload &&
           automaticSyncEnabled &&
           automaticSyncOwnershipValid) {
-        final running = _runAutomaticSync();
-        _automaticFuture = running;
-        unawaited(
-          running.whenComplete(() {
-            if (identical(_automaticFuture, running)) _automaticFuture = null;
-          }),
-        );
+        _automaticSyncPending = true;
+        _automaticBackgroundFlushPending = true;
+        _launchAutomaticSync();
       }
     }
   }
@@ -897,6 +915,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       if (identical(_pendingConnectionProvider, provider)) {
         _pendingConnectionProvider = null;
         _pendingConnectionCancellationRequested = false;
+        _resumePendingAutomaticSync();
         notifyListeners();
       }
     }
@@ -941,6 +960,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     return operation.whenComplete(() {
       if (identical(_syncFuture, operation)) _syncFuture = null;
       syncProgress = null;
+      _resumePendingAutomaticSync();
     });
   }
 
@@ -1550,6 +1570,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void dispose() {
     _disposed = true;
+    _clearPendingAutomaticSync();
     _cancelAutomaticTimers();
     if (_syncCoordinatorInitialized) syncCoordinator.cancel();
     WidgetsBinding.instance.removeObserver(this);

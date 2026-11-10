@@ -109,7 +109,9 @@ void main() {
       await provider.uploadStarted.future;
       final exports = controller.exports;
       controller.scheduleAutomaticSync(debounce: Duration.zero);
-      await Future<void>.delayed(const Duration(milliseconds: 60));
+      final schedules = controller.schedules;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(controller.schedules, schedules);
       expect(controller.exports, exports);
       expect(controller.automaticSyncError, isNull);
       provider.holdUpload = false;
@@ -121,6 +123,7 @@ void main() {
             controller.automaticSyncLastSuccess != null,
       );
       expect(controller.automaticSyncError, isNull);
+      expect(provider.uploads, 1);
     },
   );
 
@@ -143,6 +146,74 @@ void main() {
       await _until(() => controller.automaticSyncLastSuccess != null);
       expect(controller.automaticSyncError, isNull);
       expect(controller.exports, greaterThanOrEqualTo(3));
+    },
+  );
+
+  test(
+    'background flush retains edits whose debounce fired during export',
+    () async {
+      controller.holdExport = true;
+      controller.scheduleAutomaticSync(debounce: Duration.zero);
+      await controller.exported.future;
+      await controller.database.databaseHandle.insert('works', {
+        'title': 'Background edit',
+      });
+      controller.scheduleAutomaticSync(debounce: Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      controller.didChangeAppLifecycleState(AppLifecycleState.hidden);
+      controller.didChangeAppLifecycleState(AppLifecycleState.paused);
+      controller.releaseExport.complete();
+      await _until(() => provider.uploads == 2 && !controller.isSyncing);
+      expect(controller.exports, 2);
+      expect(controller.automaticSyncError, isNull);
+      controller.didChangeAppLifecycleState(AppLifecycleState.detached);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(controller.exports, 2);
+    },
+  );
+
+  test(
+    'disable drops a pending background flush while the active run drains',
+    () async {
+      controller.holdExport = true;
+      controller.scheduleAutomaticSync(debounce: Duration.zero);
+      await controller.exported.future;
+      controller.scheduleAutomaticSync(debounce: Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      controller.didChangeAppLifecycleState(AppLifecycleState.hidden);
+      final disabling = controller.setAutomaticSyncEnabled(false);
+      controller.releaseExport.complete();
+      await disabling;
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(controller.exports, 1);
+      expect(provider.uploads, 0);
+    },
+  );
+
+  test(
+    'an edit during manual upload is sent by one completion-triggered run',
+    () async {
+      controller.retryDebounce = const Duration(milliseconds: 20);
+      provider.holdUpload = true;
+      controller.syncCoordinator.metadata = controller.syncCoordinator.metadata!
+          .copyWith(
+            revision: 'r1',
+            contentHash: 'h1',
+            lastSuccessfulLocalFingerprint: 'previous',
+          );
+      final manual = controller.syncNow();
+      await provider.uploadStarted.future;
+      await controller.database.databaseHandle.insert('works', {
+        'title': 'During manual',
+      });
+      controller.scheduleAutomaticSync(debounce: Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      provider.holdUpload = false;
+      provider.releaseUpload.complete();
+      await manual;
+      await _until(() => provider.uploads == 2 && !controller.isSyncing);
+      expect(controller.exports, 2);
+      expect(controller.automaticSyncError, isNull);
     },
   );
 
@@ -588,6 +659,32 @@ void main() {
     },
   );
 
+  test(
+    'unchanged fingerprint skips changed bundle bytes after lease validation',
+    () async {
+      await controller.syncCoordinator.automaticUpload(
+        Uint8List.fromList([1]),
+        localFingerprint: 'local',
+      );
+      final renewals = provider.renewals;
+      await controller.syncCoordinator.automaticUpload(
+        Uint8List.fromList([2]),
+        localFingerprint: 'local',
+      );
+      expect(provider.uploads, 1);
+      expect(provider.renewals, renewals + 1);
+      provider.loseOnRead = true;
+      await expectLater(
+        controller.syncCoordinator.automaticUpload(
+          Uint8List.fromList([3]),
+          localFingerprint: 'local',
+        ),
+        throwsA(isA<SyncLeaseLostException>()),
+      );
+      expect(provider.uploads, 1);
+    },
+  );
+
   test('close cancels renewal', () async {
     await controller.closeDatabase();
     expect(renewal.isActive, isFalse);
@@ -629,9 +726,11 @@ class _Controller extends AppController {
   int exports = 0;
   bool holdExport = false;
   Duration? retryDebounce;
+  int schedules = 0;
   final exported = Completer<void>(), releaseExport = Completer<void>();
   @override
   void scheduleAutomaticSync({Duration debounce = const Duration(seconds: 5)}) {
+    schedules++;
     super.scheduleAutomaticSync(
       debounce: debounce == const Duration(seconds: 5)
           ? retryDebounce ?? debounce

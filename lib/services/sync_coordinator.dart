@@ -824,11 +824,14 @@ class SyncCoordinator {
     );
     await metadataStorage.write(metadata!);
     try {
-      await _syncInternal(
-        payload,
-        localFingerprint: localFingerprint,
-        onProgress: onProgress,
-      );
+      if (localFingerprint == null ||
+          localFingerprint != metadata!.lastSuccessfulLocalFingerprint) {
+        await _syncInternal(
+          payload,
+          localFingerprint: localFingerprint,
+          onProgress: onProgress,
+        );
+      }
       metadata = metadata!.copyWith(
         updatedAt: clock().toUtc(),
         lastAutomaticSuccessAt: clock().toUtc(),
