@@ -69,6 +69,10 @@ class _InMemorySyncMetadataStorage implements SyncMetadataStorage {
       _values.remove(catalogIdentity);
 }
 
+class _SyncActivity {
+  bool active = true;
+}
+
 /// Application session state: selected database, theme preference, and services.
 class AppController extends ChangeNotifier with WidgetsBindingObserver {
   AppController({
@@ -93,6 +97,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   final DateTime Function() clock;
+  final Zone _lifecycleZone = Zone.current;
   final DatabaseService database;
 
   static Map<String, SyncProvider> _providerEntry(SyncProvider? provider) =>
@@ -108,6 +113,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     clock: clock,
     rehydrate: () => catalog.rehydrateMissingImages(),
     onReady: _resumeAfterRecovery,
+    lifecycleZone: _lifecycleZone,
   );
   final ExportService exporter = ExportService();
   final CatalogBundleService bundles = CatalogBundleService();
@@ -169,17 +175,26 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _automaticSyncTimer;
   Future<void>? _automaticFuture;
   Future<void> _operationTail = Future<void>.value();
-  // A remote download may initiate its own replacement. Its zone lets that
-  // replacement drain other sync work without waiting on its own caller.
+  // Nested work may replace its own catalog. Only a live activity token
+  // permits that replacement to omit waiting on its own caller.
   final _syncActivityZone = Object();
   final Set<Future<void>> _syncActivities = {};
 
+  bool get _insideSyncActivity {
+    final activity = Zone.current[_syncActivityZone];
+    return activity is _SyncActivity && activity.active;
+  }
+
   Future<T> _trackSyncActivity<T>(Future<T> Function() action) {
-    if (identical(Zone.current[_syncActivityZone], this)) return action();
+    if (_insideSyncActivity) return action();
     if (isSyncing) return Future.error(const SyncBusyException());
     if (recovery.isReplacing)
       return Future.error(StateError('Catalog replacement is in progress.'));
-    final operation = runZoned(action, zoneValues: {_syncActivityZone: this});
+    final activity = _SyncActivity();
+    final operation = runZoned(
+      action,
+      zoneValues: {_syncActivityZone: activity},
+    ).whenComplete(() => activity.active = false);
     final settled = operation.then<void>((_) {}, onError: (Object _) {});
     _syncActivities.add(settled);
     unawaited(settled.whenComplete(() => _syncActivities.remove(settled)));
@@ -218,7 +233,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         // catalog remains intact and the next open can restore its metadata.
       }
     }
-    if (!identical(Zone.current[_syncActivityZone], this)) {
+    if (!_insideSyncActivity) {
       await Future.wait(_syncActivities.toList());
     }
     final automatic = _automaticFuture;
@@ -605,15 +620,17 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   void scheduleAutomaticSync({Duration debounce = const Duration(seconds: 5)}) {
     if (!automaticSyncEnabled || !automaticSyncOwnershipValid) return;
     _automaticSyncTimer?.cancel();
-    _automaticSyncTimer = Timer(debounce, () {
-      final running = _runAutomaticSync();
-      _automaticFuture = running;
-      unawaited(
-        running.whenComplete(() {
-          if (identical(_automaticFuture, running)) _automaticFuture = null;
-        }),
-      );
-    });
+    _automaticSyncTimer = _lifecycleZone.run(
+      () => Timer(debounce, () {
+        final running = _runAutomaticSync();
+        _automaticFuture = running;
+        unawaited(
+          running.whenComplete(() {
+            if (identical(_automaticFuture, running)) _automaticFuture = null;
+          }),
+        );
+      }),
+    );
   }
 
   Future<void> _runAutomaticSync() async {

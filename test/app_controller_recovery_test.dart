@@ -80,6 +80,37 @@ void main() {
     },
   );
 
+  test('callback retained from a completed download cannot bypass a later activity', () async {
+    final identity = await controller.database.ensureCatalogIdentity();
+    await controller.downloadRemoteBundle(expectedRemote: _Provider.remote);
+    final oldZone = provider.downloadZone!;
+    await controller.syncCoordinator.connect(provider, identity);
+    provider.holdMetadata = true;
+    final validation = controller.takeOverAutomaticSync();
+    await provider.entered.future;
+    try {
+      await expectLater(
+        oldZone.run(
+          () =>
+              controller.downloadRemoteBundle(expectedRemote: _Provider.remote),
+        ),
+        throwsA(isA<SyncBusyException>()),
+      );
+    } finally {
+      provider.release.complete();
+      await validation;
+    }
+  });
+
+  test(
+    'automatic scheduling after a downloaded replacement uses the owner zone',
+    () async {
+      final owner = Zone.current;
+      await controller.downloadRemoteBundle(expectedRemote: _Provider.remote);
+      expect(controller.scheduleZone, same(owner));
+    },
+  );
+
   test('import waits for in-flight remote validation', () async {
     provider.holdMetadata = true;
     final validation = controller.takeOverAutomaticSync();
@@ -139,9 +170,11 @@ class _SchedulingController extends AppController {
   _SchedulingController(String root)
     : super(tokenStorage: _Tokens(), imageRootPathOverride: '$root/images');
   int schedules = 0;
+  Zone? scheduleZone;
   @override
   void scheduleAutomaticSync({Duration debounce = const Duration(seconds: 5)}) {
     schedules++;
+    scheduleZone = Zone.current;
   }
 }
 
@@ -151,6 +184,7 @@ class _Provider implements SyncProvider, SyncLeaseProvider {
     contentHash: 'h1',
   );
   late Uint8List payload;
+  Zone? downloadZone;
   bool holdMetadata = false, holdDownload = false;
   final entered = Completer<void>(), release = Completer<void>();
   @override
@@ -181,6 +215,7 @@ class _Provider implements SyncProvider, SyncLeaseProvider {
     SyncRemoteTarget target, {
     SyncPrecondition? precondition,
   }) async {
+    downloadZone = Zone.current;
     if (holdDownload) {
       entered.complete();
       await release.future;
