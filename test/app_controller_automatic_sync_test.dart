@@ -20,7 +20,7 @@ void main() {
         (_) async => Directory.systemTemp.path,
       );
   late Directory dir;
-  late AppController controller;
+  late _Controller controller;
   late _LeaseProvider provider;
   late DateTime now;
   late _ManualTimer renewal;
@@ -34,7 +34,8 @@ void main() {
     disposed = false;
     now = DateTime.utc(2026);
     provider = _LeaseProvider(() => now);
-    controller = AppController(
+    controller = _Controller(
+      googleDriveProvider: provider,
       tokenStorage: _Tokens(),
       imageRootPathOverride: '${dir.path}/images',
       clock: () => now,
@@ -64,6 +65,136 @@ void main() {
     }
     await dir.delete(recursive: true);
   });
+
+  test(
+    'disable signals the automatic transfer before waiting for its upload',
+    () async {
+      provider.holdUpload = true;
+      controller.scheduleAutomaticSync(debounce: Duration.zero);
+      await provider.uploadStarted.future;
+      final token = controller.syncCoordinator.activeCancellation!;
+      final disabling = controller.setAutomaticSyncEnabled(false);
+      expect(token.isCancelled, isTrue);
+      provider.releaseUpload.complete();
+      await disabling;
+      expect(storage.value!.automaticSyncEnabled, isFalse);
+      expect(storage.value!.automaticSchedulerState, 'disabled');
+      expect(controller.automaticSyncError, isNull);
+    },
+  );
+
+  test(
+    'disable cancels automatic work queued behind renewal before export',
+    () async {
+      provider.holdRenewal = true;
+      renewal.fire();
+      await provider.renewalStarted.future;
+      controller.scheduleAutomaticSync(debounce: Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      final disabling = controller.setAutomaticSyncEnabled(false);
+      provider.releaseRenewal.complete();
+      await disabling;
+      expect(controller.exports, 0);
+      expect(provider.uploads, 0);
+      expect(storage.value!.automaticSyncEnabled, isFalse);
+    },
+  );
+
+  test('disable preserves manual transfer; connect fails busy before authentication', () async {
+    provider.holdUpload = true;
+    controller.syncCoordinator.metadata = controller.syncCoordinator.metadata!
+        .copyWith(
+          revision: 'r1',
+          contentHash: 'h1',
+          lastSuccessfulLocalFingerprint: 'previous',
+        );
+    final sync = controller.syncNow();
+    await provider.uploadStarted.future;
+    final token = controller.syncCoordinator.activeCancellation!;
+    final authentications = provider.authentications;
+    await expectLater(
+      controller.connectGoogleDrive(),
+      throwsA(isA<SyncBusyException>()),
+    );
+    expect(provider.authentications, authentications);
+    final disabling = controller.setAutomaticSyncEnabled(false);
+    expect(token.isCancelled, isFalse);
+    provider.releaseUpload.complete();
+    await sync;
+    await disabling;
+    expect(storage.value!.automaticSyncEnabled, isFalse);
+  });
+
+  test(
+    'minimize without a pending debounce does not export or upload',
+    () async {
+      controller.scheduleAutomaticSync(debounce: Duration.zero);
+      while (controller.automaticSyncLastSuccess == null) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      final exports = controller.exports, uploads = provider.uploads;
+      controller.didChangeAppLifecycleState(AppLifecycleState.hidden);
+      controller.didChangeAppLifecycleState(AppLifecycleState.paused);
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.exports, exports);
+      expect(provider.uploads, uploads);
+    },
+  );
+
+  test(
+    'takeover waits for a stale lease loss and retains the new ownership',
+    () async {
+      final bundle = '${dir.path}/takeover.realmwise';
+      await controller.exportDeviceBundle(bundle);
+      final fingerprint = (await controller.bundles.validateBundle(bundle))
+          .contentFingerprint;
+      controller.syncCoordinator.metadata = controller.syncCoordinator.metadata!
+          .copyWith(
+            revision: 'r1',
+            contentHash: 'h1',
+            lastSuccessfulLocalFingerprint: fingerprint,
+          );
+      provider.holdRenewal = true;
+      provider.loseOnRenewal = true;
+      renewal.fire();
+      await provider.renewalStarted.future;
+      final takeover = controller.takeOverAutomaticSync();
+      await Future<void>.delayed(Duration.zero);
+      expect(provider.takeovers, 0);
+      provider.releaseRenewal.complete();
+      await takeover;
+      expect(provider.takeovers, 1);
+      expect(controller.automaticSyncEnabled, isTrue);
+      expect(controller.automaticSyncOwnershipValid, isTrue);
+      expect(storage.value!.leaseToken, 'takeover-1');
+    },
+  );
+
+  test(
+    'disable waits for takeover validation without stale re-enable',
+    () async {
+      final bundle = '${dir.path}/validation.realmwise';
+      await controller.exportDeviceBundle(bundle);
+      final fingerprint = (await controller.bundles.validateBundle(bundle))
+          .contentFingerprint;
+      controller.syncCoordinator.metadata = controller.syncCoordinator.metadata!
+          .copyWith(
+            revision: 'r1',
+            contentHash: 'h1',
+            lastSuccessfulLocalFingerprint: fingerprint,
+          );
+      provider.holdMetadata = true;
+      final takeover = controller.takeOverAutomaticSync();
+      await provider.metadataStarted.future;
+      final disabling = controller.setAutomaticSyncEnabled(false);
+      provider.releaseMetadata.complete();
+      await takeover;
+      await disabling;
+      expect(storage.value!.automaticSyncEnabled, isFalse);
+      expect(controller.automaticSyncOwnershipValid, isFalse);
+      expect(renewal.isActive, isFalse);
+    },
+  );
 
   for (final setting in ['automatic', 'images']) {
     test(
@@ -391,6 +522,22 @@ void main() {
   });
 }
 
+class _Controller extends AppController {
+  _Controller({
+    super.tokenStorage,
+    super.imageRootPathOverride,
+    super.clock,
+    super.periodicTimer,
+    super.googleDriveProvider,
+  });
+  int exports = 0;
+  @override
+  Future<void> exportDeviceBundle(String outputPath) {
+    exports++;
+    return super.exportDeviceBundle(outputPath);
+  }
+}
+
 class _ManualTimer implements Timer {
   _ManualTimer(this.callback);
   final void Function(Timer) callback;
@@ -416,7 +563,10 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
   String owner = 'device';
   int renewals = 0, uploads = 0, releases = 0;
   bool loseOnRead = false, holdRenewal = false;
-  int leaseReads = 0;
+  int leaseReads = 0, takeovers = 0, authentications = 0;
+  bool holdMetadata = false;
+  final metadataStarted = Completer<void>(),
+      releaseMetadata = Completer<void>();
   final renewalStarted = Completer<void>(), releaseRenewal = Completer<void>();
   bool loseOnRenewal = false;
   bool holdUpload = false;
@@ -424,8 +574,11 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
   @override
   String get provider => 'fake';
   @override
-  Future<SyncAuthSession> authenticate() async =>
-      const SyncAuthSession(accountId: 'account');
+  Future<SyncAuthSession> authenticate() async {
+    authentications++;
+    return const SyncAuthSession(accountId: 'account');
+  }
+
   @override
   Future<List<SyncRemoteTarget>> listRemoteTargets(
     SyncAuthSession session,
@@ -434,8 +587,17 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
   Future<SyncRemoteMetadata?> metadata(
     SyncAuthSession session,
     SyncRemoteTarget target,
-  ) async =>
-      const SyncRemoteMetadata(revision: SyncRevision('r1'), contentHash: 'h1');
+  ) async {
+    if (holdMetadata) {
+      metadataStarted.complete();
+      await releaseMetadata.future;
+    }
+    return const SyncRemoteMetadata(
+      revision: SyncRevision('r1'),
+      contentHash: 'h1',
+    );
+  }
+
   @override
   Future<SyncUploadResult> upload(
     SyncAuthSession session,
@@ -482,16 +644,20 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
     required String deviceName,
     required Duration duration,
     bool takeover = false,
-  }) async => lease = SyncLease(
-    catalogIdentity: catalogIdentity,
-    ownerDeviceId: deviceId,
-    ownerDeviceName: deviceName,
-    generation: 'generation',
-    token: 'token',
-    issuedAt: clock(),
-    expiresAt: clock().add(duration),
-    lastRenewedAt: clock(),
-  );
+  }) async {
+    if (takeover) takeovers++;
+    return lease = SyncLease(
+      catalogIdentity: catalogIdentity,
+      ownerDeviceId: deviceId,
+      ownerDeviceName: deviceName,
+      generation: takeovers == 0 ? 'generation' : 'takeover-$takeovers',
+      token: takeovers == 0 ? 'token' : 'takeover-$takeovers',
+      issuedAt: clock(),
+      expiresAt: clock().add(duration),
+      lastRenewedAt: clock(),
+    );
+  }
+
   @override
   Future<SyncLease> renewLease(
     SyncAuthSession session,

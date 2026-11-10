@@ -170,6 +170,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   bool _backgrounded = false;
   bool _disposed = false;
   Future<void>? _automaticFuture;
+  SyncCancellationToken? _automaticCancellation;
+  SyncCancellationToken? _automaticTransferCancellation;
   Future<void> _operationTail = Future<void>.value();
   bool automaticSyncEnabled = false;
   String deviceId = '';
@@ -543,8 +545,14 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> setAutomaticSyncEnabled(bool enabled) =>
-      _serialize(() => _setAutomaticSyncEnabled(enabled));
+  Future<void> setAutomaticSyncEnabled(bool enabled) {
+    if (!enabled) {
+      _cancelAutomaticTimers();
+      _automaticCancellation?.cancel();
+      _automaticTransferCancellation?.cancel();
+    }
+    return _serialize(() => _setAutomaticSyncEnabled(enabled));
+  }
 
   Future<void> _setAutomaticSyncEnabled(bool enabled) async {
     final metadata = syncCoordinator.metadata;
@@ -574,7 +582,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> takeOverAutomaticSync() async {
+  Future<void> takeOverAutomaticSync() => _serialize(_takeOverAutomaticSync);
+
+  Future<void> _takeOverAutomaticSync() async {
     if (!syncCoordinator.isConnected) {
       throw StateError('Connect a cloud provider first.');
     }
@@ -611,14 +621,22 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _runAutomaticSync() async {
-    if (!automaticSyncEnabled || !automaticSyncOwnershipValid || isSyncing)
+    if (!automaticSyncEnabled ||
+        !automaticSyncOwnershipValid ||
+        isSyncing ||
+        isConnectionPending ||
+        _automaticCancellation != null)
       return;
+    final cancellation = SyncCancellationToken();
+    _automaticCancellation = cancellation;
     automaticSyncLastAttempt = clock().toUtc();
     notifyListeners();
     try {
-      await _serialize(_automaticUploadInternal);
+      await _serialize(() => _automaticUploadInternal(cancellation));
       automaticSyncLastSuccess = clock().toUtc();
       automaticSyncError = null;
+    } on SyncCancelledException {
+      // Disabling automatic sync intentionally cancels queued/pre-transfer work.
     } catch (error) {
       automaticSyncError = _syncErrorMessage(error);
       if (error is SyncLeaseLostException) {
@@ -628,11 +646,17 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         _automaticSyncTimer?.cancel();
         syncMetadata = syncCoordinator.metadata;
       }
+    } finally {
+      _automaticCancellation = null;
+      _automaticTransferCancellation = null;
     }
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
-  Future<void> _automaticUploadInternal() async {
+  Future<void> _automaticUploadInternal(
+    SyncCancellationToken cancellation,
+  ) async {
+    cancellation.throwIfCancelled();
     if (!database.isOpen) throw StateError('Open a catalog first.');
     final temporary = await getTemporaryDirectory();
     final bundlePath = path.join(
@@ -640,12 +664,18 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       'realmwise-auto-${DateTime.now().microsecondsSinceEpoch}.realmwise',
     );
     try {
+      cancellation.throwIfCancelled();
       await exportDeviceBundle(bundlePath);
       final manifest = await bundles.validateBundle(bundlePath);
-      syncMetadata = await syncCoordinator.automaticUpload(
-        Uint8List.fromList(await File(bundlePath).readAsBytes()),
+      final payload = Uint8List.fromList(await File(bundlePath).readAsBytes());
+      cancellation.throwIfCancelled();
+      if (syncCoordinator.isSyncing) throw const SyncBusyException();
+      final upload = syncCoordinator.automaticUpload(
+        payload,
         localFingerprint: manifest.contentFingerprint,
       );
+      _automaticTransferCancellation = syncCoordinator.activeCancellation;
+      syncMetadata = await upload;
     } finally {
       final file = File(bundlePath);
       if (await file.exists()) await file.delete();
@@ -659,21 +689,19 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       'realmwise-auto-validate-${DateTime.now().microsecondsSinceEpoch}.realmwise',
     );
     try {
-      await _serialize(() async {
-        await exportDeviceBundle(bundlePath);
-        final manifest = await bundles.validateBundle(bundlePath);
-        final decision = await syncCoordinator.classify(
-          manifest.contentFingerprint,
+      await exportDeviceBundle(bundlePath);
+      final manifest = await bundles.validateBundle(bundlePath);
+      final decision = await syncCoordinator.classify(
+        manifest.contentFingerprint,
+      );
+      if (decision.classification == SyncClassification.divergent ||
+          decision.classification == SyncClassification.unknownError ||
+          decision.classification == SyncClassification.remoteOnly) {
+        throw SyncDecisionRequired(
+          decision,
+          localFingerprint: manifest.contentFingerprint,
         );
-        if (decision.classification == SyncClassification.divergent ||
-            decision.classification == SyncClassification.unknownError ||
-            decision.classification == SyncClassification.remoteOnly) {
-          throw SyncDecisionRequired(
-            decision,
-            localFingerprint: manifest.contentFingerprint,
-          );
-        }
-      });
+      }
       automaticSyncOwnershipValid = true;
       syncMetadata = syncCoordinator.metadata;
       scheduleAutomaticSync();
@@ -690,6 +718,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final wasForeground = _foreground;
+    final hadPendingUpload = _automaticSyncTimer?.isActive ?? false;
     // Desktop focus loss is inactive while the window remains visible.
     _foreground =
         state == AppLifecycleState.resumed ||
@@ -709,7 +738,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
             state == AppLifecycleState.paused ||
             state == AppLifecycleState.detached)) {
       // Best effort only: lifecycle callbacks must never delay closing.
-      if (automaticSyncEnabled && automaticSyncOwnershipValid) {
+      if (hadPendingUpload &&
+          automaticSyncEnabled &&
+          automaticSyncOwnershipValid) {
         final running = _runAutomaticSync();
         _automaticFuture = running;
         unawaited(
@@ -790,11 +821,14 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       );
     }
     if (!database.isOpen) throw StateError('Open a catalog first.');
-    final identity = await database.ensureCatalogIdentity();
+    if (isSyncing || _automaticCancellation != null || isConnectionPending) {
+      throw const SyncBusyException();
+    }
     _pendingConnectionProvider = provider;
     _pendingConnectionCancellationRequested = false;
     notifyListeners();
     try {
+      final identity = await database.ensureCatalogIdentity();
       syncMetadata = await syncCoordinator.connect(provider, identity);
       automaticSyncEnabled = syncMetadata?.automaticSyncEnabled ?? false;
       automaticSyncOwnershipValid = _hasAutomaticOwnership;
@@ -882,6 +916,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> disconnectOneDrive() => disconnectGoogleDrive();
 
   Future<void> syncNow() {
+    if (isConnectionPending) return Future.error(const SyncBusyException());
     final running = _syncFuture;
     if (running != null) return Future<void>.error(const SyncBusyException());
     final operation = _serialize(_syncNowInternal);
