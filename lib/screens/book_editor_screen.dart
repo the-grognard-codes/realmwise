@@ -614,7 +614,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
 
   Future<String?> _imageLabelDialog() async {
     final label = TextEditingController(text: 'image');
-    final result = await showDialog<String>(
+    final route = DialogRoute<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Image filename label'),
@@ -636,8 +636,17 @@ class _BookEditorScreenState extends State<BookEditorScreen>
         ],
       ),
     );
-    label.dispose();
-    return result;
+    try {
+      final result = await Navigator.of(
+        context,
+        rootNavigator: true,
+      ).push(route);
+      // The pop result arrives before the closing animation releases TextField.
+      await route.completed;
+      return result;
+    } finally {
+      label.dispose();
+    }
   }
 
   Future<void> _setCover(int index) async {

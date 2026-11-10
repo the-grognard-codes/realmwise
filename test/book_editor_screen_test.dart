@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:realmwise/models/catalog_models.dart';
@@ -7,10 +8,79 @@ import 'package:realmwise/screens/book_editor_screen.dart';
 import 'package:realmwise/services/app_controller.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+class _CancelledImagePicker extends FilePickerPlatform {
+  _CancelledImagePicker(this.dialogVisible);
+  final bool Function() dialogVisible;
+  int calls = 0;
+  bool? dialogVisibleAtInvocation;
+  @override
+  Future<List<PlatformFile>> pickFiles({
+    String? dialogTitle,
+    String? initialDirectory,
+    FileType type = FileType.any,
+    List<String>? allowedExtensions,
+    Function(FilePickerStatus)? onFileLoading,
+    int compressionQuality = 0,
+    AndroidOptions androidOptions = const AndroidOptions(),
+    DarwinOptions darwinOptions = const DarwinOptions(),
+    WindowsOptions windowsOptions = const WindowsOptions(),
+    LinuxOptions linuxOptions = const LinuxOptions(),
+    WebOptions webOptions = const WebOptions(),
+  }) async {
+    calls++;
+    dialogVisibleAtInvocation = dialogVisible();
+    return [];
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
+
+  for (final choice in ['Choose images', 'Cancel']) {
+    testWidgets('image label dialog finishes closing before $choice cleanup', (
+      tester,
+    ) async {
+      final controller = AppController();
+      final previousPicker = FilePickerPlatform.instance;
+      final picker = _CancelledImagePicker(
+        () => find.byType(AlertDialog).evaluate().isNotEmpty,
+      );
+      FilePickerPlatform.instance = picker;
+      try {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: BookEditorScreen(
+              controller: controller,
+              record: const CatalogRecord(
+                work: BookWork(title: 'Image dialog fixture'),
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.text('Images'));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('Add local images'));
+        await tester.tap(find.text('Add local images'));
+        await tester.pumpAndSettle();
+        expect(find.byType(AlertDialog), findsOneWidget);
+        await tester.tap(find.text(choice));
+        await tester.pump();
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(find.byType(AlertDialog), findsNothing);
+        expect(picker.calls, choice == 'Choose images' ? 1 : 0);
+        if (choice == 'Choose images')
+          expect(picker.dialogVisibleAtInvocation, isFalse);
+      } finally {
+        FilePickerPlatform.instance = previousPicker;
+        await tester.pumpWidget(const SizedBox.shrink());
+        controller.dispose();
+        await tester.pump();
+      }
+    });
+  }
 
   for (final operation in ['cover', 'remove']) {
     testWidgets('$operation then back leaves saved images unchanged', (
