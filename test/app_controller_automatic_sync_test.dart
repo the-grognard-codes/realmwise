@@ -67,6 +67,102 @@ void main() {
   });
 
   test(
+    'an edit during export is uploaded by a follow-up automatic run',
+    () async {
+      controller.retryDebounce = const Duration(milliseconds: 20);
+      controller.holdExport = true;
+      controller.scheduleAutomaticSync(debounce: Duration.zero);
+      await controller.exported.future;
+      await controller.database.databaseHandle.insert('works', {
+        'title': 'Later edit',
+      });
+      controller.scheduleAutomaticSync(debounce: Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      controller.releaseExport.complete();
+      await _until(() => provider.uploads == 2 && !controller.isSyncing);
+      expect(controller.automaticSyncError, isNull);
+      final uploaded = File('${dir.path}/uploaded.realmwise');
+      await uploaded.writeAsBytes(provider.payloads.last);
+      final extracted = '${dir.path}/uploaded.db';
+      await controller.bundles.extractDatabase(uploaded.path, extracted);
+      final db = await databaseFactory.openDatabase(extracted);
+      try {
+        expect((await db.query('works')).single['title'], 'Later edit');
+      } finally {
+        await db.close();
+      }
+    },
+  );
+
+  test(
+    'a debounce during manual sync retries without exporting or an error',
+    () async {
+      controller.retryDebounce = const Duration(milliseconds: 20);
+      provider.holdUpload = true;
+      controller.syncCoordinator.metadata = controller.syncCoordinator.metadata!
+          .copyWith(
+            revision: 'r1',
+            contentHash: 'h1',
+            lastSuccessfulLocalFingerprint: 'previous',
+          );
+      final manual = controller.syncNow();
+      await provider.uploadStarted.future;
+      final exports = controller.exports;
+      controller.scheduleAutomaticSync(debounce: Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      expect(controller.exports, exports);
+      expect(controller.automaticSyncError, isNull);
+      provider.holdUpload = false;
+      provider.releaseUpload.complete();
+      await manual;
+      await _until(
+        () =>
+            controller.exports > exports &&
+            controller.automaticSyncLastSuccess != null,
+      );
+      expect(controller.automaticSyncError, isNull);
+    },
+  );
+
+  test(
+    'manual sync queued during automatic export is a retry, not an error',
+    () async {
+      controller.retryDebounce = const Duration(milliseconds: 20);
+      controller.holdExport = true;
+      controller.scheduleAutomaticSync(debounce: Duration.zero);
+      await controller.exported.future;
+      controller.syncCoordinator.metadata = controller.syncCoordinator.metadata!
+          .copyWith(
+            revision: 'r1',
+            contentHash: 'h1',
+            lastSuccessfulLocalFingerprint: 'previous',
+          );
+      final manual = controller.syncNow();
+      controller.releaseExport.complete();
+      await manual;
+      await _until(() => controller.automaticSyncLastSuccess != null);
+      expect(controller.automaticSyncError, isNull);
+      expect(controller.exports, greaterThanOrEqualTo(3));
+    },
+  );
+
+  test('close still drains an export after an overlapping debounce', () async {
+    controller.holdExport = true;
+    controller.scheduleAutomaticSync(debounce: Duration.zero);
+    await controller.exported.future;
+    controller.scheduleAutomaticSync(debounce: Duration.zero);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    var closed = false;
+    final closing = controller.closeDatabase().then((_) => closed = true);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(closed, isFalse);
+    expect(controller.database.isOpen, isTrue);
+    controller.releaseExport.complete();
+    await closing;
+    expect(controller.database.isOpen, isFalse);
+  });
+
+  test(
     'disable signals the automatic transfer before waiting for its upload',
     () async {
       provider.holdUpload = true;
@@ -531,10 +627,26 @@ class _Controller extends AppController {
     super.googleDriveProvider,
   });
   int exports = 0;
+  bool holdExport = false;
+  Duration? retryDebounce;
+  final exported = Completer<void>(), releaseExport = Completer<void>();
   @override
-  Future<void> exportDeviceBundle(String outputPath) {
+  void scheduleAutomaticSync({Duration debounce = const Duration(seconds: 5)}) {
+    super.scheduleAutomaticSync(
+      debounce: debounce == const Duration(seconds: 5)
+          ? retryDebounce ?? debounce
+          : debounce,
+    );
+  }
+
+  @override
+  Future<void> exportDeviceBundle(String outputPath) async {
     exports++;
-    return super.exportDeviceBundle(outputPath);
+    await super.exportDeviceBundle(outputPath);
+    if (holdExport && !exported.isCompleted) {
+      exported.complete();
+      await releaseExport.future;
+    }
   }
 }
 
@@ -562,6 +674,7 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
   SyncLease? lease;
   String owner = 'device';
   int renewals = 0, uploads = 0, releases = 0;
+  final payloads = <Uint8List>[];
   bool loseOnRead = false, holdRenewal = false;
   int leaseReads = 0, takeovers = 0, authentications = 0;
   bool holdMetadata = false;
@@ -606,6 +719,7 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
     SyncPrecondition? precondition,
   }) async {
     uploads++;
+    payloads.add(payload);
     if (holdUpload) {
       uploadStarted.complete();
       await releaseUpload.future;
@@ -720,4 +834,12 @@ class _Tokens implements TokenStorage {
   Future<void> write(String key, String value) async {}
   @override
   Future<void> delete(String key) async {}
+}
+
+Future<void> _until(bool Function() predicate) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!predicate()) {
+    if (DateTime.now().isAfter(deadline)) fail('Timed out waiting for sync');
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
 }

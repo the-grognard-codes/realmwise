@@ -170,6 +170,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   bool _backgrounded = false;
   bool _disposed = false;
   Future<void>? _automaticFuture;
+  bool _automaticSyncPending = false;
   SyncCancellationToken? _automaticCancellation;
   SyncCancellationToken? _automaticTransferCancellation;
   Future<void> _operationTail = Future<void>.value();
@@ -214,6 +215,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _cancelAutomaticTimers() {
+    _automaticSyncPending = false;
     _leaseRenewalTimer?.cancel();
     _leaseRenewalTimer = null;
     _automaticSyncTimer?.cancel();
@@ -621,12 +623,20 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _runAutomaticSync() async {
-    if (!automaticSyncEnabled ||
-        !automaticSyncOwnershipValid ||
-        isSyncing ||
-        isConnectionPending ||
-        _automaticCancellation != null)
+    if (_disposed || !automaticSyncEnabled || !automaticSyncOwnershipValid)
       return;
+    if (_automaticCancellation != null) {
+      _automaticSyncPending = true;
+      // Keep the timer's tracked future tied to the active run so lifecycle
+      // draining still waits for it after a duplicate debounce fires.
+      await _automaticFuture;
+      return;
+    }
+    if (isSyncing || isConnectionPending) {
+      scheduleAutomaticSync();
+      return;
+    }
+    _automaticSyncPending = false;
     final cancellation = SyncCancellationToken();
     _automaticCancellation = cancellation;
     automaticSyncLastAttempt = clock().toUtc();
@@ -637,6 +647,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       automaticSyncError = null;
     } on SyncCancelledException {
       // Disabling automatic sync intentionally cancels queued/pre-transfer work.
+    } on SyncBusyException {
+      _automaticSyncPending = true;
     } catch (error) {
       automaticSyncError = _syncErrorMessage(error);
       if (error is SyncLeaseLostException) {
@@ -649,6 +661,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     } finally {
       _automaticCancellation = null;
       _automaticTransferCancellation = null;
+      if (_automaticSyncPending && !cancellation.isCancelled) {
+        _automaticSyncPending = false;
+        scheduleAutomaticSync();
+      }
     }
     if (!_disposed) notifyListeners();
   }
@@ -657,6 +673,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     SyncCancellationToken cancellation,
   ) async {
     cancellation.throwIfCancelled();
+    if (isSyncing || isConnectionPending) throw const SyncBusyException();
     if (!database.isOpen) throw StateError('Open a catalog first.');
     final temporary = await getTemporaryDirectory();
     final bundlePath = path.join(
@@ -669,7 +686,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       final manifest = await bundles.validateBundle(bundlePath);
       final payload = Uint8List.fromList(await File(bundlePath).readAsBytes());
       cancellation.throwIfCancelled();
-      if (syncCoordinator.isSyncing) throw const SyncBusyException();
+      if (isSyncing || isConnectionPending) throw const SyncBusyException();
       final upload = syncCoordinator.automaticUpload(
         payload,
         localFingerprint: manifest.contentFingerprint,
