@@ -155,51 +155,108 @@ class SyncMetadata {
     automaticSchedulerState: json['automaticSchedulerState'] as String?,
   );
 
+  static const _unchanged = Object();
+
   SyncMetadata copyWith({
+    String? catalogIdentity,
+    Object? provider = _unchanged,
+    Object? accountId = _unchanged,
+    Object? accountDisplayName = _unchanged,
+    Object? remoteTargetId = _unchanged,
+    Object? remoteTargetName = _unchanged,
+    Object? revision = _unchanged,
+    Object? contentHash = _unchanged,
+    Object? lastSuccessfulLocalFingerprint = _unchanged,
+    Object? createdAt = _unchanged,
+    Object? updatedAt = _unchanged,
+    SyncState? state,
+    Object? error = _unchanged,
+    bool? includePersonalImages,
+    int? retainedRevisionCount,
     bool? automaticSyncEnabled,
-    String? deviceId,
-    String? deviceName,
-    String? ownershipGeneration,
-    String? leaseToken,
-    DateTime? leaseExpiresAt,
-    DateTime? lastLeaseRenewedAt,
-    DateTime? lastAutomaticAttemptAt,
-    DateTime? lastAutomaticSuccessAt,
-    String? automaticSchedulerState,
+    Object? deviceId = _unchanged,
+    Object? deviceName = _unchanged,
+    Object? ownershipGeneration = _unchanged,
+    Object? leaseToken = _unchanged,
+    Object? leaseExpiresAt = _unchanged,
+    Object? lastLeaseRenewedAt = _unchanged,
+    Object? lastAutomaticAttemptAt = _unchanged,
+    Object? lastAutomaticSuccessAt = _unchanged,
+    Object? automaticSchedulerState = _unchanged,
     bool clearLease = false,
   }) => SyncMetadata(
-    catalogIdentity: catalogIdentity,
-    provider: provider,
-    accountId: accountId,
-    accountDisplayName: accountDisplayName,
-    remoteTargetId: remoteTargetId,
-    remoteTargetName: remoteTargetName,
-    revision: revision,
-    contentHash: contentHash,
-    lastSuccessfulLocalFingerprint: lastSuccessfulLocalFingerprint,
-    createdAt: createdAt,
-    updatedAt: DateTime.now().toUtc(),
-    state: state,
-    error: error,
-    includePersonalImages: includePersonalImages,
-    retainedRevisionCount: retainedRevisionCount,
+    catalogIdentity: catalogIdentity ?? this.catalogIdentity,
+    provider: identical(provider, _unchanged)
+        ? this.provider
+        : provider as String?,
+    accountId: identical(accountId, _unchanged)
+        ? this.accountId
+        : accountId as String?,
+    accountDisplayName: identical(accountDisplayName, _unchanged)
+        ? this.accountDisplayName
+        : accountDisplayName as String?,
+    remoteTargetId: identical(remoteTargetId, _unchanged)
+        ? this.remoteTargetId
+        : remoteTargetId as String?,
+    remoteTargetName: identical(remoteTargetName, _unchanged)
+        ? this.remoteTargetName
+        : remoteTargetName as String?,
+    revision: identical(revision, _unchanged)
+        ? this.revision
+        : revision as String?,
+    contentHash: identical(contentHash, _unchanged)
+        ? this.contentHash
+        : contentHash as String?,
+    lastSuccessfulLocalFingerprint:
+        identical(lastSuccessfulLocalFingerprint, _unchanged)
+        ? this.lastSuccessfulLocalFingerprint
+        : lastSuccessfulLocalFingerprint as String?,
+    createdAt: identical(createdAt, _unchanged)
+        ? this.createdAt
+        : createdAt as DateTime?,
+    updatedAt: identical(updatedAt, _unchanged)
+        ? DateTime.now().toUtc()
+        : updatedAt as DateTime?,
+    state: state ?? this.state,
+    error: identical(error, _unchanged) ? this.error : error as String?,
+    includePersonalImages: includePersonalImages ?? this.includePersonalImages,
+    retainedRevisionCount: retainedRevisionCount ?? this.retainedRevisionCount,
     automaticSyncEnabled: automaticSyncEnabled ?? this.automaticSyncEnabled,
-    deviceId: deviceId ?? this.deviceId,
-    deviceName: deviceName ?? this.deviceName,
+    deviceId: identical(deviceId, _unchanged)
+        ? this.deviceId
+        : deviceId as String?,
+    deviceName: identical(deviceName, _unchanged)
+        ? this.deviceName
+        : deviceName as String?,
     ownershipGeneration: clearLease
         ? null
-        : ownershipGeneration ?? this.ownershipGeneration,
-    leaseToken: clearLease ? null : leaseToken ?? this.leaseToken,
-    leaseExpiresAt: clearLease ? null : leaseExpiresAt ?? this.leaseExpiresAt,
+        : identical(ownershipGeneration, _unchanged)
+        ? this.ownershipGeneration
+        : ownershipGeneration as String?,
+    leaseToken: clearLease
+        ? null
+        : identical(leaseToken, _unchanged)
+        ? this.leaseToken
+        : leaseToken as String?,
+    leaseExpiresAt: clearLease
+        ? null
+        : identical(leaseExpiresAt, _unchanged)
+        ? this.leaseExpiresAt
+        : leaseExpiresAt as DateTime?,
     lastLeaseRenewedAt: clearLease
         ? null
-        : lastLeaseRenewedAt ?? this.lastLeaseRenewedAt,
-    lastAutomaticAttemptAt:
-        lastAutomaticAttemptAt ?? this.lastAutomaticAttemptAt,
-    lastAutomaticSuccessAt:
-        lastAutomaticSuccessAt ?? this.lastAutomaticSuccessAt,
-    automaticSchedulerState:
-        automaticSchedulerState ?? this.automaticSchedulerState,
+        : identical(lastLeaseRenewedAt, _unchanged)
+        ? this.lastLeaseRenewedAt
+        : lastLeaseRenewedAt as DateTime?,
+    lastAutomaticAttemptAt: identical(lastAutomaticAttemptAt, _unchanged)
+        ? this.lastAutomaticAttemptAt
+        : lastAutomaticAttemptAt as DateTime?,
+    lastAutomaticSuccessAt: identical(lastAutomaticSuccessAt, _unchanged)
+        ? this.lastAutomaticSuccessAt
+        : lastAutomaticSuccessAt as DateTime?,
+    automaticSchedulerState: identical(automaticSchedulerState, _unchanged)
+        ? this.automaticSchedulerState
+        : automaticSchedulerState as String?,
   );
 
   static DateTime? _date(Object? value) =>
