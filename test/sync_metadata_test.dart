@@ -9,6 +9,28 @@ import 'package:realmwise/services/sync_contract.dart';
 import 'package:realmwise/services/sync_coordinator.dart';
 
 void main() {
+  test(
+    'typed metadata copies preserve timestamps and clear only explicit fields',
+    () {
+      final metadata = SyncMetadata(
+        catalogIdentity: 'catalog',
+        revision: 'r1',
+        error: 'error',
+        updatedAt: DateTime.utc(2026),
+        leaseToken: 'token',
+      );
+      final copied = metadata.copyWith(
+        includePersonalImages: true,
+        clearFields: {SyncMetadataField.error},
+      );
+      expect(copied.updatedAt, metadata.updatedAt);
+      expect(copied.revision, 'r1');
+      expect(copied.error, isNull);
+      expect(copied.leaseToken, 'token');
+      expect(copied.copyWith(clearLease: true).leaseToken, isNull);
+    },
+  );
+
   for (final operation in [
     'classify',
     'upload',

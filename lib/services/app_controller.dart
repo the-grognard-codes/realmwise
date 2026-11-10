@@ -188,13 +188,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   void cancelSync() => syncCoordinator.cancel();
 
   Future<void> _cancelAndAwaitSync() async {
-    _leaseRenewalTimer?.cancel();
-    _leaseRenewalTimer = null;
-    await _leaseRenewalFuture;
-    _automaticSyncTimer?.cancel();
+    _cancelAutomaticTimers();
+    syncCoordinator.cancel();
     final running = _syncFuture;
     if (running != null) {
-      syncCoordinator.cancel();
       try {
         await running;
       } on Object {
@@ -202,6 +199,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         // catalog remains intact and the next open can restore its metadata.
       }
     }
+    await _leaseRenewalFuture;
     final automatic = _automaticFuture;
     if (automatic != null) {
       try {
@@ -212,11 +210,24 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _clearAutomaticSyncState() {
+  void _cancelAutomaticTimers() {
     _leaseRenewalTimer?.cancel();
     _leaseRenewalTimer = null;
     _automaticSyncTimer?.cancel();
     _automaticSyncTimer = null;
+  }
+
+  bool get _hasAutomaticOwnership =>
+      automaticSyncEnabled &&
+      syncMetadata?.deviceId == deviceId &&
+      syncMetadata?.leaseToken != null &&
+      (syncMetadata?.leaseExpiresAt?.isAfter(clock().toUtc()) ?? false);
+
+  String _syncErrorMessage(Object error) =>
+      error.toString().replaceFirst('Exception: ', '');
+
+  void _clearAutomaticSyncState() {
+    _cancelAutomaticTimers();
     automaticSyncEnabled = false;
     automaticSyncOwnershipValid = false;
     automaticSyncError = null;
@@ -397,11 +408,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       );
       syncCoordinator.metadata = syncMetadata;
       automaticSyncEnabled = syncMetadata?.automaticSyncEnabled ?? false;
-      automaticSyncOwnershipValid =
-          automaticSyncEnabled &&
-          syncMetadata?.deviceId == deviceId &&
-          syncMetadata?.leaseToken != null &&
-          (syncMetadata?.leaseExpiresAt?.isAfter(clock().toUtc()) ?? false);
+      automaticSyncOwnershipValid = _hasAutomaticOwnership;
       final savedSync = syncMetadata;
       final provider = savedSync?.provider == null
           ? null
@@ -542,14 +549,13 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         'Connect a cloud provider before enabling automatic sync.',
       );
     }
-    _automaticSyncTimer?.cancel();
+    _cancelAutomaticTimers();
     if (enabled) {
       await syncCoordinator.enableAutomaticSync(
         deviceId: deviceId,
         deviceName: deviceName,
       );
       automaticSyncOwnershipValid = true;
-      scheduleAutomaticSync();
     } else {
       await syncCoordinator.disableAutomaticSync();
       automaticSyncOwnershipValid = false;
@@ -558,8 +564,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     if (enabled) {
       _startLeaseRenewal();
       scheduleAutomaticSync();
-    } else {
-      _leaseRenewalTimer?.cancel();
     }
     automaticSyncError = null;
     syncMetadata = syncCoordinator.metadata;
@@ -612,8 +616,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       automaticSyncLastSuccess = clock().toUtc();
       automaticSyncError = null;
     } catch (error) {
-      automaticSyncError = error.toString().replaceFirst('Exception: ', '');
+      automaticSyncError = _syncErrorMessage(error);
       if (error is SyncLeaseLostException) {
+        _cancelAutomaticTimers();
         automaticSyncEnabled = false;
         automaticSyncOwnershipValid = false;
         _automaticSyncTimer?.cancel();
@@ -680,11 +685,12 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    _foreground = state == AppLifecycleState.resumed;
+    // Desktop focus loss is inactive while the window remains visible.
+    _foreground =
+        state == AppLifecycleState.resumed ||
+        state == AppLifecycleState.inactive;
     if (!_foreground) {
-      _leaseRenewalTimer?.cancel();
-      _leaseRenewalTimer = null;
-      _automaticSyncTimer?.cancel();
+      _cancelAutomaticTimers();
     }
     if (state == AppLifecycleState.resumed) {
       if (automaticSyncEnabled) {
@@ -731,25 +737,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         if (lease != null) {
           scheduleAutomaticSync();
         } else {
-          _leaseRenewalTimer?.cancel();
-          _automaticSyncTimer?.cancel();
+          _cancelAutomaticTimers();
         }
       } catch (error) {
-        automaticSyncError = error.toString().replaceFirst('Exception: ', '');
-        if (error is SyncLeaseLostException ||
-            error is SyncLeaseContendedException) {
-          await syncCoordinator.disableAutomaticSync();
-          syncCoordinator.metadata = syncCoordinator.metadata?.copyWith(
-            automaticSchedulerState: 'lease_lost',
-          );
-          syncMetadata = syncCoordinator.metadata;
-          if (syncMetadata != null)
-            await syncCoordinator.metadataStorage.write(syncMetadata!);
-          automaticSyncEnabled = false;
-          automaticSyncOwnershipValid = false;
-          _leaseRenewalTimer?.cancel();
-          _automaticSyncTimer?.cancel();
-        }
+        automaticSyncError = _syncErrorMessage(error);
       }
       if (!_disposed) notifyListeners();
     }).whenComplete(() => _leaseRenewalFuture = null);
@@ -797,11 +788,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     try {
       syncMetadata = await syncCoordinator.connect(provider, identity);
       automaticSyncEnabled = syncMetadata?.automaticSyncEnabled ?? false;
-      automaticSyncOwnershipValid =
-          automaticSyncEnabled &&
-          syncMetadata?.deviceId == deviceId &&
-          syncMetadata?.leaseToken != null &&
-          (syncMetadata?.leaseExpiresAt?.isAfter(clock().toUtc()) ?? false);
+      automaticSyncOwnershipValid = _hasAutomaticOwnership;
       automaticSyncError = null;
       automaticSyncLastAttempt = null;
       automaticSyncLastSuccess = null;
@@ -1156,11 +1143,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         syncMetadata = syncCoordinator.metadata;
       }
       automaticSyncEnabled = syncMetadata?.automaticSyncEnabled ?? false;
-      automaticSyncOwnershipValid =
-          automaticSyncEnabled &&
-          syncMetadata?.deviceId == deviceId &&
-          syncMetadata?.leaseToken != null &&
-          (syncMetadata?.leaseExpiresAt?.isAfter(clock().toUtc()) ?? false);
+      automaticSyncOwnershipValid = _hasAutomaticOwnership;
       if (!automaticSyncOwnershipValid) {
         _automaticSyncTimer?.cancel();
       } else {
@@ -1222,7 +1205,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     await prefs.setBool('include_personal_images_in_bundles', value);
     final current = syncCoordinator.metadata;
     if (current != null) {
-      syncCoordinator.metadata = current.copyWith(includePersonalImages: value);
+      syncCoordinator.metadata = current.copyWith(
+        includePersonalImages: value,
+        updatedAt: clock().toUtc(),
+      );
       syncMetadata = syncCoordinator.metadata;
       await syncCoordinator.metadataStorage.write(syncMetadata!);
     }
@@ -1500,9 +1486,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void dispose() {
     _disposed = true;
-    _leaseRenewalTimer?.cancel();
+    _cancelAutomaticTimers();
+    if (_syncCoordinatorInitialized) syncCoordinator.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    _automaticSyncTimer?.cancel();
     unawaited(backups.stop());
     unawaited(database.close());
     _http.close();

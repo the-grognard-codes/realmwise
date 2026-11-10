@@ -9,6 +9,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:realmwise/services/app_controller.dart';
 import 'package:realmwise/services/secure_storage_service.dart';
 import 'package:realmwise/services/sync_contract.dart';
+import 'package:realmwise/services/sync_coordinator.dart';
+import 'package:realmwise/services/sync_metadata.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -22,11 +24,14 @@ void main() {
   late _LeaseProvider provider;
   late DateTime now;
   late _ManualTimer renewal;
+  late _MetadataStorage storage;
+  var disposed = false;
   setUp(() async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
     SharedPreferences.setMockInitialValues({});
     dir = await Directory.systemTemp.createTemp('automatic_sync_');
+    disposed = false;
     now = DateTime.utc(2026);
     provider = _LeaseProvider(() => now);
     controller = AppController(
@@ -39,6 +44,11 @@ void main() {
       },
     );
     await controller.openDatabase('${dir.path}/catalog.db', remember: false);
+    storage = _MetadataStorage();
+    controller.syncCoordinator = SyncCoordinator(
+      metadataStorage: storage,
+      clock: () => now,
+    );
     await controller.syncCoordinator.connect(
       provider,
       await controller.database.ensureCatalogIdentity(),
@@ -48,10 +58,134 @@ void main() {
     await controller.setAutomaticSyncEnabled(true);
   });
   tearDown(() async {
-    await controller.closeDatabase();
-    controller.dispose();
+    if (!disposed) {
+      await controller.closeDatabase();
+      controller.dispose();
+    }
     await dir.delete(recursive: true);
   });
+
+  test('inactive keeps pending upload and renews for 25 minutes', () async {
+    controller.syncCoordinator.metadata = controller.syncCoordinator.metadata!
+        .copyWith(
+          revision: 'r1',
+          contentHash: 'h1',
+          lastSuccessfulLocalFingerprint: 'previous',
+        );
+    provider.holdUpload = true;
+    controller.scheduleAutomaticSync(debounce: Duration.zero);
+    controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
+    expect(renewal.isActive, isTrue);
+    await provider.uploadStarted.future;
+    provider.releaseUpload.complete();
+    while (controller.automaticSyncLastSuccess == null) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    for (var minute = 5; minute <= 25; minute += 5) {
+      now = DateTime.utc(2026).add(Duration(minutes: minute));
+      renewal.fire();
+      await Future<void>.delayed(Duration.zero);
+      expect(provider.lease!.isValidAt(now), isTrue);
+    }
+    expect(provider.uploads, 1);
+    expect(provider.renewals, greaterThanOrEqualTo(5));
+  });
+
+  for (final action in ['close', 'disconnect']) {
+    test('$action cancels upload before waiting on queued renewal', () async {
+      provider.holdUpload = true;
+      controller.syncCoordinator.metadata = controller.syncCoordinator.metadata!
+          .copyWith(
+            revision: 'r1',
+            contentHash: 'h1',
+            lastSuccessfulLocalFingerprint: 'previous',
+          );
+      final sync = controller.syncNow();
+      final syncResult = sync.then<void>((_) {}, onError: (Object _) {});
+      await provider.uploadStarted.future;
+      final token = controller.syncCoordinator.activeCancellation!;
+      controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      final closing = action == 'close'
+          ? controller.closeDatabase()
+          : controller.disconnectGoogleDrive();
+      try {
+        expect(token.isCancelled, isTrue);
+        expect(renewal.isActive, isFalse);
+      } finally {
+        provider.releaseUpload.complete();
+        await syncResult;
+        await closing;
+      }
+    });
+  }
+
+  test('disconnect cancels pending upload and renewal', () async {
+    controller.scheduleAutomaticSync(debounce: Duration.zero);
+    await controller.disconnectGoogleDrive();
+    renewal.fire();
+    await Future<void>.delayed(Duration.zero);
+    expect(renewal.isActive, isFalse);
+    expect(provider.uploads, 0);
+    expect(provider.renewals, 0);
+  });
+
+  test('dispose cancels pending upload and renewal', () async {
+    controller.scheduleAutomaticSync(debounce: Duration.zero);
+    controller.dispose();
+    disposed = true;
+    renewal.fire();
+    await Future<void>.delayed(Duration.zero);
+    expect(renewal.isActive, isFalse);
+    expect(provider.uploads, 0);
+    expect(provider.renewals, 0);
+    await controller.backups.stop();
+    await controller.database.close();
+  });
+
+  for (final phase in ['read', 'renew']) {
+    test(
+      'lease loss during $phase persists once without releasing remote',
+      () async {
+        final before = storage.writes;
+        provider.loseOnRead = phase == 'read';
+        provider.loseOnRenewal = phase == 'renew';
+        renewal.fire();
+        await Future<void>.delayed(Duration.zero);
+        expect(storage.writes, before + 1);
+        expect(provider.releases, 0);
+        expect(storage.value!.automaticSchedulerState, 'lease_lost');
+        expect(storage.value!.leaseToken, isNull);
+        expect(controller.automaticSyncEnabled, isFalse);
+        expect(renewal.isActive, isFalse);
+      },
+    );
+  }
+
+  test(
+    'expired lease revalidation never overwrites remote-only changes',
+    () async {
+      controller.syncCoordinator.metadata = controller.syncCoordinator.metadata!
+          .copyWith(
+            revision: 'old',
+            contentHash: 'old-hash',
+            lastSuccessfulLocalFingerprint: 'local',
+          );
+      now = now.add(const Duration(minutes: 25));
+      await expectLater(
+        controller.syncCoordinator.automaticUpload(
+          Uint8List.fromList([1]),
+          localFingerprint: 'local',
+        ),
+        throwsA(isA<SyncConflictException>()),
+      );
+      expect(provider.uploads, 0);
+      expect(controller.syncCoordinator.metadata!.revision, 'old');
+      expect(
+        controller.syncCoordinator.metadata!.automaticSchedulerState,
+        'conflict',
+      );
+    },
+  );
 
   test('image policy preserves automatic metadata', () async {
     final before = controller.syncCoordinator.metadata!;
@@ -63,6 +197,7 @@ void main() {
     expect(after.ownershipGeneration, before.ownershipGeneration);
     expect(after.leaseExpiresAt, before.leaseExpiresAt);
     expect(after.includePersonalImages, isTrue);
+    expect(after.updatedAt, now);
   });
 
   test('lease remains enabled through 25 idle foreground minutes', () async {
@@ -72,6 +207,7 @@ void main() {
       renewal.fire();
       await Future<void>.delayed(Duration.zero);
       expect(controller.automaticSyncEnabled, isTrue);
+      expect(controller.syncCoordinator.metadata!.updatedAt, now);
       expect(provider.lease!.isValidAt(now), isTrue);
       expect(provider.lease!.token, token);
     }
@@ -189,7 +325,8 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
   final DateTime Function() clock;
   SyncLease? lease;
   String owner = 'device';
-  int renewals = 0, uploads = 0;
+  int renewals = 0, uploads = 0, releases = 0;
+  bool loseOnRead = false;
   bool loseOnRenewal = false;
   bool holdUpload = false;
   final uploadStarted = Completer<void>(), releaseUpload = Completer<void>();
@@ -239,7 +376,11 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
     SyncAuthSession session,
     SyncRemoteTarget target,
     String catalogIdentity,
-  ) async => owner == 'device' ? lease : null;
+  ) async {
+    if (loseOnRead) throw const SyncLeaseLostException();
+    return owner == 'device' ? lease : null;
+  }
+
   @override
   Future<SyncLease> acquireLease(
     SyncAuthSession session,
@@ -288,7 +429,26 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
     String catalogIdentity, {
     required String deviceId,
     required String token,
-  }) async {}
+  }) async {
+    releases++;
+  }
+}
+
+class _MetadataStorage implements SyncMetadataStorage {
+  int writes = 0;
+  SyncMetadata? value;
+  @override
+  Future<SyncMetadata?> read(String identity) async => value;
+  @override
+  Future<void> write(SyncMetadata metadata) async {
+    writes++;
+    value = metadata;
+  }
+
+  @override
+  Future<void> remove(String identity) async {
+    value = null;
+  }
 }
 
 class _Tokens implements TokenStorage {

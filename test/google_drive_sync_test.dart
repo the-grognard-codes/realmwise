@@ -177,6 +177,73 @@ class TargetProvider extends FailingProvider {
 }
 
 void main() {
+  test(
+    'reacquires own expired lease with a conditional generation update',
+    () async {
+      final old = {
+        'catalogIdentity': 'catalog',
+        'ownerDeviceId': 'device',
+        'ownerDeviceName': 'Desktop',
+        'generation': '7',
+        'token': 'old-token',
+        'issuedAt': '2020-01-01T00:00:00Z',
+        'expiresAt': '2020-01-01T00:10:00Z',
+        'lastRenewedAt': '2020-01-01T00:00:00Z',
+      };
+      var writes = 0;
+      final store = MemTokens();
+      await store.write(
+        'google_drive_oauth:id',
+        '{"access_token":"a","account_id":"x"}',
+      );
+      final tokens = GoogleDriveTokenStore(store);
+      final client = MockClient((request) async {
+        if (request.method == 'PATCH') {
+          writes++;
+          expect(request.headers['if-match'], 'etag-7');
+          final body = jsonDecode(
+            jsonDecode(request.body)['description'] as String,
+          ) as Map;
+          expect(body['generation'], '8');
+          return http.Response('{}', 200);
+        }
+        if (request.url.path.endsWith('/files'))
+          return http.Response('{"files":[{"id":"lease"}]}', 200);
+        return http.Response(
+          jsonEncode({'description': jsonEncode(old), 'version': '7'}),
+          200,
+          headers: {'etag': 'etag-7'},
+        );
+      });
+      final auth = GoogleDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost'),
+        browser: B(),
+        callback: C(Uri.parse('http://localhost')),
+        tokenStore: tokens,
+      );
+      final p = GoogleDriveProvider(
+        authenticator: auth,
+        tokenStore: tokens,
+        httpClient: client,
+      );
+
+      final lease = await p.acquireLease(
+        const SyncAuthSession(accountId: 'x'),
+        const SyncRemoteTarget(id: 'bundle', name: 'Bundle'),
+        'catalog',
+        deviceId: 'device',
+        deviceName: 'Desktop',
+        duration: const Duration(minutes: 10),
+      );
+      expect(lease.ownerDeviceId, 'device');
+      expect(lease.generation, '8');
+      expect(lease.token, isNot('old-token'));
+      expect(lease.isValidAt(DateTime.now().toUtc()), isTrue);
+      expect(writes, 1);
+    },
+  );
+
   GoogleDriveOAuthAuthenticator androidAuthenticator(
     AndroidGoogleDriveAuthorization authorization, {
     Future<void> Function(Duration)? delay,

@@ -39,6 +39,30 @@ String syncCredentialKey({
 /// Persist only a stable, non-sensitive error code; exception text is never stored.
 String sanitizeSyncError(Object error) => 'sync_error';
 
+/// Nullable fields that a metadata update explicitly clears.
+enum SyncMetadataField {
+  provider,
+  accountId,
+  accountDisplayName,
+  remoteTargetId,
+  remoteTargetName,
+  revision,
+  contentHash,
+  lastSuccessfulLocalFingerprint,
+  createdAt,
+  updatedAt,
+  error,
+  deviceId,
+  deviceName,
+  ownershipGeneration,
+  leaseToken,
+  leaseExpiresAt,
+  lastLeaseRenewedAt,
+  lastAutomaticAttemptAt,
+  lastAutomaticSuccessAt,
+  automaticSchedulerState,
+}
+
 class SyncMetadata {
   const SyncMetadata({
     required this.catalogIdentity,
@@ -155,108 +179,110 @@ class SyncMetadata {
     automaticSchedulerState: json['automaticSchedulerState'] as String?,
   );
 
-  static const _unchanged = Object();
-
+  /// Copies values without consulting a clock; callers timestamp state changes.
   SyncMetadata copyWith({
     String? catalogIdentity,
-    Object? provider = _unchanged,
-    Object? accountId = _unchanged,
-    Object? accountDisplayName = _unchanged,
-    Object? remoteTargetId = _unchanged,
-    Object? remoteTargetName = _unchanged,
-    Object? revision = _unchanged,
-    Object? contentHash = _unchanged,
-    Object? lastSuccessfulLocalFingerprint = _unchanged,
-    Object? createdAt = _unchanged,
-    Object? updatedAt = _unchanged,
+    String? provider,
+    String? accountId,
+    String? accountDisplayName,
+    String? remoteTargetId,
+    String? remoteTargetName,
+    String? revision,
+    String? contentHash,
+    String? lastSuccessfulLocalFingerprint,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    String? error,
+    String? deviceId,
+    String? deviceName,
+    String? ownershipGeneration,
+    String? leaseToken,
+    DateTime? leaseExpiresAt,
+    DateTime? lastLeaseRenewedAt,
+    DateTime? lastAutomaticAttemptAt,
+    DateTime? lastAutomaticSuccessAt,
+    String? automaticSchedulerState,
     SyncState? state,
-    Object? error = _unchanged,
     bool? includePersonalImages,
     int? retainedRevisionCount,
     bool? automaticSyncEnabled,
-    Object? deviceId = _unchanged,
-    Object? deviceName = _unchanged,
-    Object? ownershipGeneration = _unchanged,
-    Object? leaseToken = _unchanged,
-    Object? leaseExpiresAt = _unchanged,
-    Object? lastLeaseRenewedAt = _unchanged,
-    Object? lastAutomaticAttemptAt = _unchanged,
-    Object? lastAutomaticSuccessAt = _unchanged,
-    Object? automaticSchedulerState = _unchanged,
     bool clearLease = false,
+    Set<SyncMetadataField> clearFields = const {},
   }) => SyncMetadata(
     catalogIdentity: catalogIdentity ?? this.catalogIdentity,
-    provider: identical(provider, _unchanged)
-        ? this.provider
-        : provider as String?,
-    accountId: identical(accountId, _unchanged)
-        ? this.accountId
-        : accountId as String?,
-    accountDisplayName: identical(accountDisplayName, _unchanged)
-        ? this.accountDisplayName
-        : accountDisplayName as String?,
-    remoteTargetId: identical(remoteTargetId, _unchanged)
-        ? this.remoteTargetId
-        : remoteTargetId as String?,
-    remoteTargetName: identical(remoteTargetName, _unchanged)
-        ? this.remoteTargetName
-        : remoteTargetName as String?,
-    revision: identical(revision, _unchanged)
-        ? this.revision
-        : revision as String?,
-    contentHash: identical(contentHash, _unchanged)
-        ? this.contentHash
-        : contentHash as String?,
+    provider: clearFields.contains(SyncMetadataField.provider)
+        ? null
+        : provider ?? this.provider,
+    accountId: clearFields.contains(SyncMetadataField.accountId)
+        ? null
+        : accountId ?? this.accountId,
+    accountDisplayName:
+        clearFields.contains(SyncMetadataField.accountDisplayName)
+        ? null
+        : accountDisplayName ?? this.accountDisplayName,
+    remoteTargetId: clearFields.contains(SyncMetadataField.remoteTargetId)
+        ? null
+        : remoteTargetId ?? this.remoteTargetId,
+    remoteTargetName: clearFields.contains(SyncMetadataField.remoteTargetName)
+        ? null
+        : remoteTargetName ?? this.remoteTargetName,
+    revision: clearFields.contains(SyncMetadataField.revision)
+        ? null
+        : revision ?? this.revision,
+    contentHash: clearFields.contains(SyncMetadataField.contentHash)
+        ? null
+        : contentHash ?? this.contentHash,
     lastSuccessfulLocalFingerprint:
-        identical(lastSuccessfulLocalFingerprint, _unchanged)
-        ? this.lastSuccessfulLocalFingerprint
-        : lastSuccessfulLocalFingerprint as String?,
-    createdAt: identical(createdAt, _unchanged)
-        ? this.createdAt
-        : createdAt as DateTime?,
-    updatedAt: identical(updatedAt, _unchanged)
-        ? DateTime.now().toUtc()
-        : updatedAt as DateTime?,
+        clearFields.contains(SyncMetadataField.lastSuccessfulLocalFingerprint)
+        ? null
+        : lastSuccessfulLocalFingerprint ?? this.lastSuccessfulLocalFingerprint,
+    createdAt: clearFields.contains(SyncMetadataField.createdAt)
+        ? null
+        : createdAt ?? this.createdAt,
+    updatedAt: clearFields.contains(SyncMetadataField.updatedAt)
+        ? null
+        : updatedAt ?? this.updatedAt,
+    error: clearFields.contains(SyncMetadataField.error)
+        ? null
+        : error ?? this.error,
+    deviceId: clearFields.contains(SyncMetadataField.deviceId)
+        ? null
+        : deviceId ?? this.deviceId,
+    deviceName: clearFields.contains(SyncMetadataField.deviceName)
+        ? null
+        : deviceName ?? this.deviceName,
+    ownershipGeneration:
+        clearLease ||
+            clearFields.contains(SyncMetadataField.ownershipGeneration)
+        ? null
+        : ownershipGeneration ?? this.ownershipGeneration,
+    leaseToken: clearLease || clearFields.contains(SyncMetadataField.leaseToken)
+        ? null
+        : leaseToken ?? this.leaseToken,
+    leaseExpiresAt:
+        clearLease || clearFields.contains(SyncMetadataField.leaseExpiresAt)
+        ? null
+        : leaseExpiresAt ?? this.leaseExpiresAt,
+    lastLeaseRenewedAt:
+        clearLease || clearFields.contains(SyncMetadataField.lastLeaseRenewedAt)
+        ? null
+        : lastLeaseRenewedAt ?? this.lastLeaseRenewedAt,
+    lastAutomaticAttemptAt:
+        clearFields.contains(SyncMetadataField.lastAutomaticAttemptAt)
+        ? null
+        : lastAutomaticAttemptAt ?? this.lastAutomaticAttemptAt,
+    lastAutomaticSuccessAt:
+        clearFields.contains(SyncMetadataField.lastAutomaticSuccessAt)
+        ? null
+        : lastAutomaticSuccessAt ?? this.lastAutomaticSuccessAt,
+    automaticSchedulerState:
+        clearFields.contains(SyncMetadataField.automaticSchedulerState)
+        ? null
+        : automaticSchedulerState ?? this.automaticSchedulerState,
     state: state ?? this.state,
-    error: identical(error, _unchanged) ? this.error : error as String?,
     includePersonalImages: includePersonalImages ?? this.includePersonalImages,
     retainedRevisionCount: retainedRevisionCount ?? this.retainedRevisionCount,
     automaticSyncEnabled: automaticSyncEnabled ?? this.automaticSyncEnabled,
-    deviceId: identical(deviceId, _unchanged)
-        ? this.deviceId
-        : deviceId as String?,
-    deviceName: identical(deviceName, _unchanged)
-        ? this.deviceName
-        : deviceName as String?,
-    ownershipGeneration: clearLease
-        ? null
-        : identical(ownershipGeneration, _unchanged)
-        ? this.ownershipGeneration
-        : ownershipGeneration as String?,
-    leaseToken: clearLease
-        ? null
-        : identical(leaseToken, _unchanged)
-        ? this.leaseToken
-        : leaseToken as String?,
-    leaseExpiresAt: clearLease
-        ? null
-        : identical(leaseExpiresAt, _unchanged)
-        ? this.leaseExpiresAt
-        : leaseExpiresAt as DateTime?,
-    lastLeaseRenewedAt: clearLease
-        ? null
-        : identical(lastLeaseRenewedAt, _unchanged)
-        ? this.lastLeaseRenewedAt
-        : lastLeaseRenewedAt as DateTime?,
-    lastAutomaticAttemptAt: identical(lastAutomaticAttemptAt, _unchanged)
-        ? this.lastAutomaticAttemptAt
-        : lastAutomaticAttemptAt as DateTime?,
-    lastAutomaticSuccessAt: identical(lastAutomaticSuccessAt, _unchanged)
-        ? this.lastAutomaticSuccessAt
-        : lastAutomaticSuccessAt as DateTime?,
-    automaticSchedulerState: identical(automaticSchedulerState, _unchanged)
-        ? this.automaticSchedulerState
-        : automaticSchedulerState as String?,
   );
 
   static DateTime? _date(Object? value) =>

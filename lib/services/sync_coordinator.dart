@@ -112,13 +112,17 @@ class SyncCoordinator {
       includePersonalImages: current.includePersonalImages,
       retainedRevisionCount: current.retainedRevisionCount,
       automaticSyncEnabled: false,
-      deviceId: null,
-      deviceName: null,
+      clearFields: {
+        SyncMetadataField.deviceId,
+        SyncMetadataField.deviceName,
+        SyncMetadataField.lastAutomaticAttemptAt,
+        SyncMetadataField.lastAutomaticSuccessAt,
+        SyncMetadataField.automaticSchedulerState,
+        SyncMetadataField.error,
+        if (localFingerprint == null)
+          SyncMetadataField.lastSuccessfulLocalFingerprint,
+      },
       clearLease: true,
-      lastAutomaticAttemptAt: null,
-      lastAutomaticSuccessAt: null,
-      automaticSchedulerState: null,
-      error: null,
     );
     await metadataStorage.write(metadata!);
     return metadata;
@@ -235,6 +239,14 @@ class SyncCoordinator {
     metadata = current.copyWith(
       automaticSyncEnabled: sameTarget && current.automaticSyncEnabled,
       clearLease: !sameTarget,
+      clearFields: {
+        SyncMetadataField.error,
+        if (!sameTarget) ...{
+          SyncMetadataField.revision,
+          SyncMetadataField.contentHash,
+          SyncMetadataField.lastSuccessfulLocalFingerprint,
+        },
+      },
       remoteTargetId: selected.id,
       remoteTargetName: selected.name,
       revision: sameTarget ? current.revision : null,
@@ -244,7 +256,6 @@ class SyncCoordinator {
           : null,
       updatedAt: clock().toUtc(),
       state: SyncState.ready,
-      error: null,
     );
     await metadataStorage.write(metadata!);
   }
@@ -266,6 +277,13 @@ class SyncCoordinator {
     metadata = saved.copyWith(
       automaticSyncEnabled: sameAccount && saved.automaticSyncEnabled,
       clearLease: !sameAccount,
+      clearFields: {
+        if (!sameAccount) ...{
+          SyncMetadataField.revision,
+          SyncMetadataField.contentHash,
+          SyncMetadataField.lastSuccessfulLocalFingerprint,
+        },
+      },
       accountDisplayName: restored.displayName ?? saved.accountDisplayName,
       revision: sameAccount ? saved.revision : null,
       contentHash: sameAccount ? saved.contentHash : null,
@@ -307,6 +325,10 @@ class SyncCoordinator {
                 provider: value.provider,
                 accountId: authenticated.accountId,
                 accountDisplayName: authenticated.displayName,
+                clearFields: {
+                  if (authenticated.displayName == null)
+                    SyncMetadataField.accountDisplayName,
+                },
                 remoteTargetId: target?.id,
                 remoteTargetName: target?.name,
                 revision: sameTuple ? previous.revision : null,
@@ -427,7 +449,7 @@ class SyncCoordinator {
               contentHash: remote.contentHash,
               updatedAt: clock().toUtc(),
               state: SyncState.ready,
-              error: null,
+              clearFields: {SyncMetadataField.error},
             );
             await metadataStorage.write(metadata!);
             SyncDebug.trace('coordinator.sync.noop_reconciled_revision', {
@@ -495,9 +517,13 @@ class SyncCoordinator {
       revision: result.metadata.revision.value,
       contentHash: result.metadata.contentHash,
       lastSuccessfulLocalFingerprint: localFingerprint,
+      clearFields: {
+        SyncMetadataField.error,
+        if (localFingerprint == null)
+          SyncMetadataField.lastSuccessfulLocalFingerprint,
+      },
       updatedAt: clock().toUtc(),
       state: SyncState.ready,
-      error: null,
     );
     await metadataStorage.write(metadata!);
     if (p case final SyncRetentionProvider retention) {
@@ -547,7 +573,7 @@ class SyncCoordinator {
         contentHash: result.metadata.contentHash,
         updatedAt: clock().toUtc(),
         state: SyncState.ready,
-        error: null,
+        clearFields: {SyncMetadataField.error},
       );
       return result;
     } catch (error) {
@@ -571,9 +597,13 @@ class SyncCoordinator {
       revision: remote.revision.value,
       contentHash: remote.contentHash,
       lastSuccessfulLocalFingerprint: localFingerprint,
+      clearFields: {
+        SyncMetadataField.error,
+        if (localFingerprint == null)
+          SyncMetadataField.lastSuccessfulLocalFingerprint,
+      },
       updatedAt: clock().toUtc(),
       state: SyncState.ready,
-      error: null,
     );
     await metadataStorage.write(metadata!);
   }
@@ -605,6 +635,7 @@ class SyncCoordinator {
       duration: leaseDuration,
     );
     metadata = current.copyWith(
+      updatedAt: clock().toUtc(),
       automaticSyncEnabled: true,
       deviceId: deviceId,
       deviceName: deviceName,
@@ -642,6 +673,7 @@ class SyncCoordinator {
       takeover: true,
     );
     metadata = current.copyWith(
+      updatedAt: clock().toUtc(),
       automaticSyncEnabled: true,
       deviceId: deviceId,
       deviceName: deviceName,
@@ -677,6 +709,7 @@ class SyncCoordinator {
     }
     if (current != null) {
       metadata = current.copyWith(
+        updatedAt: clock().toUtc(),
         automaticSyncEnabled: false,
         automaticSchedulerState: 'disabled',
         clearLease: true,
@@ -698,16 +731,17 @@ class SyncCoordinator {
         current.leaseToken == null)
       return null;
     final leases = p as SyncLeaseProvider;
-    final remote = await leases.readLease(s, t, current.catalogIdentity);
-    if (remote == null ||
-        remote.ownerDeviceId != current.deviceId ||
-        remote.token != current.leaseToken ||
-        remote.generation != current.ownershipGeneration) {
-      return _loseAutomaticLease(current);
-    }
-    final expired = !remote.isValidAt(clock().toUtc());
     late final SyncLease lease;
+    late final bool expired;
     try {
+      final remote = await leases.readLease(s, t, current.catalogIdentity);
+      if (remote == null ||
+          remote.ownerDeviceId != current.deviceId ||
+          remote.token != current.leaseToken ||
+          remote.generation != current.ownershipGeneration) {
+        return await _loseAutomaticLease(current);
+      }
+      expired = !remote.isValidAt(clock().toUtc());
       lease = expired
           ? await leases.acquireLease(
               s,
@@ -731,6 +765,7 @@ class SyncCoordinator {
       return _loseAutomaticLease(current);
     }
     metadata = current.copyWith(
+      updatedAt: clock().toUtc(),
       ownershipGeneration: lease.generation,
       leaseToken: lease.token,
       leaseExpiresAt: lease.expiresAt,
@@ -745,6 +780,7 @@ class SyncCoordinator {
 
   Future<SyncLease?> _loseAutomaticLease(SyncMetadata current) async {
     metadata = current.copyWith(
+      updatedAt: clock().toUtc(),
       automaticSyncEnabled: false,
       automaticSchedulerState: 'lease_lost',
       clearLease: true,
@@ -775,7 +811,12 @@ class SyncCoordinator {
       if (check.classification == SyncClassification.divergent ||
           check.classification == SyncClassification.unknownError ||
           check.classification == SyncClassification.remoteOnly) {
-        metadata = metadata!.copyWith(automaticSchedulerState: 'conflict');
+        // A reacquired lease does not authorize replacing newer remote data.
+        // The user must choose a direction, even when local data is unchanged.
+        metadata = metadata!.copyWith(
+          updatedAt: clock().toUtc(),
+          automaticSchedulerState: 'conflict',
+        );
         await metadataStorage.write(metadata!);
         throw SyncConflictException(
           check.remote ??
@@ -785,10 +826,14 @@ class SyncCoordinator {
               ),
         );
       }
-      metadata = metadata!.copyWith(automaticSchedulerState: 'ready');
+      metadata = metadata!.copyWith(
+        updatedAt: clock().toUtc(),
+        automaticSchedulerState: 'ready',
+      );
       await metadataStorage.write(metadata!);
     }
     metadata = metadata!.copyWith(
+      updatedAt: clock().toUtc(),
       lastAutomaticAttemptAt: clock().toUtc(),
       automaticSchedulerState: 'syncing',
     );
@@ -800,13 +845,17 @@ class SyncCoordinator {
         onProgress: onProgress,
       );
       metadata = metadata!.copyWith(
+        updatedAt: clock().toUtc(),
         lastAutomaticSuccessAt: clock().toUtc(),
         automaticSchedulerState: 'ready',
       );
       await metadataStorage.write(metadata!);
       return metadata!;
     } on Object {
-      metadata = metadata!.copyWith(automaticSchedulerState: 'error');
+      metadata = metadata!.copyWith(
+        updatedAt: clock().toUtc(),
+        automaticSchedulerState: 'error',
+      );
       await metadataStorage.write(metadata!);
       rethrow;
     }
