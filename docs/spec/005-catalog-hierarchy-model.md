@@ -58,7 +58,7 @@ Replace the two separate implementations of the catalog grouping (game system â†
 - Create a new branch for this work.
 - Preserve unrelated working-tree changes.
 - Follow existing repository conventions.
-- Do not commit or push unless explicitly requested.
+- Stage and commit the work on that branch, push it, and open a PR that references the originating issue (`Closes #105`). Do not merge the PR or enable auto-merge without the user's explicit consent; Claude reviews every PR first.
 - No visible change to the catalog screen.
 - Use **work** and **owned copy** as defined in `CONTEXT.md` in names and messages.
 

@@ -98,7 +98,7 @@ Pull the manual sync, download and conflict orchestration out of `AppController`
 - Create a new branch for this work.
 - Preserve unrelated working-tree changes.
 - Follow existing repository conventions.
-- Do not commit or push unless explicitly requested.
+- Stage and commit the work on that branch, push it, and open a PR that references the originating issue (`Closes #102`). Do not merge the PR or enable auto-merge without the user's explicit consent; Claude reviews every PR first.
 - The sync contract must hold for all three providers (Google Drive, OneDrive, Dropbox) and keep the single-active-device lease model. No silent merges, and no replacement without an explicit user choice.
 - OAuth tokens never appear in outcomes, messages, logs or diagnostic exports.
 - Network calls still happen only on user action or with sync enabled.

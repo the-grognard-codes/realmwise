@@ -84,7 +84,7 @@ Introduce a catalog record editing module that stages every change to a work, it
 - Create a new branch for this work.
 - Preserve unrelated working-tree changes.
 - Follow existing repository conventions.
-- Do not commit or push unless explicitly requested.
+- Stage and commit the work on that branch, push it, and open a PR that references the originating issue (`Closes #104`). Do not merge the PR or enable auto-merge without the user's explicit consent; Claude reviews every PR first.
 - If any table in `lib/data/database_service.dart` changes, bump the `openDatabase` version and add an additive `onUpgrade` step. Existing catalogs must open.
 - Use **work** and **owned copy** as defined in `CONTEXT.md` in names and messages.
 - Network calls (remote cover download) happen only on user action.

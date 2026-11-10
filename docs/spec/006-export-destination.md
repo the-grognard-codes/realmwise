@@ -83,7 +83,7 @@ The copies differ in small ways, such as file names, MIME types and the success 
 - Create a new branch for this work.
 - Preserve unrelated working-tree changes.
 - Follow existing repository conventions.
-- Do not commit or push unless explicitly requested.
+- Stage and commit the work on that branch, push it, and open a PR that references the originating issue (`Closes #106`). Do not merge the PR or enable auto-merge without the user's explicit consent; Claude reviews every PR first.
 - Diagnostic exports must still pass through `DiagnosticSanitizer`. No tokens or keys may appear in any export.
 - A change to the Android path usually needs a matching check of the desktop path, and the reverse.
 

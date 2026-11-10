@@ -18,6 +18,17 @@ Claude writes specs. Codex implements specs whose issue is labeled `ready-for-ag
 
 Source: the architecture review of `main` at `dd52f0d` (2026-11-10). Suggested order: 001 → 002 → 004 before the UI phase, 005 with the UI phase, 003 in the sync phase. All are part of the overhaul map, #99.
 
+## Picking up a `ready-for-agent` issue
+
+Codex works one issue at a time:
+
+1. Claim the issue (`gh issue edit <n> --add-assignee @me`). Skip issues with open blockers (`Blocked by:` at the top of the body).
+2. Read the issue and its spec file in this folder. If they disagree, the issue wins; note the difference in the PR.
+3. Create a branch from `main` named `<type>/<n>-<slug>`, for example `refactor/101-catalog-recovery`.
+4. Implement, then run the checks listed under Completion Notes and debug until they pass.
+5. Stage and commit, push the branch, and open a PR (not a draft) whose body starts with `Closes #<n>` and states exactly which checks ran.
+6. Stop there. Do not merge or enable auto-merge. Claude reviews the PR against the issue, and the user merges or explicitly approves a merge. Address review comments with new commits on the same branch.
+
 ## Template
 
 Every spec uses these sections, in this order. Read top to bottom, they answer: What is it? → Why do we want it? → How does it work now? → What are we changing? → Exactly how should it behave? → How do we know we're done? → What rules must we obey? → Any hints about how to build it? → How should you prove it works?
@@ -53,7 +64,7 @@ Every spec uses these sections, in this order. Read top to bottom, they answer: 
 - Create a new branch for this work.
 - Preserve unrelated working-tree changes.
 - Follow existing repository conventions.
-- Do not commit or push unless explicitly requested.
+- Stage and commit the work on that branch, push it, and open a PR that references the originating issue (`Closes #<n>`). Do not merge the PR or enable auto-merge without the user's explicit consent; Claude reviews every PR first.
 
 ## Implementation Guidance
 - freeform guidance 1
