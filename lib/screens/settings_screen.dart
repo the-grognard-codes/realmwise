@@ -168,8 +168,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           final saved = await FilePicker.saveFile(
             dialogTitle: 'Save diagnostic bundle',
             fileName: 'realmwise-diagnostics.zip',
-            type: FileType.custom,
-            allowedExtensions: const ['zip'],
             bytes: await file.readAsBytes(),
           );
           if (saved == null || !mounted) return;
@@ -565,8 +563,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           final saved = await FilePicker.saveFile(
             dialogTitle: 'Export portable device bundle',
             fileName: 'realmwise.realmwise',
-            type: FileType.custom,
-            allowedExtensions: const ['realmwise', 'zip'],
             bytes: await temporary.readAsBytes(),
           );
           if (saved == null || !mounted) return;
@@ -677,8 +673,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           final saved = await FilePicker.saveFile(
             dialogTitle: 'Export catalog as CSV',
             fileName: 'realmwise_export.csv',
-            type: FileType.custom,
-            allowedExtensions: const ['csv'],
             bytes: await temporary.readAsBytes(),
           );
           if (saved == null || !mounted) return;

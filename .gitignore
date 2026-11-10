@@ -56,3 +56,6 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Python maintenance scripts
+__pycache__/
