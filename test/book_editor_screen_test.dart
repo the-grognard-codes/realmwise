@@ -201,22 +201,18 @@ void main() {
         await tester.pumpAndSettle();
         PaintingBinding.instance.imageCache.clear();
         PaintingBinding.instance.imageCache.clearLiveImages();
-        for (var i = 0; i < 100; i++) {
+        var discarded = false;
+        final cleanup = controller.catalog.discardEdits().then(
+          (_) => discarded = true,
+        );
+        for (var i = 0; i < 100 && !discarded; i++) {
           await tester.runAsync(
             () => Future<void>.delayed(const Duration(milliseconds: 10)),
           );
           await tester.pump(const Duration(milliseconds: 30));
-          final remaining = await tester.runAsync(
-            () async =>
-                Directory(folder.path)
-                    .listSync(recursive: true)
-                    .whereType<File>()
-                    .where((file) => file.path.contains('.staging'))
-                    .length,
-          );
-          if (remaining == 0) break;
         }
-
+        expect(discarded, isTrue);
+        await cleanup;
         await tester.runAsync(() async {
           final loaded = await controller.database.getRecord(original.work.id!);
           expect(
