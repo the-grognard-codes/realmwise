@@ -136,11 +136,9 @@ void main() {
     final intake = session();
     addTearDown(intake.dispose);
     catalog.result = const CatalogRecord(work: BookWork(title: 'Owned'));
-    final duplicate =
-        await intake.select(
-              const WorkCandidate(title: 'Hit', isbn13: '9781234567897'),
-            )
-            as IntakeDuplicateRequest;
+    final duplicate = await intake.select(
+      const WorkCandidate(title: 'Hit', isbn13: '9781234567897'),
+    ) as IntakeDuplicateRequest;
     expect(
       intake.chooseDuplicate(duplicate, IntakeDuplicateChoice.cancel),
       isA<IntakeIgnored>(),
@@ -163,26 +161,28 @@ void main() {
       title: 'Enriched',
       isbn13: '9781234567897',
     );
-    final duplicate =
-        await intake.select(const WorkCandidate(title: 'Hit', rpgGeekId: '42'))
-            as IntakeDuplicateRequest;
+    final duplicate = await intake.select(
+      const WorkCandidate(title: 'Hit', rpgGeekId: '42'),
+    ) as IntakeDuplicateRequest;
     expect(lookup.enrichmentCalls, 1);
     expect(catalog.lookups, ['9781234567897']);
     expect(duplicate.existing, same(existing));
 
-    final editor =
-        intake.chooseDuplicate(duplicate, IntakeDuplicateChoice.addCopy)
-            as IntakeEditorRequest;
+    final editor = intake.chooseDuplicate(
+      duplicate,
+      IntakeDuplicateChoice.addCopy,
+    ) as IntakeEditorRequest;
     expect(editor.record.copies, hasLength(2));
     expect(intake.completeEditor(editor, saved: false), isA<IntakeIgnored>());
     expect(intake.completeEditor(editor, saved: true), isA<IntakeIgnored>());
 
-    final nextDuplicate =
-        await intake.select(const WorkCandidate(title: 'Hit', rpgGeekId: '42'))
-            as IntakeDuplicateRequest;
-    final edit =
-        intake.chooseDuplicate(nextDuplicate, IntakeDuplicateChoice.edit)
-            as IntakeEditorRequest;
+    final nextDuplicate = await intake.select(
+      const WorkCandidate(title: 'Hit', rpgGeekId: '42'),
+    ) as IntakeDuplicateRequest;
+    final edit = intake.chooseDuplicate(
+      nextDuplicate,
+      IntakeDuplicateChoice.edit,
+    ) as IntakeEditorRequest;
     expect(edit.record, same(existing));
     expect(
       intake.completeEditor(edit, saved: true),

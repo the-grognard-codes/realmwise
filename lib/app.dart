@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+
 import 'book_intake/book_intake_adapters.dart';
 import 'debug/api_debug_harness.dart';
 import 'screens/catalog_screen.dart';

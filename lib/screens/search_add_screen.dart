@@ -385,11 +385,8 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
                     child: Padding(
                       padding: const EdgeInsets.all(16),
                       child: Text(switch (state.feedback!) {
-                        BookIntakeNoResults() =>
-                          'No works were found in OpenLibrary. Check the search, try a title, or add the book manually.',
-                        BookIntakeFailure(:final userMessage) =>
-                          userMessage ??
-                              'Could not complete the lookup. Please try again or add the book manually.',
+                        BookIntakeNoResults() => 'No works were found in OpenLibrary. Check the search, try a title, or add the book manually.',
+                        BookIntakeFailure(:final userMessage) => userMessage ?? 'Could not complete the lookup. Please try again or add the book manually.',
                       }),
                     ),
                   ),
@@ -438,9 +435,9 @@ class _SearchAddScreenState extends State<SearchAddScreen> {
   }
 
   String _title(WorkCandidate candidate) {
-    final year = RegExp(
-      r'\b(\d{4})\b',
-    ).firstMatch(candidate.publicationDate)?.group(1);
+    final year = RegExp(r'\b(\d{4})\b')
+        .firstMatch(candidate.publicationDate)
+        ?.group(1);
     return year == null ? candidate.title : '${candidate.title} ($year)';
   }
 }

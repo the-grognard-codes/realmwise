@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
+
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
+
 import 'secure_storage_service.dart';
 import 'diagnostic_logging.dart';
 import 'sync_contract.dart';

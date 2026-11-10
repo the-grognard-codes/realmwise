@@ -15,7 +15,7 @@ Realmwise is a local-first Flutter application for cataloging tabletop RPG books
 
 ## Run locally
 
-Install a current [Flutter SDK](https://docs.flutter.dev/get-started/install), then run:
+Install [Flutter 3.47.9 stable](https://docs.flutter.dev/install/archive), matching `.fvmrc` and CI (Dart 3.13.7), then run:
 
 ```sh
 flutter pub get

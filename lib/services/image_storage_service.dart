@@ -11,12 +11,18 @@ import 'diagnostic_logging.dart';
 
 /// Optional test seam. The resolved peer is supplied by the service, so an
 /// injected transport cannot perform an independent DNS lookup.
-typedef ImageSecureTransport =
-    Future<http.StreamedResponse> Function(Uri uri, InternetAddress peer);
-typedef ImageSocketConnector =
-    Future<ConnectionTask<Socket>> Function(InternetAddress peer, int port);
-typedef ImageTlsUpgrader =
-    Future<Socket> Function(Socket socket, {required String host});
+typedef ImageSecureTransport = Future<http.StreamedResponse> Function(
+  Uri uri,
+  InternetAddress peer,
+);
+typedef ImageSocketConnector = Future<ConnectionTask<Socket>> Function(
+  InternetAddress peer,
+  int port,
+);
+typedef ImageTlsUpgrader = Future<Socket> Function(
+  Socket socket, {
+  required String host,
+});
 
 /// Opens a pinned TCP connection and upgrades it to TLS using the original
 /// hostname for SNI and certificate validation.
@@ -150,9 +156,8 @@ class ImageStorageService {
           'A valid HTTPS image URL is required.',
         );
       }
-      final response = await _download(
-        uri,
-      ).timeout(const Duration(seconds: 12));
+      final response = await _download(uri)
+          .timeout(const Duration(seconds: 12));
       final contentType = response.headers['content-type'];
       final format = _imageFormat(response.bodyBytes);
       final type = contentType?.split(';').first.trim().toLowerCase();

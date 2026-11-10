@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
+
 import 'diagnostic_logging.dart';
 
 /// Produces recoverable copies of the active database while the app is running.

@@ -19,9 +19,8 @@ void main() {
           return 'content://downloads/diagnostics.zip';
         });
 
-    final uri = await const DiagnosticBundleExporter(
-      channel: channel,
-    ).chooseDestination();
+    final uri = await const DiagnosticBundleExporter(channel: channel)
+        .chooseDestination();
 
     expect(uri, 'content://downloads/diagnostics.zip');
     expect(received?.method, 'choose_destination');
@@ -39,12 +38,11 @@ void main() {
           return null;
         });
 
-    await const DiagnosticBundleExporter(
-      channel: channel,
-    ).copyFileToDestination(
-      path: '/tmp/diagnostics.zip',
-      uri: 'content://downloads/diagnostics.zip',
-    );
+    await const DiagnosticBundleExporter(channel: channel)
+        .copyFileToDestination(
+          path: '/tmp/diagnostics.zip',
+          uri: 'content://downloads/diagnostics.zip',
+        );
 
     expect(received?.method, 'copy_file_to_uri');
     expect(received?.arguments, {
@@ -61,9 +59,8 @@ void main() {
           return null;
         });
 
-    await const DiagnosticBundleExporter(
-      channel: channel,
-    ).deleteDestination('content://downloads/diagnostics.zip');
+    await const DiagnosticBundleExporter(channel: channel)
+        .deleteDestination('content://downloads/diagnostics.zip');
 
     expect(received?.method, 'delete_uri');
     expect(received?.arguments, {'uri': 'content://downloads/diagnostics.zip'});

@@ -30,9 +30,9 @@ String syncCredentialKey({
   required String provider,
   required String accountId,
 }) {
-  String encode(String value) => base64UrlEncode(
-    Uint8List.fromList(utf8.encode(value)),
-  ).replaceAll('=', '');
+  String encode(String value) =>
+      base64UrlEncode(Uint8List.fromList(utf8.encode(value)))
+          .replaceAll('=', '');
   return 'cloud_sync_token:v1:${encode(provider)}:${encode(accountId)}:${encode(catalogIdentity)}';
 }
 

@@ -119,9 +119,8 @@ class ExportService {
         }
       }
     }
-    await File(
-      outputPath,
-    ).writeAsString('${lines.join('\r\n')}\r\n', encoding: utf8);
+    await File(outputPath)
+        .writeAsString('${lines.join('\r\n')}\r\n', encoding: utf8);
   }
 
   static String _row(

@@ -97,9 +97,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       await action();
       if (mounted && success != null)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(success)));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(success)));
       await _load();
     } catch (error) {
       if (mounted)
@@ -168,8 +167,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           final saved = await FilePicker.saveFile(
             dialogTitle: 'Save diagnostic bundle',
             fileName: 'realmwise-diagnostics.zip',
-            type: FileType.custom,
-            allowedExtensions: const ['zip'],
             bytes: await file.readAsBytes(),
           );
           if (saved == null || !mounted) return;
@@ -360,9 +357,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             SyncOutcome.alreadySynced
         ? 'Already synced—no local changes.'
         : 'Catalog synced to $providerLabel.';
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _chooseImageFolder() async {
@@ -565,8 +561,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           final saved = await FilePicker.saveFile(
             dialogTitle: 'Export portable device bundle',
             fileName: 'realmwise.realmwise',
-            type: FileType.custom,
-            allowedExtensions: const ['realmwise', 'zip'],
             bytes: await temporary.readAsBytes(),
           );
           if (saved == null || !mounted) return;
@@ -677,8 +671,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           final saved = await FilePicker.saveFile(
             dialogTitle: 'Export catalog as CSV',
             fileName: 'realmwise_export.csv',
-            type: FileType.custom,
-            allowedExtensions: const ['csv'],
             bytes: await temporary.readAsBytes(),
           );
           if (saved == null || !mounted) return;
