@@ -50,3 +50,5 @@ python scripts/sync_claude_skills.py
 ```
 
 The script copies the planning and review subset only. It renames upstream `code-review` to `two-axis-review` so it does not shadow Claude Code's built-in `/code-review`. Edit the `SKILLS` list there to add or drop skills. Do not hand-edit files under `.claude/skills/`.
+
+UI skills: use `impeccable` only for its framework-neutral parts (`init` → `PRODUCT.md`, `document` → `DESIGN.md`, `shape`, `critique` on screenshots or goldens), not its web detector, hooks, `live` mode, or CSS-writing commands. Its launcher downloads and runs a prebuilt binary from GitHub on first use, so ask before running it and otherwise follow the skill's "Launcher unavailable" path. The official Flutter skills (`flutter-*`, from `flutter/agent-plugins`) are Codex's implementation references.
