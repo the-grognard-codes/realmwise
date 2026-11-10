@@ -888,7 +888,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> syncNow() {
     final running = _syncFuture;
     if (running != null) return Future<void>.error(const SyncBusyException());
-    final operation = _syncNowInternal();
+    final operation = _serialize(_syncNowInternal);
     _syncFuture = operation;
     return operation.whenComplete(() {
       if (identical(_syncFuture, operation)) _syncFuture = null;

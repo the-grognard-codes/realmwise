@@ -703,32 +703,33 @@ class SyncCoordinator {
         remote.ownerDeviceId != current.deviceId ||
         remote.token != current.leaseToken ||
         remote.generation != current.ownershipGeneration) {
-      metadata = current.copyWith(
-        automaticSyncEnabled: false,
-        automaticSchedulerState: 'lease_lost',
-        clearLease: true,
-      );
-      await metadataStorage.write(metadata!);
-      return null;
+      return _loseAutomaticLease(current);
     }
     final expired = !remote.isValidAt(clock().toUtc());
-    final lease = expired
-        ? await leases.acquireLease(
-            s,
-            t,
-            current.catalogIdentity,
-            deviceId: current.deviceId!,
-            deviceName: current.deviceName ?? remote.ownerDeviceName,
-            duration: leaseDuration,
-          )
-        : await leases.renewLease(
-            s,
-            t,
-            current.catalogIdentity,
-            deviceId: current.deviceId!,
-            token: current.leaseToken!,
-            duration: leaseDuration,
-          );
+    late final SyncLease lease;
+    try {
+      lease = expired
+          ? await leases.acquireLease(
+              s,
+              t,
+              current.catalogIdentity,
+              deviceId: current.deviceId!,
+              deviceName: current.deviceName ?? remote.ownerDeviceName,
+              duration: leaseDuration,
+            )
+          : await leases.renewLease(
+              s,
+              t,
+              current.catalogIdentity,
+              deviceId: current.deviceId!,
+              token: current.leaseToken!,
+              duration: leaseDuration,
+            );
+    } on SyncLeaseLostException {
+      return _loseAutomaticLease(current);
+    } on SyncLeaseContendedException {
+      return _loseAutomaticLease(current);
+    }
     metadata = current.copyWith(
       ownershipGeneration: lease.generation,
       leaseToken: lease.token,
@@ -740,6 +741,16 @@ class SyncCoordinator {
     );
     await metadataStorage.write(metadata!);
     return lease;
+  }
+
+  Future<SyncLease?> _loseAutomaticLease(SyncMetadata current) async {
+    metadata = current.copyWith(
+      automaticSyncEnabled: false,
+      automaticSchedulerState: 'lease_lost',
+      clearLease: true,
+    );
+    await metadataStorage.write(metadata!);
+    return null;
   }
 
   /// Automatic uploads are fenced immediately before transfer.  Callers still
@@ -783,7 +794,7 @@ class SyncCoordinator {
     );
     await metadataStorage.write(metadata!);
     try {
-      final result = await _syncInternal(
+      await _syncInternal(
         payload,
         localFingerprint: localFingerprint,
         onProgress: onProgress,
@@ -793,7 +804,7 @@ class SyncCoordinator {
         automaticSchedulerState: 'ready',
       );
       await metadataStorage.write(metadata!);
-      return result;
+      return metadata!;
     } on Object {
       metadata = metadata!.copyWith(automaticSchedulerState: 'error');
       await metadataStorage.write(metadata!);

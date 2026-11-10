@@ -108,9 +108,61 @@ void main() {
     expect(renewal.isActive, isTrue);
   });
 
+  test(
+    'ownership lost between read and renewal is persisted as lease_lost',
+    () async {
+      provider.loseOnRenewal = true;
+      expect(await controller.syncCoordinator.refreshAutomaticLease(), isNull);
+      expect(
+        controller.syncCoordinator.metadata!.automaticSyncEnabled,
+        isFalse,
+      );
+      expect(
+        controller.syncCoordinator.metadata!.automaticSchedulerState,
+        'lease_lost',
+      );
+    },
+  );
+
+  test(
+    'automatic upload returns the final successful scheduler metadata',
+    () async {
+      final result = await controller.syncCoordinator.automaticUpload(
+        Uint8List.fromList([1]),
+        localFingerprint: 'local',
+      );
+      expect(result.automaticSchedulerState, 'ready');
+      expect(result.lastAutomaticSuccessAt, now);
+      expect(identical(result, controller.syncCoordinator.metadata), isTrue);
+    },
+  );
+
   test('close cancels renewal', () async {
     await controller.closeDatabase();
     expect(renewal.isActive, isFalse);
+  });
+
+  test('resume renewal waits for an in-flight manual sync', () async {
+    provider.holdUpload = true;
+    controller.syncCoordinator.metadata = controller.syncCoordinator.metadata!
+        .copyWith(
+          revision: 'r1',
+          contentHash: 'h1',
+          lastSuccessfulLocalFingerprint: 'previous',
+        );
+    final sync = controller.syncNow();
+    await provider.uploadStarted.future;
+    try {
+      controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await Future<void>.delayed(Duration.zero);
+      expect(provider.renewals, 0);
+    } finally {
+      provider.releaseUpload.complete();
+      await sync;
+    }
+    await Future<void>.delayed(Duration.zero);
+    expect(provider.renewals, 1);
+    expect(controller.syncCoordinator.metadata!.revision, 'r1');
   });
 }
 
@@ -138,6 +190,9 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
   SyncLease? lease;
   String owner = 'device';
   int renewals = 0, uploads = 0;
+  bool loseOnRenewal = false;
+  bool holdUpload = false;
+  final uploadStarted = Completer<void>(), releaseUpload = Completer<void>();
   @override
   String get provider => 'fake';
   @override
@@ -161,6 +216,10 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
     SyncPrecondition? precondition,
   }) async {
     uploads++;
+    if (holdUpload) {
+      uploadStarted.complete();
+      await releaseUpload.future;
+    }
     return const SyncUploadResult(
       metadata: SyncRemoteMetadata(
         revision: SyncRevision('r1'),
@@ -209,6 +268,7 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
     required String token,
     required Duration duration,
   }) async {
+    if (loseOnRenewal) throw const SyncLeaseLostException();
     if (!lease!.isValidAt(clock())) throw const SyncLeaseLostException();
     renewals++;
     return acquireLease(
