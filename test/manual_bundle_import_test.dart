@@ -70,9 +70,8 @@ void main() {
         throwsA(isA<FormatException>()),
       );
       expect(
-        (await controller.database.databaseHandle.query(
-          'works',
-        )).single['title'],
+        (await controller.database.databaseHandle.query('works'))
+            .single['title'],
         'Keep',
       );
       await controller.closeDatabase();

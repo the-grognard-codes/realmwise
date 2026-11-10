@@ -227,9 +227,9 @@ class CatalogBundleService {
       throw const FormatException('Bundle is missing catalog.db.');
     late Map<String, dynamic> json;
     try {
-      json =
-          jsonDecode(utf8.decode(manifestFile.content as List<int>))
-              as Map<String, dynamic>;
+      json = jsonDecode(
+        utf8.decode(manifestFile.content as List<int>),
+      ) as Map<String, dynamic>;
     } catch (_) {
       throw const FormatException('Bundle manifest is malformed.');
     }
@@ -349,9 +349,8 @@ class CatalogBundleService {
       await File(bundlePath).readAsBytes(),
     );
     final dbFile = archive.files.firstWhere((f) => f.name == databaseEntry);
-    await File(
-      targetPath,
-    ).writeAsBytes(List<int>.from(dbFile.content), flush: true);
+    await File(targetPath)
+        .writeAsBytes(List<int>.from(dbFile.content), flush: true);
     if (imageRootPath != null) {
       // A bundle's own namespace prevents similarly named files from another
       // restored catalog from overwriting this catalog's images.

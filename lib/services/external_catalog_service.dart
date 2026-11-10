@@ -142,8 +142,7 @@ class ExternalCatalogService {
     final url = Uri.https('openlibrary.org', '/search.json', {
       author ? 'author' : 'title': term.trim(),
       'limit': '5',
-      'fields':
-          'key,title,author_name,isbn,publisher,publish_date,first_publish_year,cover_i,number_of_pages_median',
+      'fields': 'key,title,author_name,isbn,publisher,publish_date,first_publish_year,cover_i,number_of_pages_median',
     });
     final payload = await _json(
       url,

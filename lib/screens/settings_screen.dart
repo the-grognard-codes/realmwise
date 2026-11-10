@@ -97,9 +97,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       await action();
       if (mounted && success != null)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(success)));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(success)));
       await _load();
     } catch (error) {
       if (mounted)
@@ -358,9 +357,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             SyncOutcome.alreadySynced
         ? 'Already synced—no local changes.'
         : 'Catalog synced to $providerLabel.';
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _chooseImageFolder() async {

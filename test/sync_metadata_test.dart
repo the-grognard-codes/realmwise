@@ -1,7 +1,10 @@
 import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:realmwise/services/sync_metadata.dart';
+
 import 'dart:typed_data';
+
 import 'package:realmwise/services/sync_contract.dart';
 import 'package:realmwise/services/sync_coordinator.dart';
 
@@ -271,36 +274,33 @@ void main() {
     );
   });
 
-  test(
-    'same content hash with advanced revision is unchanged and reconciles metadata',
-    () async {
-      final storage = _MemorySyncStorage();
-      final coordinator = SyncCoordinator(metadataStorage: storage);
-      final provider = _PolicyProvider()
-        ..remote = const SyncRemoteMetadata(
-          revision: SyncRevision('r2'),
-          contentHash: 'h1',
-        );
-      await coordinator.connect(provider, 'catalog');
-      coordinator.metadata = SyncMetadata(
-        catalogIdentity: 'catalog',
-        provider: 'fake',
-        accountId: 'a',
-        remoteTargetId: 'target',
-        revision: 'r1',
+  test('same content hash with advanced revision is unchanged and reconciles metadata', () async {
+    final storage = _MemorySyncStorage();
+    final coordinator = SyncCoordinator(metadataStorage: storage);
+    final provider = _PolicyProvider()
+      ..remote = const SyncRemoteMetadata(
+        revision: SyncRevision('r2'),
         contentHash: 'h1',
-        lastSuccessfulLocalFingerprint: 'l1',
-        state: SyncState.ready,
       );
+    await coordinator.connect(provider, 'catalog');
+    coordinator.metadata = SyncMetadata(
+      catalogIdentity: 'catalog',
+      provider: 'fake',
+      accountId: 'a',
+      remoteTargetId: 'target',
+      revision: 'r1',
+      contentHash: 'h1',
+      lastSuccessfulLocalFingerprint: 'l1',
+      state: SyncState.ready,
+    );
 
-      final result = await coordinator.classify('l1');
+    final result = await coordinator.classify('l1');
 
-      expect(result.classification, SyncClassification.noChanges);
-      expect(result.remote?.revision.value, 'r2');
-      expect(coordinator.metadata?.revision, 'r2');
-      expect((await storage.read('catalog'))?.revision, 'r2');
-    },
-  );
+    expect(result.classification, SyncClassification.noChanges);
+    expect(result.remote?.revision.value, 'r2');
+    expect(coordinator.metadata?.revision, 'r2');
+    expect((await storage.read('catalog'))?.revision, 'r2');
+  });
 
   test('empty hashes never make a changed remote look unchanged', () async {
     final coordinator = SyncCoordinator(metadataStorage: _MemorySyncStorage());
@@ -351,37 +351,34 @@ void main() {
     expect(provider.uploads, 1);
   });
 
-  test(
-    'metadata lookup failure is unknown and preserves known pair on upload error',
-    () async {
-      final storage = _MemorySyncStorage();
-      final coordinator = SyncCoordinator(metadataStorage: storage);
-      final provider = _PolicyProvider()..metadataFails = true;
-      await coordinator.connect(provider, 'catalog');
-      expect(
-        (await coordinator.classify('l1')).classification,
-        SyncClassification.unknownError,
-      );
-      provider.metadataFails = false;
-      provider.uploadFails = true;
-      coordinator.metadata = SyncMetadata(
-        catalogIdentity: 'catalog',
-        provider: 'fake',
-        accountId: 'a',
-        remoteTargetId: 'target',
-        revision: 'r1',
-        contentHash: 'h1',
-        lastSuccessfulLocalFingerprint: 'l1',
-        state: SyncState.ready,
-      );
-      await expectLater(
-        coordinator.sync(Uint8List.fromList([1]), localFingerprint: 'l2'),
-        throwsA(isA<Object>()),
-      );
-      expect(coordinator.metadata?.lastSuccessfulLocalFingerprint, 'l1');
-      expect(coordinator.metadata?.revision, 'r1');
-    },
-  );
+  test('metadata lookup failure is unknown and preserves known pair on upload error', () async {
+    final storage = _MemorySyncStorage();
+    final coordinator = SyncCoordinator(metadataStorage: storage);
+    final provider = _PolicyProvider()..metadataFails = true;
+    await coordinator.connect(provider, 'catalog');
+    expect(
+      (await coordinator.classify('l1')).classification,
+      SyncClassification.unknownError,
+    );
+    provider.metadataFails = false;
+    provider.uploadFails = true;
+    coordinator.metadata = SyncMetadata(
+      catalogIdentity: 'catalog',
+      provider: 'fake',
+      accountId: 'a',
+      remoteTargetId: 'target',
+      revision: 'r1',
+      contentHash: 'h1',
+      lastSuccessfulLocalFingerprint: 'l1',
+      state: SyncState.ready,
+    );
+    await expectLater(
+      coordinator.sync(Uint8List.fromList([1]), localFingerprint: 'l2'),
+      throwsA(isA<Object>()),
+    );
+    expect(coordinator.metadata?.lastSuccessfulLocalFingerprint, 'l1');
+    expect(coordinator.metadata?.revision, 'r1');
+  });
 
   test('stale remote rejects explicit replacement before backup', () async {
     final coordinator = SyncCoordinator(metadataStorage: _MemorySyncStorage());

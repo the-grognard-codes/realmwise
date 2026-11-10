@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:d1606fd2-07d5-4740-ac78-bebe1bbc45e0",
+  "serialNumber": "urn:uuid:650090b1-79cc-41e2-a0fd-7d427fe7e39a",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-11-10T03:59:43Z",
+    "timestamp": "2026-11-10T04:02:49Z",
     "component": {
       "type": "application",
       "bom-ref": "realmwise",
@@ -1316,9 +1316,9 @@
     {
       "type": "library",
       "name": "cupertino_icons",
-      "version": "1.0.9",
+      "version": "2.0.0",
       "scope": "required",
-      "purl": "pkg:dart/cupertino_icons@1.0.9",
+      "purl": "pkg:dart/cupertino_icons@2.0.0",
       "properties": [
         {
           "name": "pub:dependency",
@@ -1338,7 +1338,7 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "41e005c33bd814be4d3096aff55b1908d419fde52ca656c8c47719ec745873cd"
+          "content": "b7cc2390aac296c083bea762859413eb1cf5b630c70e0c7e4d831018f762a8b2"
         }
       ]
     },

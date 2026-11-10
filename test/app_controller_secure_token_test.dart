@@ -179,12 +179,10 @@ void main() {
     final backupFolder = Directory(
       '${folder.path}${Platform.pathSeparator}backups',
     )..createSync(recursive: true);
-    await File(
-      dbPath,
-    ).copy('${backupFolder.path}${Platform.pathSeparator}legacy.backup.db');
-    File(
-      '${backupFolder.path}${Platform.pathSeparator}corrupt.backup.db',
-    ).writeAsBytesSync([0, 1, 2, 3, 4]);
+    await File(dbPath)
+        .copy('${backupFolder.path}${Platform.pathSeparator}legacy.backup.db');
+    File('${backupFolder.path}${Platform.pathSeparator}corrupt.backup.db')
+        .writeAsBytesSync([0, 1, 2, 3, 4]);
     final storage = _MemoryTokenStorage();
     final controller = AppController(tokenStorage: storage);
     await controller.openDatabase(dbPath, remember: false);

@@ -1,5 +1,7 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+
 import 'diagnostic_logging.dart';
 
 /// Debug-only, redacted tracing seam for sync operations.

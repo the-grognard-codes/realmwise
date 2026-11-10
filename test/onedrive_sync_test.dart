@@ -1,4 +1,5 @@
 import 'dart:async';
+
 //import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
@@ -484,42 +485,45 @@ void main() {
     expect(m!.revision.value, 'tag');
     expect(m.contentHash, 'h');
   });
-  test('debug metadata tracing is redacted and records safe taxonomy', () async {
-    final store = _Store();
-    await store.write('onedrive_oauth:id', '{"access_token":"secret-token"}');
-    final logs = <String>[];
-    SyncDebug.logger = logs.add;
-    try {
-      final p = OneDriveProvider(
-        authenticator: OneDriveOAuthAuthenticator(
-          clientId: 'id',
-          redirectUri: Uri.parse('http://localhost/cb'),
-          browser: _Browser(),
-          callback: _Callback(),
-          tokenStore: OneDriveTokenStore(store),
-        ),
-        tokenStore: OneDriveTokenStore(store),
-        httpClient: MockClient(
-          (_) async => http.Response(
-            '{"eTag":"very-long-etag-secret","file":{"hashes":{"quickXorHash":"hash"}}}',
-            200,
+  test(
+    'debug metadata tracing is redacted and records safe taxonomy',
+    () async {
+      final store = _Store();
+      await store.write('onedrive_oauth:id', '{"access_token":"secret-token"}');
+      final logs = <String>[];
+      SyncDebug.logger = logs.add;
+      try {
+        final p = OneDriveProvider(
+          authenticator: OneDriveOAuthAuthenticator(
+            clientId: 'id',
+            redirectUri: Uri.parse('http://localhost/cb'),
+            browser: _Browser(),
+            callback: _Callback(),
+            tokenStore: OneDriveTokenStore(store),
           ),
-        ),
-      );
-      await p.metadata(
-        const SyncAuthSession(accountId: 'x'),
-        const SyncRemoteTarget(id: 'item-id', name: 'Realmwise.realmwise'),
-      );
-      final metadataLog = logs.singleWhere(
-        (log) => log.contains('provider.metadata'),
-      );
-      expect(metadataLog, contains('etagPresent=true'));
-      expect(metadataLog, isNot(contains('very-long-etag-secret')));
-      expect(metadataLog, isNot(contains('secret-token')));
-    } finally {
-      SyncDebug.logger = null;
-    }
-  });
+          tokenStore: OneDriveTokenStore(store),
+          httpClient: MockClient(
+            (_) async => http.Response(
+              '{"eTag":"very-long-etag-secret","file":{"hashes":{"quickXorHash":"hash"}}}',
+              200,
+            ),
+          ),
+        );
+        await p.metadata(
+          const SyncAuthSession(accountId: 'x'),
+          const SyncRemoteTarget(id: 'item-id', name: 'Realmwise.realmwise'),
+        );
+        final metadataLog = logs.singleWhere(
+          (log) => log.contains('provider.metadata'),
+        );
+        expect(metadataLog, contains('etagPresent=true'));
+        expect(metadataLog, isNot(contains('very-long-etag-secret')));
+        expect(metadataLog, isNot(contains('secret-token')));
+      } finally {
+        SyncDebug.logger = null;
+      }
+    },
+  );
   test('OAuth binds the session to the verified Microsoft account', () async {
     final store = _Store();
     final browser = _CapturingBrowser();

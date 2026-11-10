@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+
 import 'dart:io';
 
 import '../data/database_service.dart';
@@ -757,12 +758,10 @@ class _CatalogSelector extends StatelessWidget {
           ),
         ),
       ),
-      ..._sortedCatalogRecords(
-        untyped,
-      ).expand((record) => _recordTiles(record, left: 28)),
-      ..._sortedCatalogRecords(
-        unsetSetting,
-      ).expand((record) => _recordTiles(record, left: 28)),
+      ..._sortedCatalogRecords(untyped)
+          .expand((record) => _recordTiles(record, left: 28)),
+      ..._sortedCatalogRecords(unsetSetting)
+          .expand((record) => _recordTiles(record, left: 28)),
     ];
   }
 
@@ -801,9 +800,8 @@ class _CatalogSelector extends StatelessWidget {
                     .toList(),
         ),
       ),
-      ..._sortedCatalogRecords(
-        unsetSetting,
-      ).expand((record) => _recordTiles(record, left: left)),
+      ..._sortedCatalogRecords(unsetSetting)
+          .expand((record) => _recordTiles(record, left: left)),
     ];
   }
 
@@ -830,14 +828,13 @@ class _CatalogSelector extends StatelessWidget {
           tilePadding: const EdgeInsets.only(left: 48, right: 8),
           leading: _leading(context, 'bookType', type.key, Icons.book_outlined),
           title: Text(type.key),
-          children: _sortedCatalogRecords(
-            type.value,
-          ).expand((record) => _recordTiles(record, left: 72)).toList(),
+          children: _sortedCatalogRecords(type.value)
+              .expand((record) => _recordTiles(record, left: 72))
+              .toList(),
         ),
       ),
-      ..._sortedCatalogRecords(
-        untyped,
-      ).expand((record) => _recordTiles(record, left: 48)),
+      ..._sortedCatalogRecords(untyped)
+          .expand((record) => _recordTiles(record, left: 48)),
     ];
   }
 

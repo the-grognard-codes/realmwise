@@ -105,9 +105,8 @@ class AndroidOAuthConfiguration {
 Future<AndroidOAuthConfiguration?> loadAndroidOAuthConfiguration() async {
   if (!Platform.isAndroid) return null;
   try {
-    final raw = await const MethodChannel(
-      'realmwise/oauth_configuration',
-    ).invokeMethod<Map<dynamic, dynamic>>('get_configuration');
+    final raw = await const MethodChannel('realmwise/oauth_configuration')
+        .invokeMethod<Map<dynamic, dynamic>>('get_configuration');
     if (raw == null) return null;
     String value(String key) => '${raw[key] ?? ''}'.trim();
     return AndroidOAuthConfiguration(

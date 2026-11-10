@@ -80,11 +80,8 @@ class ApiDebugHarness {
         final result = openLibrary != null
             ? await openLibrary(request.uri)
             : q['isbn']?.trim().isNotEmpty == true
-            ? await _requireController(controller).lookup.searchByIsbn(
-                q['isbn']!,
-                ownerName: name,
-                ownerEmail: email,
-              )
+            ? await _requireController(controller).lookup
+                  .searchByIsbn(q['isbn']!, ownerName: name, ownerEmail: email)
             : await _requireController(controller).lookup.searchByTitleOrAuthor(
                 term: author.isNotEmpty ? author : title,
                 author: author.isNotEmpty,
@@ -107,9 +104,8 @@ class ApiDebugHarness {
           );
         final results = rpgGeekSearch != null
             ? await rpgGeekSearch(query, key)
-            : await _requireController(
-                controller,
-              ).lookup.searchRpgGeek(query, key);
+            : await _requireController(controller).lookup
+                  .searchRpgGeek(query, key);
         return await _json(request, {
           'ok': true,
           'results': results.map(_candidateJson).toList(),
@@ -128,9 +124,8 @@ class ApiDebugHarness {
           );
         final result = rpgGeekThing != null
             ? await rpgGeekThing(id, key)
-            : await _requireController(
-                controller,
-              ).lookup.fetchRpgGeekItem(id, key);
+            : await _requireController(controller).lookup
+                  .fetchRpgGeekItem(id, key);
         return await _json(request, {
           'ok': true,
           'result': _candidateJson(result),
@@ -285,8 +280,7 @@ final Map<String, dynamic> _openApi = {
   'info': {
     'title': 'Realmwise Debug Harness API',
     'version': '1.0.0',
-    'description':
-        'Opt-in loopback-only debug service. Swagger is available at / and this contract at /openapi.json. API keys are writeOnly, never persisted by requests, returned, or logged.',
+    'description': 'Opt-in loopback-only debug service. Swagger is available at / and this contract at /openapi.json. API keys are writeOnly, never persisted by requests, returned, or logged.',
   },
   'servers': [
     {'url': 'http://127.0.0.1:8080'},
@@ -295,8 +289,7 @@ final Map<String, dynamic> _openApi = {
     '/lookup/openlibrary': {
       'get': {
         'summary': 'Search Open Library',
-        'description':
-            'Search by ISBN, title, or author. Optional owner fields are forwarded for catalog attribution.',
+        'description': 'Search by ISBN, title, or author. Optional owner fields are forwarded for catalog attribution.',
         'responses': {
           '200': {
             'description': 'Results envelope',
@@ -365,8 +358,7 @@ final Map<String, dynamic> _openApi = {
     '/lookup/rpggeek/search': {
       'get': {
         'summary': 'Search RPGGeek RPG items',
-        'description':
-            'Returns ranked RPGGeek rpgitem candidates. Supply the credential in the Authorization Bearer header.',
+        'description': 'Returns ranked RPGGeek rpgitem candidates. Supply the credential in the Authorization Bearer header.',
         'security': [
           {'bearerAuth': <String, dynamic>{}},
         ],
@@ -460,8 +452,7 @@ final Map<String, dynamic> _openApi = {
       },
       'Candidate': {
         'type': 'object',
-        'description':
-            'A catalog work candidate and optional remote metadata. Nonempty RPGGeek title, publisher, publicationDate, summary, and remoteCoverUrl values override Open Library values; OpenLibrary-only fields such as ISBN and authors, plus any RPGGeek-absent fields, remain.',
+        'description': 'A catalog work candidate and optional remote metadata. Nonempty RPGGeek title, publisher, publicationDate, summary, and remoteCoverUrl values override Open Library values; OpenLibrary-only fields such as ISBN and authors, plus any RPGGeek-absent fields, remain.',
         'properties': {
           'title': {'type': 'string'},
           'isbn13': {'type': 'string'},
