@@ -690,6 +690,72 @@ void main() {
     expect(renewal.isActive, isFalse);
   });
 
+  for (final fails in [false, true]) {
+    test(
+      'pending edit resumes after conflict upload ${fails ? "fails" : "succeeds"}',
+      () async {
+        controller.retryDebounce = const Duration(milliseconds: 10);
+        final bundle = '${dir.path}/remote.realmwise';
+        await controller.exportDeviceBundle(bundle);
+        provider.downloadPayload = Uint8List.fromList(
+          await File(bundle).readAsBytes(),
+        );
+        final fingerprint = (await controller.previewDeviceBundle(bundle))
+            .contentFingerprint!;
+        provider.holdUpload = true;
+        provider.failUpload = fails;
+        final resolving = controller.resolveSyncDecision(
+          SyncConflictChoice.uploadReplaceRemote,
+          decision: const SyncClassificationResult(
+            SyncClassification.divergent,
+            remote: SyncRemoteMetadata(
+              revision: SyncRevision('r1'),
+              contentHash: 'h1',
+            ),
+          ),
+          localFingerprint: fingerprint,
+        );
+        final checked = fails
+            ? expectLater(resolving, throwsStateError)
+            : resolving;
+        await provider.uploadStarted.future;
+        await controller.database.databaseHandle.insert('works', {
+          'title': 'Edit during conflict',
+        });
+        controller.scheduleAutomaticSync(debounce: Duration.zero);
+        final exports = controller.exports;
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        expect(controller.exports, exports);
+        provider.holdUpload = false;
+        provider.releaseUpload.complete();
+        await checked;
+        await _until(() => provider.uploads == 2 && !controller.isSyncing);
+        expect(controller.exports, greaterThan(exports));
+        expect(controller.automaticSyncError, isNull);
+      },
+    );
+  }
+
+  test('pending edit continues after a failed remote download', () async {
+    provider.holdDownload = true;
+    final downloading = controller.downloadRemoteBundle(
+      expectedRemote: const SyncRemoteMetadata(
+        revision: SyncRevision('r1'),
+        contentHash: 'h1',
+      ),
+    );
+    final checked = expectLater(downloading, throwsStateError);
+    await provider.downloadStarted.future;
+    controller.scheduleAutomaticSync(debounce: Duration.zero);
+    final exports = controller.exports;
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(controller.exports, exports);
+    provider.releaseDownload.complete();
+    await checked;
+    await _until(() => provider.uploads == 1 && !controller.isSyncing);
+    expect(controller.automaticSyncError, isNull);
+  });
+
   test('resume renewal waits for an in-flight manual sync', () async {
     provider.holdUpload = true;
     controller.syncCoordinator.metadata = controller.syncCoordinator.metadata!
@@ -782,6 +848,10 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
   final renewalStarted = Completer<void>(), releaseRenewal = Completer<void>();
   bool loseOnRenewal = false;
   bool holdUpload = false;
+  bool failUpload = false, holdDownload = false;
+  Uint8List? downloadPayload;
+  final downloadStarted = Completer<void>(),
+      releaseDownload = Completer<void>();
   final uploadStarted = Completer<void>(), releaseUpload = Completer<void>();
   @override
   String get provider => 'fake';
@@ -823,6 +893,10 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
       uploadStarted.complete();
       await releaseUpload.future;
     }
+    if (failUpload) {
+      failUpload = false;
+      throw StateError('injected conflict upload failure');
+    }
     return const SyncUploadResult(
       metadata: SyncRemoteMetadata(
         revision: SyncRevision('r1'),
@@ -836,7 +910,22 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
     SyncAuthSession session,
     SyncRemoteTarget target, {
     SyncPrecondition? precondition,
-  }) async => throw UnimplementedError();
+  }) async {
+    if (holdDownload) {
+      downloadStarted.complete();
+      await releaseDownload.future;
+      throw StateError('injected download failure');
+    }
+    if (downloadPayload == null) throw UnimplementedError();
+    return SyncDownloadResult(
+      payload: downloadPayload!,
+      metadata: const SyncRemoteMetadata(
+        revision: SyncRevision('r1'),
+        contentHash: 'h1',
+      ),
+    );
+  }
+
   @override
   Future<SyncLease?> readLease(
     SyncAuthSession session,

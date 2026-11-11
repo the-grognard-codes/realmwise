@@ -175,6 +175,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   SyncCancellationToken? _automaticCancellation;
   SyncCancellationToken? _automaticTransferCancellation;
   Future<void> _operationTail = Future<void>.value();
+  Timer? _syncCompletionTimer;
   bool automaticSyncEnabled = false;
   String deviceId = '';
   String deviceName = '';
@@ -223,6 +224,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _cancelAutomaticTimers() {
+    _syncCompletionTimer?.cancel();
+    _syncCompletionTimer = null;
     _leaseRenewalTimer?.cancel();
     _leaseRenewalTimer = null;
     _automaticSyncTimer?.cancel();
@@ -251,6 +254,21 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Future<T> _serialize<T>(Future<T> Function() action) {
     final result = _operationTail.then((_) => action());
     _operationTail = result.then<void>((_) {}, onError: (_, _) {});
+    unawaited(
+      _operationTail.then((_) {
+        if (!_automaticSyncPending ||
+            _disposed ||
+            (_automaticSyncTimer?.isActive ?? false))
+          return;
+        _syncCompletionTimer?.cancel();
+        // Run after callers clear their busy/connection/cancellation state.
+        // This also covers failed operations without polling while they run.
+        _syncCompletionTimer = Timer(Duration.zero, () {
+          _syncCompletionTimer = null;
+          _resumePendingAutomaticSync();
+        });
+      }),
+    );
     return result;
   }
 
@@ -685,7 +703,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     } finally {
       _automaticCancellation = null;
       _automaticTransferCancellation = null;
-      if (!cancellation.isCancelled) _resumePendingAutomaticSync();
     }
     if (!_disposed) notifyListeners();
   }
@@ -960,7 +977,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     return operation.whenComplete(() {
       if (identical(_syncFuture, operation)) _syncFuture = null;
       syncProgress = null;
-      _resumePendingAutomaticSync();
     });
   }
 
@@ -1049,8 +1065,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         }
         // Preserve the observed remote bytes locally before allowing a remote
         // overwrite. A DB backup alone cannot recover the remote catalog.
-        final remote = await syncCoordinator.download(
-          expectedRemote: decision.remote,
+        final remote = await _serialize(
+          () => syncCoordinator.download(expectedRemote: decision.remote),
         );
         final remotePath = path.join(
           path.dirname(database.databasePath),
@@ -1068,14 +1084,16 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
           if (await f.exists()) await f.delete();
           rethrow;
         }
-        await syncCoordinator.resolveConflict(
-          choice,
-          currentLocalFingerprint: currentFingerprint,
-          expectedLocalFingerprint: localFingerprint,
-          observedRemote: decision.remote!,
-          payload: Uint8List.fromList(await File(bundlePath).readAsBytes()),
-          payloadFingerprint: currentFingerprint,
-          backup: localBackup,
+        await _serialize(
+          () async => syncCoordinator.resolveConflict(
+            choice,
+            currentLocalFingerprint: currentFingerprint,
+            expectedLocalFingerprint: localFingerprint,
+            observedRemote: decision.remote!,
+            payload: Uint8List.fromList(await File(bundlePath).readAsBytes()),
+            payloadFingerprint: currentFingerprint,
+            backup: localBackup,
+          ),
         );
         syncMetadata = syncCoordinator.metadata;
         notifyListeners();
@@ -1136,8 +1154,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       const initialBundleReadRetryDelay = Duration(milliseconds: 500);
       for (var attempt = 0; attempt < maxBundleReadRetries; attempt++) {
         try {
-          result = await syncCoordinator.download(
-            expectedRemote: discoveredRemote,
+          result = await _serialize<SyncDownloadResult>(
+            () => syncCoordinator.download(expectedRemote: discoveredRemote),
           );
           await File(bundlePath).writeAsBytes(result.payload, flush: true);
           manifest = await previewDeviceBundle(bundlePath);
