@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -69,6 +70,44 @@ void main() {
     controller.dispose();
     await directory.delete(recursive: true);
   });
+
+  for (final name in ['my_realmwise', 'custom_catalog']) {
+    test('startup restores $name after an interrupted replacement', () async {
+      final originalPath = controller.database.databasePath;
+      await controller.database.databaseHandle.insert('works', {
+        'title': 'Original before crash',
+      });
+      await controller.closeDatabase();
+      controller.dispose();
+      final saved = '${directory.path}/$name.db';
+      await File(originalPath).rename(saved);
+      final olderRollback = '$saved.rollback-9.tmp';
+      await File(olderRollback).writeAsBytes([1, 2, 3]);
+      final rollback = '$saved.rollback-10.tmp';
+      await File(saved).rename(rollback);
+      final ready = '$saved.replace-10.tmp.ready';
+      await controller.bundles.extractDatabase(bundle, ready);
+      final marker = File('$saved.recovery-review.json');
+      final markerContents = jsonEncode({'originalPath': rollback});
+      await marker.writeAsString(markerContents, flush: true);
+      SharedPreferences.setMockInitialValues({'last_database_path': saved});
+      controller = _SchedulingController(directory.path);
+
+      await controller.initialize();
+
+      expect(controller.error, isNull);
+      expect(controller.activeDatabasePath, File(saved).absolute.path);
+      expect(
+        await controller.database.databaseHandle.query('works'),
+        contains(containsPair('title', 'Original before crash')),
+      );
+      expect(await File(rollback).exists(), isFalse);
+      expect(await File(olderRollback).readAsBytes(), [1, 2, 3]);
+      expect(await marker.readAsString(), markerContents);
+      expect(controller.recoveryWarning?.originalPath, rollback);
+      expect(await File(ready).exists(), isFalse);
+    });
+  }
 
   test(
     'manual sync cannot export or upload an unacknowledged catalog',

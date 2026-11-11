@@ -102,6 +102,34 @@ class CatalogRecovery {
   File get _warningFile =>
       File('${database.databasePath}.recovery-review.json');
 
+  /// Recover the original before startup can create a new catalog at its path.
+  Future<void> recoverInterruptedReplacement(String savedPath) async {
+    if (await File(savedPath).exists()) return;
+    final folder = Directory(p.dirname(savedPath));
+    if (!await folder.exists()) return;
+    final pattern = RegExp(
+      '^${RegExp.escape(p.basename(savedPath))}'
+      r'\.rollback-(\d+)\.tmp$',
+      caseSensitive: !Platform.isWindows,
+    );
+    File? newest;
+    var newestStamp = -1;
+    await for (final entry in folder.list(followLinks: false)) {
+      if (entry is! File) continue;
+      final match = pattern.firstMatch(p.basename(entry.path));
+      final stamp = match == null ? null : int.tryParse(match.group(1)!);
+      if (stamp != null && stamp > newestStamp) {
+        newest = entry;
+        newestStamp = stamp;
+      }
+    }
+    if (newest == null) return;
+    // Move sidecars first so another interruption still leaves a discoverable
+    // rollback. Never install the staged replacement or clear the review marker.
+    await _moveSidecars(newest.path, savedPath, renameFile);
+    await renameFile(newest, savedPath);
+  }
+
   /// The marker is outside the replaceable database and survives app restarts.
   Future<void> loadWarning() async {
     final file = _warningFile;

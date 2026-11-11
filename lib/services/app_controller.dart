@@ -368,6 +368,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       includePersonalImagesInBundles =
           prefs.getBool('include_personal_images_in_bundles') ?? false;
       final saved = prefs.getString('last_database_path');
+      if (saved != null) await recovery.recoverInterruptedReplacement(saved);
       if (saved != null && await File(saved).exists()) {
         await openDatabase(saved, remember: false);
       } else {

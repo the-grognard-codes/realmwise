@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -29,6 +30,49 @@ void main() {
     await database.close();
     await dir.delete(recursive: true);
   });
+
+  test(
+    'startup recovery moves rollback sidecars and preserves review',
+    () async {
+      final active = database.databasePath;
+      await database.close();
+      final rollback = '$active.rollback-10.tmp';
+      await File(active).rename(rollback);
+      for (final suffix in ['-shm', '-journal']) {
+        await File('$rollback$suffix').writeAsBytes([1, 2, 3]);
+      }
+      final marker = File('$active.recovery-review.json');
+      await marker.writeAsString(jsonEncode({'originalPath': rollback}));
+      final markerContents = await marker.readAsBytes();
+
+      await recovery.recoverInterruptedReplacement(active);
+
+      expect(await File(active).exists(), isTrue);
+      expect(await File(rollback).exists(), isFalse);
+      for (final suffix in ['-shm', '-journal']) {
+        expect(await File('$active$suffix').readAsBytes(), [1, 2, 3]);
+        expect(await File('$rollback$suffix').exists(), isFalse);
+      }
+      expect(await marker.readAsBytes(), markerContents);
+    },
+  );
+
+  test(
+    'startup recovery leaves an existing catalog and rollbacks intact',
+    () async {
+      final active = database.databasePath;
+      final rollback = File('$active.rollback-10.tmp');
+      await rollback.writeAsBytes([1, 2, 3]);
+
+      await recovery.recoverInterruptedReplacement(active);
+
+      expect(
+        await database.databaseHandle.query('works'),
+        contains(containsPair('title', 'Original')),
+      );
+      expect(await rollback.readAsBytes(), [1, 2, 3]);
+    },
+  );
 
   test('routine retention cannot trim protective snapshots', () async {
     final bundle = p.join(dir.path, 'import.realmwise');
