@@ -278,6 +278,18 @@ void main() {
     }
   });
 
+  test('remote replacement defers scheduling through rebind', () async {
+    final eligible = controller.syncCoordinator.metadata!;
+    await controller.downloadRemoteBundle(expectedRemote: _Provider.remote);
+    expect(controller.schedules, 0);
+    expect(controller.syncCoordinator.metadata!.automaticSyncEnabled, isFalse);
+    // Rebind intentionally disabled ownership. A later plain import may resume
+    // only when its normal persisted setup is eligible again.
+    await controller.syncCoordinator.metadataStorage.write(eligible);
+    await controller.restoreDeviceBundle(bundle);
+    expect(controller.schedules, 1);
+  });
+
   test('import waits for in-flight remote validation', () async {
     provider.holdMetadata = true;
     final validation = controller.takeOverAutomaticSync();

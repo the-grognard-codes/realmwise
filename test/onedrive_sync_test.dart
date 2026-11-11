@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 
 //import 'package:crypto/crypto.dart';
@@ -35,6 +36,71 @@ class _Store implements TokenStorage {
 }
 
 void main() {
+  test(
+    'reacquires own expired lease with a conditional generation update',
+    () async {
+      final old = {
+        'catalogIdentity': 'catalog',
+        'ownerDeviceId': 'device',
+        'ownerDeviceName': 'Desktop',
+        'generation': '7',
+        'token': 'old-token',
+        'issuedAt': '2020-01-01T00:00:00Z',
+        'expiresAt': '2020-01-01T00:10:00Z',
+        'lastRenewedAt': '2020-01-01T00:00:00Z',
+      };
+      var writes = 0;
+      final store = _Store();
+      await store.write(
+        'onedrive_oauth:id',
+        '{"access_token":"a","account_id":"x"}',
+      );
+      final tokens = OneDriveTokenStore(store);
+      final client = MockClient((request) async {
+        if (request.url.path.endsWith('/approot'))
+          return http.Response('{"id":"app-root"}', 200);
+        if (request.url.host == 'download.example')
+          return http.Response(jsonEncode(old), 200);
+        if (request.method == 'PUT') {
+          writes++;
+          expect(request.headers['if-match'], 'etag-7');
+          expect(jsonDecode(request.body)['generation'], '8');
+          return http.Response('{"id":"lease"}', 200);
+        }
+        return http.Response(
+          '{"eTag":"etag-7","@microsoft.graph.downloadUrl":"https://download.example/lease"}',
+          200,
+        );
+      });
+      final auth = OneDriveOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost'),
+        browser: _Browser(),
+        callback: _Callback(),
+        tokenStore: tokens,
+      );
+      final p = OneDriveProvider(
+        authenticator: auth,
+        tokenStore: tokens,
+        httpClient: client,
+      );
+
+      final lease = await p.acquireLease(
+        const SyncAuthSession(accountId: 'x'),
+        const SyncRemoteTarget(id: 'bundle', name: 'Bundle'),
+        'catalog',
+        deviceId: 'device',
+        deviceName: 'Desktop',
+        duration: const Duration(minutes: 10),
+      );
+      expect(lease.ownerDeviceId, 'device');
+      expect(lease.generation, '8');
+      expect(lease.token, isNot('old-token'));
+      expect(lease.isValidAt(DateTime.now().toUtc()), isTrue);
+      expect(writes, 1);
+    },
+  );
+
   TestWidgetsFlutterBinding.ensureInitialized();
   test('Android callback returns the native callback URI', () async {
     TestWidgetsFlutterBinding.ensureInitialized();

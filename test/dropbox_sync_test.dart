@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 
 import 'package:crypto/crypto.dart';
@@ -64,6 +65,67 @@ String _dropboxHash(Uint8List bytes) =>
     sha256.convert(sha256.convert(bytes).bytes).toString();
 
 void main() {
+  test(
+    'reacquires own expired lease with a conditional generation update',
+    () async {
+      final old = {
+        'catalogIdentity': 'catalog',
+        'ownerDeviceId': 'device',
+        'ownerDeviceName': 'Desktop',
+        'generation': '7',
+        'token': 'old-token',
+        'issuedAt': '2020-01-01T00:00:00Z',
+        'expiresAt': '2020-01-01T00:10:00Z',
+        'lastRenewedAt': '2020-01-01T00:00:00Z',
+      };
+      var writes = 0;
+      final store = _Store();
+      await store.write(
+        'dropbox_oauth:id',
+        '{"access_token":"a","account_id":"x"}',
+      );
+      final tokens = DropboxTokenStore(store);
+      final client = MockClient((request) async {
+        if (request.url.path.endsWith('/download'))
+          return http.Response(jsonEncode(old), 200);
+        if (request.url.path.endsWith('/upload')) {
+          writes++;
+          final arg = jsonDecode(request.headers['dropbox-api-arg']!) as Map;
+          expect(arg['mode'], {'.tag': 'update', 'update': 'rev-7'});
+          expect(jsonDecode(request.body)['generation'], '8');
+          return http.Response('{"rev":"rev-8"}', 200);
+        }
+        return http.Response('{"rev":"rev-7"}', 200);
+      });
+      final auth = DropboxOAuthAuthenticator(
+        clientId: 'id',
+        redirectUri: Uri.parse('http://localhost'),
+        browser: _Browser(),
+        callback: _Callback(Uri.parse('http://localhost')),
+        tokenStore: tokens,
+      );
+      final p = DropboxProvider(
+        authenticator: auth,
+        tokenStore: tokens,
+        httpClient: client,
+      );
+
+      final lease = await p.acquireLease(
+        const SyncAuthSession(accountId: 'x'),
+        const SyncRemoteTarget(id: 'bundle', name: 'Bundle'),
+        'catalog',
+        deviceId: 'device',
+        deviceName: 'Desktop',
+        duration: const Duration(minutes: 10),
+      );
+      expect(lease.ownerDeviceId, 'device');
+      expect(lease.generation, '8');
+      expect(lease.token, isNot('old-token'));
+      expect(lease.isValidAt(DateTime.now().toUtc()), isTrue);
+      expect(writes, 1);
+    },
+  );
+
   test('Android Dropbox callback receives native callback URI', () async {
     TestWidgetsFlutterBinding.ensureInitialized();
     const channel = MethodChannel('realmwise/dropbox_oauth');
