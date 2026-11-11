@@ -206,6 +206,16 @@ void main() {
       await database.databaseHandle.insert('works', {
         'title': 'Last sync edit',
       });
+      final liveStages = dir
+          .listSync()
+          .whereType<File>()
+          .where((file) => file.path.contains('.replace-'))
+          .toList();
+      expect(liveStages, isNotEmpty);
+      await recovery.start(snapshotNow: false);
+      for (final file in liveStages) {
+        expect(await file.exists(), isTrue);
+      }
       sync.complete();
       await operation;
       expect(database.databasePath, active);
@@ -539,6 +549,41 @@ void main() {
       },
     );
   }
+
+  test(
+    'startup removes unmarked crash staging copies and preserves rollbacks',
+    () async {
+      final active = database.databasePath;
+      final stages = [
+        File('$active.replace-10.tmp'),
+        File('$active.replace-11.tmp.ready'),
+      ];
+      for (final file in stages) {
+        await File(active).copy(file.path);
+        for (final suffix in ['-wal', '-shm', '-journal']) {
+          await File('${file.path}$suffix').writeAsBytes([1]);
+        }
+      }
+      final original = File('$active.rollback-12.tmp');
+      final foreign = File('${active}_other.replace-13.tmp');
+      final unexpected = File('$active.replace-custom.tmp');
+      for (final file in [original, foreign, unexpected]) {
+        await File(active).copy(file.path);
+      }
+      recovery = CatalogRecovery(database: database);
+      await recovery.start(snapshotNow: false);
+      for (final file in stages) {
+        expect(await file.exists(), isFalse);
+        for (final suffix in ['-wal', '-shm', '-journal', '.cleanup-pending']) {
+          expect(await File('${file.path}$suffix').exists(), isFalse);
+        }
+      }
+      for (final file in [original, foreign, unexpected]) {
+        expect(await file.exists(), isTrue);
+      }
+      expect((await database.listRecords()).single.work.title, 'Original');
+    },
+  );
 
   test(
     'busy truncate checkpoint refuses replacement without closing the original',

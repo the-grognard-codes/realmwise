@@ -343,20 +343,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           decision: decision.result,
           localFingerprint: localFingerprint,
         );
-        if (restored && mounted) {
-          widget.onSyncRestore?.call();
-          if (widget.controller.recoveryWarning != null) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'Downloaded catalog is active, but recovery needs review. '
-                  'Automatic sync is paused.',
-                ),
-              ),
-            );
-            return;
-          }
-        }
+        if (restored && _afterRemoteRestore()) return;
       } catch (error) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -817,7 +804,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             decision: decision.result,
             localFingerprint: decision.localFingerprint ?? '',
           );
-          if (restored && mounted) widget.onSyncRestore?.call();
+          if (restored) _afterRemoteRestore();
         } catch (error) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -862,8 +849,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (confirmed == true && mounted) {
       final restored = await widget.controller.downloadRemoteBundle();
-      if (restored && mounted) widget.onSyncRestore?.call();
+      if (restored) _afterRemoteRestore();
     }
+  }
+
+  /// Returns whether review feedback replaced the normal sync result.
+  bool _afterRemoteRestore() {
+    if (!mounted) return false;
+    widget.onSyncRestore?.call();
+    if (widget.controller.recoveryWarning == null) return false;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Downloaded catalog is active, but recovery needs review. '
+          'Automatic sync is paused.',
+        ),
+      ),
+    );
+    return true;
   }
 
   @override

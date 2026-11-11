@@ -427,11 +427,19 @@ class CatalogRecovery {
       r'\.(?:replace-\d+\.tmp(?:\.ready)?|rollback-\d+\.tmp)\.cleanup-pending$',
       caseSensitive: !Platform.isWindows,
     );
-    // Scan explicit intent markers only. An unmarked rollback may be the
-    // collector's retained original and must never be swept as a temporary.
+    final stagedPattern = RegExp(
+      '^${RegExp.escape(p.basename(active))}'
+      r'\.replace-\d+\.tmp(?:\.ready)?$',
+      caseSensitive: !Platform.isWindows,
+    );
+    // Staged copies can survive a crash before finally records cleanup intent.
+    // Rollbacks still require intent: an unmarked one may be the original.
     try {
       await for (final entry in folder.list(followLinks: false)) {
-        if (entry is File && pattern.hasMatch(p.basename(entry.path))) {
+        if (entry is! File) continue;
+        if (stagedPattern.hasMatch(p.basename(entry.path))) {
+          _pendingFileCleanup.add(entry.path);
+        } else if (pattern.hasMatch(p.basename(entry.path))) {
           _pendingFileCleanup.add(
             entry.path.substring(
               0,
