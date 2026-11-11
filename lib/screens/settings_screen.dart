@@ -343,7 +343,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
           decision: decision.result,
           localFingerprint: localFingerprint,
         );
-        if (restored && mounted) widget.onSyncRestore?.call();
+        if (restored && mounted) {
+          widget.onSyncRestore?.call();
+          if (widget.controller.recoveryWarning != null) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Downloaded catalog is active, but recovery needs review. '
+                  'Automatic sync is paused.',
+                ),
+              ),
+            );
+            return;
+          }
+        }
       } catch (error) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -365,13 +378,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             SyncOutcome.alreadySynced
         ? 'Already synced—no local changes.'
         : 'Catalog synced to $providerLabel.';
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          widget.controller.recoveryWarning == null ? message : 'Catalog is active, but recovery needs review. Automatic sync is paused.',
-        ),
-      ),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _chooseImageFolder() async {

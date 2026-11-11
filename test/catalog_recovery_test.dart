@@ -490,6 +490,56 @@ void main() {
     },
   );
 
+  for (final target in ['.replace-', '.rollback-']) {
+    test(
+      'startup retries marked $target cleanup without deleting retained originals',
+      () async {
+        final failed = <String>{};
+        recovery = CatalogRecovery(
+          database: database,
+          deleteFile: (file) async {
+            if (file.path.contains(target)) {
+              failed.add(file.path);
+              throw const FileSystemException('temporary cleanup lock');
+            }
+            await file.delete();
+          },
+        );
+        expect(
+          (await recovery.replaceCatalog(await replacement()))
+              .needsAcknowledgement,
+          isFalse,
+        );
+        await recovery.stop();
+        expect(failed, isNotEmpty);
+        for (final file in failed) {
+          expect(await File('$file.cleanup-pending').exists(), isTrue);
+        }
+        final active = database.databasePath;
+        final retained = File('$active.rollback-42.tmp');
+        await retained.writeAsString('retained original');
+        final ready = File('$active.replace-43.tmp.ready');
+        await ready.writeAsString('staged copy');
+        await File('${ready.path}.cleanup-pending').writeAsString('');
+        final other = File('${active}_other.replace-42.tmp');
+        await other.writeAsString('another catalog');
+        await File('${other.path}.cleanup-pending').writeAsString('');
+        // A fresh service has no in-memory pending paths.
+        recovery = CatalogRecovery(database: database);
+        await recovery.start(snapshotNow: false);
+        expect(await ready.exists(), isFalse);
+        expect(await File('${ready.path}.cleanup-pending').exists(), isFalse);
+        for (final file in failed) {
+          expect(await File(file).exists(), isFalse);
+          expect(await File('$file.cleanup-pending').exists(), isFalse);
+        }
+        expect(await retained.readAsString(), 'retained original');
+        expect(await other.readAsString(), 'another catalog');
+        expect(await File('${other.path}.cleanup-pending').exists(), isTrue);
+      },
+    );
+  }
+
   test(
     'busy truncate checkpoint refuses replacement without closing the original',
     () async {

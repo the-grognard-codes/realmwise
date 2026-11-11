@@ -9,6 +9,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:realmwise/screens/settings_screen.dart';
 import 'package:realmwise/services/app_controller.dart';
 import 'package:realmwise/services/catalog_recovery.dart';
+import 'package:realmwise/services/sync_contract.dart';
+import 'package:realmwise/services/sync_metadata.dart';
 import 'package:realmwise/theme/app_theme.dart';
 
 class _FakePathProvider extends PathProviderPlatform {
@@ -34,6 +36,90 @@ class _MemoryTokenStorage implements TokenStorage {
 }
 
 void main() {
+  for (final conflict in [false, true]) {
+    testWidgets(
+      'sync message handles ${conflict ? "retained conflict download" : "normal success"}',
+      (tester) async {
+        tester.view.physicalSize = const Size(800, 4000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final previous = PathProviderPlatform.instance;
+        final folder = await tester.runAsync(
+          () => Directory.systemTemp.createTemp('settings_sync_'),
+        );
+        PathProviderPlatform.instance = _FakePathProvider(folder!.path);
+        SharedPreferences.setMockInitialValues({});
+        final controller = _SyncMessageController(
+          conflict: conflict,
+          tokenStorage: _MemoryTokenStorage(),
+          imageRootPathOverride: '${folder.path}/images',
+        );
+        try {
+          await tester.runAsync(controller.initialize);
+          controller.syncCoordinator.provider = _Provider();
+          controller.syncCoordinator.session = const SyncAuthSession(
+            accountId: 'account',
+          );
+          controller.syncCoordinator.metadata = const SyncMetadata(
+            catalogIdentity: 'catalog',
+            state: SyncState.ready,
+          );
+          controller.syncMetadata = controller.syncCoordinator.metadata;
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(body: SettingsScreen(controller: controller)),
+            ),
+          );
+          await _pumpUntilVisible(tester, find.text('Cloud Sync'));
+          await _selectTab(tester, 'Cloud Sync');
+          await tester.ensureVisible(find.text('Sync Now'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Sync Now'));
+          await tester.pumpAndSettle();
+          if (conflict) {
+            await tester.tap(find.text('Download and replace local'));
+            await tester.pump();
+          }
+          final expected = conflict
+              ? 'Downloaded catalog is active, but recovery needs review. Automatic sync is paused.'
+              : 'Catalog synced to Google Drive.';
+          await _pumpUntilVisible(tester, find.text(expected));
+          expect(find.text(expected), findsOneWidget);
+          if (conflict)
+            expect(find.text('Catalog synced to Google Drive.'), findsNothing);
+          final syncButton = find.ancestor(
+            of: find.text('Sync Now'),
+            matching: find.byWidgetPredicate(
+              (widget) => widget is FilledButton,
+            ),
+          );
+          for (
+            var i = 0;
+            i < 100 &&
+                tester.widget<FilledButton>(syncButton).onPressed == null;
+            i++
+          ) {
+            await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 20)),
+            );
+            await tester.pump();
+          }
+          expect(tester.widget<FilledButton>(syncButton).onPressed, isNotNull);
+        } finally {
+          await tester.pumpWidget(const SizedBox.shrink());
+          // Drain database queries started by the final Settings rebuild.
+          await tester.runAsync(
+            () => controller.database.listCatalogTierSections('gameSystem'),
+          );
+          await tester.runAsync(controller.closeDatabase);
+          controller.dispose();
+          await tester.runAsync(() => folder.delete(recursive: true));
+          PathProviderPlatform.instance = previous;
+        }
+      },
+    );
+  }
   testWidgets('settings are grouped into local and cloud sync tabs', (
     tester,
   ) async {
@@ -160,6 +246,46 @@ void main() {
       PathProviderPlatform.instance = previousPathProvider;
     }
   });
+}
+
+class _Provider implements SyncProvider {
+  @override
+  String get provider => 'fake';
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _SyncMessageController extends AppController {
+  _SyncMessageController({
+    required this.conflict,
+    super.tokenStorage,
+    super.imageRootPathOverride,
+  });
+  final bool conflict;
+  CatalogRecoveryWarning? pendingWarning;
+  @override
+  CatalogRecoveryWarning? get recoveryWarning => pendingWarning;
+  @override
+  Future<void> syncNow() async {
+    if (conflict)
+      throw const SyncDecisionRequired(
+        SyncClassificationResult(SyncClassification.divergent),
+        localFingerprint: 'local',
+      );
+  }
+
+  @override
+  Future<bool> resolveSyncDecision(
+    SyncConflictChoice choice, {
+    required SyncClassificationResult decision,
+    required String localFingerprint,
+  }) async {
+    expect(choice, SyncConflictChoice.downloadReplaceLocal);
+    pendingWarning = const CatalogRecoveryWarning(
+      originalPath: 'original.rollback.tmp',
+    );
+    return true;
+  }
 }
 
 Future<void> _pumpUntilVisible(WidgetTester tester, Finder finder) async {

@@ -146,6 +146,7 @@ class CatalogRecovery {
 
   Future<void> start({bool snapshotNow = true}) async {
     await stop();
+    await loadWarning();
     await _retryFileCleanup();
     if (snapshotNow) await snapshot(SnapshotKind.routine);
     _timer = Timer.periodic(const Duration(minutes: 10), (_) {
@@ -403,8 +404,13 @@ class CatalogRecovery {
   }
 
   Future<void> _cleanupDatabaseFiles(String file) async {
+    final marker = File('$file.cleanup-pending');
     try {
+      // Only staged copies and committed rollbacks reach this method. Record
+      // intent before deletion so a new process can safely finish cleanup.
+      await marker.writeAsString('', flush: true);
       await _deleteDatabaseFiles(file);
+      await marker.delete();
       _pendingFileCleanup.remove(file);
     } on Object catch (error) {
       _pendingFileCleanup.add(file);
@@ -413,8 +419,33 @@ class CatalogRecovery {
   }
 
   Future<void> _retryFileCleanup() async {
+    if (isReplacing || !database.isOpen) return;
+    final active = database.databasePath;
+    final folder = Directory(p.dirname(active));
+    final pattern = RegExp(
+      '^${RegExp.escape(p.basename(active))}'
+      r'\.(?:replace-\d+\.tmp(?:\.ready)?|rollback-\d+\.tmp)\.cleanup-pending$',
+      caseSensitive: !Platform.isWindows,
+    );
+    // Scan explicit intent markers only. An unmarked rollback may be the
+    // collector's retained original and must never be swept as a temporary.
+    try {
+      await for (final entry in folder.list(followLinks: false)) {
+        if (entry is File && pattern.hasMatch(p.basename(entry.path))) {
+          _pendingFileCleanup.add(
+            entry.path.substring(
+              0,
+              entry.path.length - '.cleanup-pending'.length,
+            ),
+          );
+        }
+      }
+    } on Object catch (error) {
+      _reportFailure('cleanup_scan', error);
+    }
     for (final file in _pendingFileCleanup.toList()) {
       if (database.isOpen && p.equals(file, database.databasePath)) continue;
+      if (warning != null && p.equals(file, warning!.originalPath)) continue;
       await _cleanupDatabaseFiles(file);
     }
   }
