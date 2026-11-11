@@ -25,13 +25,24 @@ enum SnapshotKind {
 enum RestorePointFormat { database, bundle }
 
 class CatalogRecoveryWarning {
-  const CatalogRecoveryWarning({required this.originalPath});
+  const CatalogRecoveryWarning({
+    required this.originalPath,
+    this.originalRestored = false,
+  });
   final String originalPath;
+  final bool originalRestored;
 
-  String get message =>
-      'Catalog replacement needs review. Automatic sync is paused until you '
-      'acknowledge the active catalog. The original was protected by a recovery '
-      'snapshot; its rollback location is $originalPath.';
+  String get summary => originalRestored
+      ? 'The original catalog was restored. The interrupted import was discarded. '
+            'Automatic sync is paused.'
+      : 'Catalog replacement needs review. Automatic sync is paused.';
+
+  String get message => originalRestored
+      ? '$summary Acknowledge the restored catalog to allow automatic sync. '
+            'The active catalog is $originalPath.'
+      : 'Catalog replacement needs review. Automatic sync is paused until you '
+            'acknowledge the active catalog. The original was protected by a recovery '
+            'snapshot; its rollback location is $originalPath.';
 }
 
 class CatalogReplacementResult {
@@ -105,6 +116,8 @@ class CatalogRecovery {
   /// Recover the original before startup can create a new catalog at its path.
   Future<void> recoverInterruptedReplacement(String savedPath) async {
     if (await File(savedPath).exists()) return;
+    final marker = File('$savedPath.recovery-review.json');
+    if (!await marker.exists()) return;
     final folder = Directory(p.dirname(savedPath));
     if (!await folder.exists()) return;
     final pattern = RegExp(
@@ -119,6 +132,7 @@ class CatalogRecovery {
       final match = pattern.firstMatch(p.basename(entry.path));
       final stamp = match == null ? null : int.tryParse(match.group(1)!);
       if (stamp != null && stamp > newestStamp) {
+        if (await File('${entry.path}.cleanup-pending').exists()) continue;
         newest = entry;
         newestStamp = stamp;
       }
@@ -128,6 +142,10 @@ class CatalogRecovery {
     // rollback. Never install the staged replacement or clear the review marker.
     await _moveSidecars(newest.path, savedPath, renameFile);
     await renameFile(newest, savedPath);
+    await marker.writeAsString(
+      jsonEncode({'originalPath': savedPath, 'originalRestored': true}),
+      flush: true,
+    );
   }
 
   /// The marker is outside the replaceable database and survives app restarts.
@@ -144,6 +162,7 @@ class CatalogRecovery {
           jsonDecode(await file.readAsString()) as Map<String, dynamic>;
       warning = CatalogRecoveryWarning(
         originalPath: value['originalPath'] as String,
+        originalRestored: value['originalRestored'] == true,
       );
     } on Object catch (error) {
       _reportFailure('warning_read', error);

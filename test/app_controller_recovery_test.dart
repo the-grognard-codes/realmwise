@@ -103,9 +103,67 @@ void main() {
       );
       expect(await File(rollback).exists(), isFalse);
       expect(await File(olderRollback).readAsBytes(), [1, 2, 3]);
-      expect(await marker.readAsString(), markerContents);
-      expect(controller.recoveryWarning?.originalPath, rollback);
+      final restoredMarker = jsonDecode(await marker.readAsString());
+      expect(restoredMarker['originalPath'], saved);
+      expect(restoredMarker['originalRestored'], isTrue);
+      expect(controller.recoveryWarning?.originalPath, saved);
+      expect(
+        controller.recoveryWarning?.message,
+        contains('original catalog was restored'),
+      );
+      expect(
+        controller.recoveryWarning?.message,
+        contains('interrupted import was discarded'),
+      );
+      expect(controller.recoveryWarning?.message, isNot(contains(rollback)));
+      await controller.recovery.loadWarning();
+      expect(
+        controller.recoveryWarning?.message,
+        contains('original catalog was restored'),
+      );
       expect(await File(ready).exists(), isFalse);
+    });
+  }
+
+  for (final reason in ['no review marker', 'cleanup already pending']) {
+    test('startup falls back when rollback has $reason', () async {
+      final saved = controller.database.databasePath;
+      await controller.closeDatabase();
+      controller.dispose();
+      final rollback = '$saved.rollback-10.tmp';
+      await File(saved).rename(rollback);
+      final original = await File(rollback).readAsBytes();
+      if (reason == 'cleanup already pending') {
+        await File('$saved.recovery-review.json')
+            .writeAsString(jsonEncode({'originalPath': rollback}));
+        await File('$rollback.cleanup-pending').writeAsString('');
+      }
+      SharedPreferences.setMockInitialValues({'last_database_path': saved});
+      controller = _SchedulingController(directory.path);
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const channel = MethodChannel('plugins.flutter.io/path_provider');
+      messenger.setMockMethodCallHandler(channel, (_) async => directory.path);
+      try {
+        await controller.initialize();
+
+        expect(controller.error, isNull);
+        expect(
+          controller.activeDatabasePath,
+          '${directory.path}${Platform.pathSeparator}my_realmwise.db',
+        );
+        expect(await File(saved).exists(), isFalse);
+        expect(await File(rollback).readAsBytes(), original);
+        expect(
+          await controller.database.databaseHandle.query('works'),
+          isEmpty,
+        );
+      } finally {
+        messenger.setMockMethodCallHandler(
+          channel,
+          (_) async => Directory.systemTemp.path,
+        );
+      }
     });
   }
 

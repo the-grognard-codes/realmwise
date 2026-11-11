@@ -53,9 +53,7 @@ class CatalogRecoveryNotice extends StatelessWidget {
     builder: (context, _) => controller.recoveryWarning == null
         ? const SizedBox.shrink()
         : MaterialBanner(
-            content: const Text(
-              'Catalog replacement needs review. Automatic sync is paused.',
-            ),
+            content: Text(controller.recoveryWarning!.summary),
             actions: [
               TextButton(
                 onPressed: () => _review(context),

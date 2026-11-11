@@ -43,7 +43,6 @@ void main() {
       }
       final marker = File('$active.recovery-review.json');
       await marker.writeAsString(jsonEncode({'originalPath': rollback}));
-      final markerContents = await marker.readAsBytes();
 
       await recovery.recoverInterruptedReplacement(active);
 
@@ -53,9 +52,35 @@ void main() {
         expect(await File('$active$suffix').readAsBytes(), [1, 2, 3]);
         expect(await File('$rollback$suffix').exists(), isFalse);
       }
-      expect(await marker.readAsBytes(), markerContents);
+      expect(jsonDecode(await marker.readAsString()), {
+        'originalPath': active,
+        'originalRestored': true,
+      });
     },
   );
+
+  test('startup ignores a newer rollback queued for cleanup', () async {
+    final active = database.databasePath;
+    await database.close();
+    final rollback = '$active.rollback-9.tmp';
+    await File(active).rename(rollback);
+    final committed = File('$active.rollback-10.tmp');
+    await committed.writeAsBytes([1, 2, 3]);
+    final cleanup = File('${committed.path}.cleanup-pending');
+    await cleanup.writeAsString('');
+    await File('$active.recovery-review.json')
+        .writeAsString(jsonEncode({'originalPath': rollback}));
+
+    await recovery.recoverInterruptedReplacement(active);
+
+    await database.open(active);
+    expect(
+      await database.databaseHandle.query('works'),
+      contains(containsPair('title', 'Original')),
+    );
+    expect(await committed.readAsBytes(), [1, 2, 3]);
+    expect(await cleanup.exists(), isTrue);
+  });
 
   test(
     'startup recovery leaves an existing catalog and rollbacks intact',

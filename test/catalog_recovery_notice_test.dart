@@ -20,6 +20,40 @@ class _Controller extends AppController {
 }
 
 void main() {
+  testWidgets('restored original has an accurate banner and review dialog', (
+    tester,
+  ) async {
+    final controller = _Controller()
+      ..pending = const CatalogRecoveryWarning(
+        originalPath: 'C:/Catalogs/catalog.db',
+        originalRestored: true,
+      );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: CatalogRecoveryNotice(controller: controller)),
+      ),
+    );
+
+    expect(
+      find.textContaining('original catalog was restored'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('interrupted import was discarded'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Review catalog'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('C:/Catalogs/catalog.db'), findsOneWidget);
+    expect(find.textContaining('rollback location'), findsNothing);
+    expect(find.textContaining('.rollback-'), findsNothing);
+    await tester.tap(find.text('Acknowledge catalog'));
+    await tester.pumpAndSettle();
+    expect(controller.acknowledgements, 1);
+    expect(find.text('Review catalog'), findsNothing);
+  });
+
   for (final width in [360.0, 1000.0]) {
     testWidgets('warning requires explicit acknowledgement at width $width', (
       tester,
