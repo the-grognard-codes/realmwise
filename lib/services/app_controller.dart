@@ -176,6 +176,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   SyncCancellationToken? _automaticTransferCancellation;
   Future<void> _operationTail = Future<void>.value();
   Timer? _syncCompletionTimer;
+  int _remoteDownloads = 0;
   bool automaticSyncEnabled = false;
   String deviceId = '';
   String deviceName = '';
@@ -254,22 +255,22 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Future<T> _serialize<T>(Future<T> Function() action) {
     final result = _operationTail.then((_) => action());
     _operationTail = result.then<void>((_) {}, onError: (_, _) {});
-    unawaited(
-      _operationTail.then((_) {
-        if (!_automaticSyncPending ||
-            _disposed ||
-            (_automaticSyncTimer?.isActive ?? false))
-          return;
-        _syncCompletionTimer?.cancel();
-        // Run after callers clear their busy/connection/cancellation state.
-        // This also covers failed operations without polling while they run.
-        _syncCompletionTimer = Timer(Duration.zero, () {
-          _syncCompletionTimer = null;
-          _resumePendingAutomaticSync();
-        });
-      }),
-    );
+    unawaited(_operationTail.then((_) => _queuePendingAutomaticSync()));
     return result;
+  }
+
+  void _queuePendingAutomaticSync() {
+    if (!_automaticSyncPending ||
+        _disposed ||
+        _remoteDownloads > 0 ||
+        (_automaticSyncTimer?.isActive ?? false))
+      return;
+    _syncCompletionTimer?.cancel();
+    // Let callers finish clearing their busy/cancellation state first.
+    _syncCompletionTimer = Timer(Duration.zero, () {
+      _syncCompletionTimer = null;
+      _resumePendingAutomaticSync();
+    });
   }
 
   // Work IDs observed after opening a database are the session baseline. Any
@@ -656,6 +657,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   void _resumePendingAutomaticSync() {
     if (!_automaticSyncPending ||
+        _remoteDownloads > 0 ||
         _disposed ||
         !automaticSyncEnabled ||
         !automaticSyncOwnershipValid ||
@@ -671,7 +673,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _runAutomaticSync() async {
-    if (_disposed ||
+    if (_remoteDownloads > 0 ||
+        _disposed ||
         !automaticSyncEnabled ||
         !automaticSyncOwnershipValid ||
         isSyncing ||
@@ -711,7 +714,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     SyncCancellationToken cancellation,
   ) async {
     cancellation.throwIfCancelled();
-    if (isSyncing || isConnectionPending) throw const SyncBusyException();
+    if (_remoteDownloads > 0 || isSyncing || isConnectionPending)
+      throw const SyncBusyException();
     if (!database.isOpen) throw StateError('Open a catalog first.');
     final temporary = await getTemporaryDirectory();
     final bundlePath = path.join(
@@ -724,7 +728,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       final manifest = await bundles.validateBundle(bundlePath);
       final payload = Uint8List.fromList(await File(bundlePath).readAsBytes());
       cancellation.throwIfCancelled();
-      if (isSyncing || isConnectionPending) throw const SyncBusyException();
+      if (_remoteDownloads > 0 || isSyncing || isConnectionPending)
+        throw const SyncBusyException();
       final upload = syncCoordinator.automaticUpload(
         payload,
         localFingerprint: manifest.contentFingerprint,
@@ -1106,6 +1111,24 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<bool> downloadRemoteBundle({
+    SyncRemoteMetadata? expectedRemote,
+    String? expectedLocalFingerprint,
+    Future<void> Function()? backup,
+  }) async {
+    _remoteDownloads++;
+    try {
+      return await _downloadAndReplaceRemoteBundle(
+        expectedRemote: expectedRemote,
+        expectedLocalFingerprint: expectedLocalFingerprint,
+        backup: backup,
+      );
+    } finally {
+      _remoteDownloads--;
+      _queuePendingAutomaticSync();
+    }
+  }
+
+  Future<bool> _downloadAndReplaceRemoteBundle({
     SyncRemoteMetadata? expectedRemote,
     String? expectedLocalFingerprint,
     Future<void> Function()? backup,

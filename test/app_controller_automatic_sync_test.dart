@@ -737,6 +737,7 @@ void main() {
   }
 
   test('pending edit continues after a failed remote download', () async {
+    controller.retryDebounce = const Duration(milliseconds: 10);
     provider.holdDownload = true;
     final downloading = controller.downloadRemoteBundle(
       expectedRemote: const SyncRemoteMetadata(
@@ -754,6 +755,40 @@ void main() {
     await checked;
     await _until(() => provider.uploads == 1 && !controller.isSyncing);
     expect(controller.automaticSyncError, isNull);
+  });
+
+  test('cloud replacement never uploads local edits between malformed read retries', () async {
+    controller.retryDebounce = const Duration(milliseconds: 10);
+    final remote = '${dir.path}/remote.realmwise';
+    await controller.exportDeviceBundle(remote);
+    provider.downloadPayload = Uint8List.fromList(
+      await File(remote).readAsBytes(),
+    );
+    provider.malformedReads = 2;
+    await controller.database.databaseHandle.insert('works', {
+      'title': 'Local edit to discard',
+    });
+    controller.scheduleAutomaticSync(
+      debounce: const Duration(milliseconds: 10),
+    );
+    final downloading = controller.downloadRemoteBundle(
+      expectedRemote: const SyncRemoteMetadata(
+        revision: SyncRevision('r1'),
+        contentHash: 'h1',
+      ),
+    );
+    await _until(() => provider.downloads >= 2);
+    expect(provider.uploads, 0);
+    controller.didChangeAppLifecycleState(AppLifecycleState.hidden);
+    await downloading;
+    expect(provider.uploads, 0);
+    expect(provider.downloads, 3);
+    expect(
+      (await controller.database.listRecords()).where(
+        (record) => record.work.title == 'Local edit to discard',
+      ),
+      isEmpty,
+    );
   });
 
   test('resume renewal waits for an in-flight manual sync', () async {
@@ -850,6 +885,7 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
   bool holdUpload = false;
   bool failUpload = false, holdDownload = false;
   Uint8List? downloadPayload;
+  int malformedReads = 0, downloads = 0;
   final downloadStarted = Completer<void>(),
       releaseDownload = Completer<void>();
   final uploadStarted = Completer<void>(), releaseUpload = Completer<void>();
@@ -911,6 +947,7 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
     SyncRemoteTarget target, {
     SyncPrecondition? precondition,
   }) async {
+    downloads++;
     if (holdDownload) {
       downloadStarted.complete();
       await releaseDownload.future;
@@ -918,7 +955,9 @@ class _LeaseProvider implements SyncProvider, SyncLeaseProvider {
     }
     if (downloadPayload == null) throw UnimplementedError();
     return SyncDownloadResult(
-      payload: downloadPayload!,
+      payload: downloads <= malformedReads
+          ? Uint8List.fromList([0])
+          : downloadPayload!,
       metadata: const SyncRemoteMetadata(
         revision: SyncRevision('r1'),
         contentHash: 'h1',
