@@ -876,6 +876,13 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> disconnectOneDrive() => disconnectGoogleDrive();
 
   Future<void> syncNow() {
+    if (recovery.warning != null) {
+      return Future.error(
+        StateError(
+          'Review and acknowledge the active catalog before syncing, or restore a protected snapshot.',
+        ),
+      );
+    }
     if (_syncActivities.isNotEmpty)
       return Future.error(const SyncBusyException());
     if (recovery.isReplacing) return Future.error(const SyncBusyException());
@@ -947,6 +954,12 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     required String localFingerprint,
   }) async {
     if (choice == SyncConflictChoice.cancel) return false;
+    if (choice == SyncConflictChoice.uploadReplaceRemote &&
+        recovery.warning != null) {
+      throw StateError(
+        'Review and acknowledge the active catalog before syncing, or restore a protected snapshot.',
+      );
+    }
     if (!database.isOpen) throw StateError('Open a catalog first.');
     final temporary = await getTemporaryDirectory();
     final bundlePath = path.join(

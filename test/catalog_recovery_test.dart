@@ -347,8 +347,8 @@ void main() {
             bundle: true,
             imageRootPath: imageRoot,
           );
-          expect(later.needsAcknowledgement, isTrue);
-          expect(later.warning!.originalPath, result.warning!.originalPath);
+          expect(later.needsAcknowledgement, isFalse);
+          expect(later.warning, isNull);
           await restarted.stop();
           await restarted.acknowledgeWarning();
           await restarted.loadWarning();
@@ -416,6 +416,45 @@ void main() {
       );
     },
   );
+
+  for (final target in ['.replace-', '.rollback-']) {
+    test(
+      'committed import tolerates $target cleanup failure and retries later',
+      () async {
+        var blocked = true, ready = 0;
+        final failures = <String>{};
+        final events = _DiagnosticCapture();
+        final previousLogger = DiagnosticDiagnostics.logger;
+        DiagnosticDiagnostics.logger = events;
+        addTearDown(() => DiagnosticDiagnostics.logger = previousLogger);
+        recovery = CatalogRecovery(
+          database: database,
+          deleteFile: (file) async {
+            if (blocked && file.path.contains(target)) {
+              failures.add(file.path);
+              throw const FileSystemException('injected cleanup lock');
+            }
+            await file.delete();
+          },
+          onReady: () async {
+            ready++;
+          },
+        );
+        final result = await recovery.replaceCatalog(await replacement());
+        expect(result.needsAcknowledgement, isFalse);
+        expect(recovery.warning, isNull);
+        expect(ready, 1);
+        expect((await database.listRecords()).single.work.title, 'Replacement');
+        expect(events.events, contains('recovery.cleanup.error'));
+        expect(failures, isNotEmpty);
+        blocked = false;
+        await recovery.snapshot(SnapshotKind.manual);
+        for (final file in failures) {
+          expect(await File(file).exists(), isFalse);
+        }
+      },
+    );
+  }
 
   test(
     'successful replacement cleans discarded original and staged sidecars',

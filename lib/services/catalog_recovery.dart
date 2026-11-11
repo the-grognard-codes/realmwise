@@ -96,6 +96,7 @@ class CatalogRecovery {
   bool _isReplacing = false;
   bool get isReplacing => _isReplacing;
   bool _quiesced = false;
+  final Set<String> _pendingFileCleanup = {};
   CatalogRecoveryWarning? warning;
 
   File get _warningFile =>
@@ -145,6 +146,7 @@ class CatalogRecovery {
 
   Future<void> start({bool snapshotNow = true}) async {
     await stop();
+    await _retryFileCleanup();
     if (snapshotNow) await snapshot(SnapshotKind.routine);
     _timer = Timer.periodic(const Duration(minutes: 10), (_) {
       unawaited(
@@ -186,6 +188,7 @@ class CatalogRecovery {
     SnapshotKind kind, {
     List<int>? bundleBytes,
   }) async {
+    await _retryFileCleanup();
     final stamp = _stamp();
     await _folder.create(recursive: true);
     final suffix = bundleBytes == null ? '.backup.db' : '.realmwise';
@@ -399,6 +402,23 @@ class CatalogRecovery {
     await _deleteSidecars(file);
   }
 
+  Future<void> _cleanupDatabaseFiles(String file) async {
+    try {
+      await _deleteDatabaseFiles(file);
+      _pendingFileCleanup.remove(file);
+    } on Object catch (error) {
+      _pendingFileCleanup.add(file);
+      _reportFailure('cleanup', error);
+    }
+  }
+
+  Future<void> _retryFileCleanup() async {
+    for (final file in _pendingFileCleanup.toList()) {
+      if (database.isOpen && p.equals(file, database.databasePath)) continue;
+      await _cleanupDatabaseFiles(file);
+    }
+  }
+
   void _reportFailure(String operation, Object error) {
     DiagnosticDiagnostics.emit(
       DiagnosticSeverity.warning,
@@ -596,12 +616,12 @@ class CatalogRecovery {
       if (!replacementRetained || !database.isOpen) rethrow;
       _reportFailure('replacement_retained', error);
     } finally {
-      // Cleanup must not mask a replacement/rollback failure.
+      // Temporary-file locks do not change which catalog committed. Attempt
+      // every cleanup independently and retry failures on later snapshots.
+      for (final file in [staged, '$staged.ready', if (committed) rollback]) {
+        await _cleanupDatabaseFiles(file);
+      }
       try {
-        for (final file in [staged, '$staged.ready']) {
-          await _deleteDatabaseFiles(file);
-        }
-        if (committed) await _deleteDatabaseFiles(rollback);
         if (!committed &&
             !replacementRetained &&
             imageStaging != null &&
@@ -610,9 +630,10 @@ class CatalogRecovery {
         }
       } on Object catch (cleanupError) {
         _reportFailure('cleanup', cleanupError);
-        if (committed) replacementRetained = true;
       }
-      if (ownsWarning && !replacementRetained) {
+      // A deliberate replacement that fully committed resolves any earlier
+      // warning; merely failing to restore the original does not.
+      if ((committed || ownsWarning) && !replacementRetained) {
         try {
           if (await warningFile.exists()) await warningFile.delete();
           warning = null;

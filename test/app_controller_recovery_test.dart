@@ -29,7 +29,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     directory = await Directory.systemTemp.createTemp('controller_recovery_');
     provider = _Provider();
-    controller = _SchedulingController(directory.path);
+    controller = _SchedulingController(directory.path, provider: provider);
     await controller.openDatabase(
       '${directory.path}/catalog.db',
       remember: false,
@@ -69,6 +69,89 @@ void main() {
     controller.dispose();
     await directory.delete(recursive: true);
   });
+
+  test(
+    'manual sync cannot export or upload an unacknowledged catalog',
+    () async {
+      final active = controller.database.databasePath;
+      await controller.database.databaseHandle.insert('works', {
+        'title': 'Pending local edit',
+      });
+      await File('$active.recovery-review.json')
+          .writeAsString('{"originalPath":"original.rollback.tmp"}');
+      await controller.recovery.loadWarning();
+      final exports = controller.exports;
+      await expectLater(
+        controller.syncNow(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('acknowledge'),
+          ),
+        ),
+      );
+      expect(controller.exports, exports);
+      expect(provider.uploads, 0);
+      await controller.acknowledgeRecoveryWarning();
+      await controller.syncNow();
+      expect(controller.exports, greaterThan(exports));
+      expect(provider.uploads, 1);
+    },
+  );
+
+  test(
+    'a retained conflict choice cannot upload an unreviewed catalog',
+    () async {
+      final active = controller.database.databasePath;
+      await File('$active.recovery-review.json')
+          .writeAsString('{"originalPath":"original.rollback.tmp"}');
+      await controller.recovery.loadWarning();
+      final exports = controller.exports;
+      await expectLater(
+        controller.resolveSyncDecision(
+          SyncConflictChoice.uploadReplaceRemote,
+          decision: const SyncClassificationResult(
+            SyncClassification.divergent,
+            remote: _Provider.remote,
+          ),
+          localFingerprint: fingerprint,
+        ),
+        throwsStateError,
+      );
+      expect(controller.exports, exports);
+      expect(provider.uploads, 0);
+    },
+  );
+
+  for (final operation in ['restore', 'download']) {
+    test('successful $operation clears an earlier warning', () async {
+      final active = controller.database.databasePath;
+      final point = await controller.recovery.snapshot(SnapshotKind.manual);
+      await File('$active.recovery-review.json')
+          .writeAsString('{"originalPath":"original.rollback.tmp"}');
+      await controller.recovery.loadWarning();
+      if (operation == 'restore') {
+        final result = await controller.restoreFromBackup(point);
+        expect(result.needsAcknowledgement, isFalse);
+        expect(controller.schedules, greaterThan(0));
+      } else {
+        expect(
+          await controller.downloadRemoteBundle(
+            expectedRemote: _Provider.remote,
+          ),
+          isTrue,
+        );
+        expect(controller.syncCoordinator.isConnected, isTrue);
+        expect(
+          controller.syncCoordinator.metadata!.lastSuccessfulLocalFingerprint,
+          fingerprint,
+        );
+      }
+      expect(controller.recoveryWarning, isNull);
+      expect(await File('$active.recovery-review.json').exists(), isFalse);
+    });
+  }
 
   for (final operation in ['import', 'restore', 'download']) {
     test(
@@ -251,8 +334,12 @@ void main() {
 }
 
 class _SchedulingController extends AppController {
-  _SchedulingController(String root)
-    : super(tokenStorage: _Tokens(), imageRootPathOverride: '$root/images');
+  _SchedulingController(String root, {SyncProvider? provider})
+    : super(
+        tokenStorage: _Tokens(),
+        imageRootPathOverride: '$root/images',
+        syncProvider: provider,
+      );
   int schedules = 0;
   CatalogRecovery? recoveryOverride;
   @override
@@ -273,6 +360,7 @@ class _SchedulingController extends AppController {
 }
 
 class _Provider implements SyncProvider, SyncLeaseProvider {
+  int uploads = 0;
   static const remote = SyncRemoteMetadata(
     revision: SyncRevision('r1'),
     contentHash: 'h1',
@@ -324,7 +412,11 @@ class _Provider implements SyncProvider, SyncLeaseProvider {
     SyncRemoteTarget target,
     Uint8List payload, {
     SyncPrecondition? precondition,
-  }) async => const SyncUploadResult(metadata: remote);
+  }) async {
+    uploads++;
+    return const SyncUploadResult(metadata: remote);
+  }
+
   @override
   Future<SyncLease> acquireLease(
     SyncAuthSession session,
