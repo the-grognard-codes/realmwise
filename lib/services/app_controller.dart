@@ -73,12 +73,16 @@ class _InMemorySyncMetadataStorage implements SyncMetadataStorage {
 class AppController extends ChangeNotifier with WidgetsBindingObserver {
   AppController({
     TokenStorage? tokenStorage,
+    DateTime Function()? clock,
+    Timer Function(Duration, void Function(Timer))? periodicTimer,
     this.imageRootPathOverride,
     SyncProvider? syncProvider,
     SyncProvider? googleDriveProvider,
     SyncProvider? oneDriveProvider,
     SyncProvider? dropboxProvider,
-  }) : database = DatabaseService(),
+  }) : clock = clock ?? DateTime.now,
+       periodicTimer = periodicTimer ?? Timer.periodic,
+       database = DatabaseService(),
        _http = http.Client(),
        backups = BackupService(),
        _tokenStorage = tokenStorage ?? SecureStorageService(),
@@ -91,6 +95,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     DiagnosticDiagnostics.logger = diagnostics;
   }
 
+  final DateTime Function() clock;
+  final Timer Function(Duration, void Function(Timer)) periodicTimer;
   final DatabaseService database;
 
   static Map<String, SyncProvider> _providerEntry(SyncProvider? provider) =>
@@ -158,8 +164,19 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   bool debugLoggingEnabled = false;
   Future<void>? _syncFuture;
   Timer? _automaticSyncTimer;
+  Timer? _leaseRenewalTimer;
+  Future<void>? _leaseRenewalFuture;
+  bool _foreground = true;
+  bool _backgrounded = false;
+  bool _disposed = false;
   Future<void>? _automaticFuture;
+  bool _automaticSyncPending = false;
+  bool _automaticBackgroundFlushPending = false;
+  SyncCancellationToken? _automaticCancellation;
+  SyncCancellationToken? _automaticTransferCancellation;
   Future<void> _operationTail = Future<void>.value();
+  Timer? _syncCompletionTimer;
+  int _remoteDownloads = 0;
   bool automaticSyncEnabled = false;
   String deviceId = '';
   String deviceName = '';
@@ -178,10 +195,12 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   void cancelSync() => syncCoordinator.cancel();
 
   Future<void> _cancelAndAwaitSync() async {
-    _automaticSyncTimer?.cancel();
+    _clearPendingAutomaticSync();
+    _cancelAutomaticTimers();
+    _automaticCancellation?.cancel();
+    syncCoordinator.cancel();
     final running = _syncFuture;
     if (running != null) {
-      syncCoordinator.cancel();
       try {
         await running;
       } on Object {
@@ -189,6 +208,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         // catalog remains intact and the next open can restore its metadata.
       }
     }
+    await _leaseRenewalFuture;
     final automatic = _automaticFuture;
     if (automatic != null) {
       try {
@@ -199,9 +219,32 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _clearAutomaticSyncState() {
+  void _clearPendingAutomaticSync() {
+    _automaticSyncPending = false;
+    _automaticBackgroundFlushPending = false;
+  }
+
+  void _cancelAutomaticTimers() {
+    _syncCompletionTimer?.cancel();
+    _syncCompletionTimer = null;
+    _leaseRenewalTimer?.cancel();
+    _leaseRenewalTimer = null;
     _automaticSyncTimer?.cancel();
     _automaticSyncTimer = null;
+  }
+
+  bool get _hasAutomaticOwnership =>
+      automaticSyncEnabled &&
+      syncMetadata?.deviceId == deviceId &&
+      syncMetadata?.leaseToken != null &&
+      (syncMetadata?.leaseExpiresAt?.isAfter(clock().toUtc()) ?? false);
+
+  String _syncErrorMessage(Object error) =>
+      error.toString().replaceFirst('Exception: ', '');
+
+  void _clearAutomaticSyncState() {
+    _clearPendingAutomaticSync();
+    _cancelAutomaticTimers();
     automaticSyncEnabled = false;
     automaticSyncOwnershipValid = false;
     automaticSyncError = null;
@@ -212,7 +255,22 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Future<T> _serialize<T>(Future<T> Function() action) {
     final result = _operationTail.then((_) => action());
     _operationTail = result.then<void>((_) {}, onError: (_, _) {});
+    unawaited(_operationTail.then((_) => _queuePendingAutomaticSync()));
     return result;
+  }
+
+  void _queuePendingAutomaticSync() {
+    if (!_automaticSyncPending ||
+        _disposed ||
+        _remoteDownloads > 0 ||
+        (_automaticSyncTimer?.isActive ?? false))
+      return;
+    _syncCompletionTimer?.cancel();
+    // Let callers finish clearing their busy/cancellation state first.
+    _syncCompletionTimer = Timer(Duration.zero, () {
+      _syncCompletionTimer = null;
+      _resumePendingAutomaticSync();
+    });
   }
 
   // Work IDs observed after opening a database are the session baseline. Any
@@ -382,12 +440,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       );
       syncCoordinator.metadata = syncMetadata;
       automaticSyncEnabled = syncMetadata?.automaticSyncEnabled ?? false;
-      automaticSyncOwnershipValid =
-          automaticSyncEnabled &&
-          syncMetadata?.deviceId == deviceId &&
-          syncMetadata?.leaseToken != null &&
-          (syncMetadata?.leaseExpiresAt?.isAfter(DateTime.now().toUtc()) ??
-              false);
+      automaticSyncOwnershipValid = _hasAutomaticOwnership;
       final savedSync = syncMetadata;
       final provider = savedSync?.provider == null
           ? null
@@ -453,7 +506,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
       notifyListeners();
-      if (automaticSyncEnabled) scheduleAutomaticSync();
+      if (automaticSyncEnabled && syncCoordinator.isConnected) {
+        await _refreshAutomaticLease();
+        _startLeaseRenewal();
+      }
     } catch (exception) {
       // Opening the database is a transaction from the UI's perspective. If
       // image storage (or any later bootstrap step) fails, leave no live DB
@@ -475,6 +531,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   void _ensureSyncCoordinator(SharedPreferences? prefs) {
     if (_syncCoordinatorInitialized) return;
     syncCoordinator = SyncCoordinator(
+      clock: clock,
       metadataStorage: prefs == null
           ? _InMemorySyncMetadataStorage()
           : SharedPreferencesSyncMetadataStorage(prefs),
@@ -517,32 +574,47 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> setAutomaticSyncEnabled(bool enabled) async {
+  Future<void> setAutomaticSyncEnabled(bool enabled) {
+    if (!enabled) {
+      _clearPendingAutomaticSync();
+      _cancelAutomaticTimers();
+      _automaticCancellation?.cancel();
+      _automaticTransferCancellation?.cancel();
+    }
+    return _serialize(() => _setAutomaticSyncEnabled(enabled));
+  }
+
+  Future<void> _setAutomaticSyncEnabled(bool enabled) async {
     final metadata = syncCoordinator.metadata;
     if (metadata == null || !syncCoordinator.isConnected) {
       throw StateError(
         'Connect a cloud provider before enabling automatic sync.',
       );
     }
-    _automaticSyncTimer?.cancel();
+    _cancelAutomaticTimers();
     if (enabled) {
       await syncCoordinator.enableAutomaticSync(
         deviceId: deviceId,
         deviceName: deviceName,
       );
       automaticSyncOwnershipValid = true;
-      scheduleAutomaticSync();
     } else {
       await syncCoordinator.disableAutomaticSync();
       automaticSyncOwnershipValid = false;
     }
     automaticSyncEnabled = enabled;
+    if (enabled) {
+      _startLeaseRenewal();
+      scheduleAutomaticSync();
+    }
     automaticSyncError = null;
     syncMetadata = syncCoordinator.metadata;
     notifyListeners();
   }
 
-  Future<void> takeOverAutomaticSync() async {
+  Future<void> takeOverAutomaticSync() => _serialize(_takeOverAutomaticSync);
+
+  Future<void> _takeOverAutomaticSync() async {
     if (!syncCoordinator.isConnected) {
       throw StateError('Connect a cloud provider first.');
     }
@@ -557,44 +629,93 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
     // A takeover must validate the remote state before the first upload.
     await _validateAutomaticRemote();
+    _startLeaseRenewal();
   }
 
   void scheduleAutomaticSync({Duration debounce = const Duration(seconds: 5)}) {
-    if (!automaticSyncEnabled || !automaticSyncOwnershipValid) return;
+    if (_disposed || !automaticSyncEnabled || !automaticSyncOwnershipValid)
+      return;
+    _automaticSyncPending = true;
+    if (!_foreground) return;
     _automaticSyncTimer?.cancel();
     _automaticSyncTimer = Timer(debounce, () {
-      final running = _runAutomaticSync();
-      _automaticFuture = running;
-      unawaited(
-        running.whenComplete(() {
-          if (identical(_automaticFuture, running)) _automaticFuture = null;
-        }),
-      );
+      _automaticSyncTimer = null;
+      _launchAutomaticSync();
     });
   }
 
-  Future<void> _runAutomaticSync() async {
-    if (!automaticSyncEnabled || !automaticSyncOwnershipValid || isSyncing)
+  void _launchAutomaticSync() {
+    if (!_automaticSyncPending || _automaticCancellation != null) return;
+    final running = _runAutomaticSync();
+    _automaticFuture = running;
+    unawaited(
+      running.whenComplete(() {
+        if (identical(_automaticFuture, running)) _automaticFuture = null;
+      }),
+    );
+  }
+
+  void _resumePendingAutomaticSync() {
+    if (!_automaticSyncPending ||
+        _remoteDownloads > 0 ||
+        _disposed ||
+        !automaticSyncEnabled ||
+        !automaticSyncOwnershipValid ||
+        _automaticCancellation != null ||
+        isSyncing ||
+        isConnectionPending)
       return;
-    automaticSyncLastAttempt = DateTime.now().toUtc();
+    if (_foreground) {
+      scheduleAutomaticSync();
+    } else if (_automaticBackgroundFlushPending) {
+      scheduleMicrotask(_launchAutomaticSync);
+    }
+  }
+
+  Future<void> _runAutomaticSync() async {
+    if (_remoteDownloads > 0 ||
+        _disposed ||
+        !automaticSyncEnabled ||
+        !automaticSyncOwnershipValid ||
+        isSyncing ||
+        isConnectionPending)
+      return;
+    _automaticSyncPending = false;
+    _automaticBackgroundFlushPending = false;
+    final cancellation = SyncCancellationToken();
+    _automaticCancellation = cancellation;
+    automaticSyncLastAttempt = clock().toUtc();
     notifyListeners();
     try {
-      await _serialize(_automaticUploadInternal);
-      automaticSyncLastSuccess = DateTime.now().toUtc();
+      await _serialize(() => _automaticUploadInternal(cancellation));
+      automaticSyncLastSuccess = clock().toUtc();
       automaticSyncError = null;
+    } on SyncCancelledException {
+      // Disabling automatic sync intentionally cancels queued/pre-transfer work.
+    } on SyncBusyException {
+      _automaticSyncPending = true;
     } catch (error) {
-      automaticSyncError = error.toString().replaceFirst('Exception: ', '');
+      automaticSyncError = _syncErrorMessage(error);
       if (error is SyncLeaseLostException) {
+        _cancelAutomaticTimers();
         automaticSyncEnabled = false;
         automaticSyncOwnershipValid = false;
         _automaticSyncTimer?.cancel();
         syncMetadata = syncCoordinator.metadata;
       }
+    } finally {
+      _automaticCancellation = null;
+      _automaticTransferCancellation = null;
     }
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
-  Future<void> _automaticUploadInternal() async {
+  Future<void> _automaticUploadInternal(
+    SyncCancellationToken cancellation,
+  ) async {
+    cancellation.throwIfCancelled();
+    if (_remoteDownloads > 0 || isSyncing || isConnectionPending)
+      throw const SyncBusyException();
     if (!database.isOpen) throw StateError('Open a catalog first.');
     final temporary = await getTemporaryDirectory();
     final bundlePath = path.join(
@@ -602,12 +723,19 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       'realmwise-auto-${DateTime.now().microsecondsSinceEpoch}.realmwise',
     );
     try {
+      cancellation.throwIfCancelled();
       await exportDeviceBundle(bundlePath);
       final manifest = await bundles.validateBundle(bundlePath);
-      syncMetadata = await syncCoordinator.automaticUpload(
-        Uint8List.fromList(await File(bundlePath).readAsBytes()),
+      final payload = Uint8List.fromList(await File(bundlePath).readAsBytes());
+      cancellation.throwIfCancelled();
+      if (_remoteDownloads > 0 || isSyncing || isConnectionPending)
+        throw const SyncBusyException();
+      final upload = syncCoordinator.automaticUpload(
+        payload,
         localFingerprint: manifest.contentFingerprint,
       );
+      _automaticTransferCancellation = syncCoordinator.activeCancellation;
+      syncMetadata = await upload;
     } finally {
       final file = File(bundlePath);
       if (await file.exists()) await file.delete();
@@ -621,21 +749,19 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       'realmwise-auto-validate-${DateTime.now().microsecondsSinceEpoch}.realmwise',
     );
     try {
-      await _serialize(() async {
-        await exportDeviceBundle(bundlePath);
-        final manifest = await bundles.validateBundle(bundlePath);
-        final decision = await syncCoordinator.classify(
-          manifest.contentFingerprint,
+      await exportDeviceBundle(bundlePath);
+      final manifest = await bundles.validateBundle(bundlePath);
+      final decision = await syncCoordinator.classify(
+        manifest.contentFingerprint,
+      );
+      if (decision.classification == SyncClassification.divergent ||
+          decision.classification == SyncClassification.unknownError ||
+          decision.classification == SyncClassification.remoteOnly) {
+        throw SyncDecisionRequired(
+          decision,
+          localFingerprint: manifest.contentFingerprint,
         );
-        if (decision.classification == SyncClassification.divergent ||
-            decision.classification == SyncClassification.unknownError ||
-            decision.classification == SyncClassification.remoteOnly) {
-          throw SyncDecisionRequired(
-            decision,
-            localFingerprint: manifest.contentFingerprint,
-          );
-        }
-      });
+      }
       automaticSyncOwnershipValid = true;
       syncMetadata = syncCoordinator.metadata;
       scheduleAutomaticSync();
@@ -651,34 +777,70 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      if (automaticSyncEnabled) unawaited(_refreshAutomaticLease());
-    } else if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) {
+    final wasForeground = _foreground;
+    final hadPendingUpload =
+        _automaticSyncPending || (_automaticSyncTimer?.isActive ?? false);
+    // Desktop focus loss is inactive while the window remains visible.
+    _foreground =
+        state == AppLifecycleState.resumed ||
+        state == AppLifecycleState.inactive;
+    if (!_foreground) {
+      _backgrounded = true;
+      _cancelAutomaticTimers();
+    }
+    if (state == AppLifecycleState.resumed && _backgrounded) {
+      _backgrounded = false;
+      if (automaticSyncEnabled) {
+        unawaited(_refreshAutomaticLease());
+        _startLeaseRenewal();
+      }
+    } else if (wasForeground &&
+        (state == AppLifecycleState.hidden ||
+            state == AppLifecycleState.paused ||
+            state == AppLifecycleState.detached)) {
       // Best effort only: lifecycle callbacks must never delay closing.
-      if (automaticSyncEnabled && automaticSyncOwnershipValid) {
-        final running = _runAutomaticSync();
-        _automaticFuture = running;
-        unawaited(
-          running.whenComplete(() {
-            if (identical(_automaticFuture, running)) _automaticFuture = null;
-          }),
-        );
+      if (hadPendingUpload &&
+          automaticSyncEnabled &&
+          automaticSyncOwnershipValid) {
+        _automaticSyncPending = true;
+        _automaticBackgroundFlushPending = true;
+        _launchAutomaticSync();
       }
     }
   }
 
-  Future<void> _refreshAutomaticLease() async {
-    try {
-      final lease = await syncCoordinator.refreshAutomaticLease();
-      automaticSyncOwnershipValid = lease != null;
-      syncMetadata = syncCoordinator.metadata;
-      if (lease != null) scheduleAutomaticSync();
-      notifyListeners();
-    } catch (error) {
-      automaticSyncError = error.toString().replaceFirst('Exception: ', '');
-      notifyListeners();
-    }
+  void _startLeaseRenewal() {
+    _leaseRenewalTimer?.cancel();
+    if (!_foreground ||
+        _disposed ||
+        !automaticSyncEnabled ||
+        !syncCoordinator.isConnected)
+      return;
+    _leaseRenewalTimer = periodicTimer(const Duration(minutes: 5), (_) {
+      if (!isSyncing) unawaited(_refreshAutomaticLease());
+    });
+  }
+
+  Future<void> _refreshAutomaticLease() {
+    if (_disposed || !_foreground || !automaticSyncEnabled)
+      return Future.value();
+    return _leaseRenewalFuture ??= _serialize(() async {
+      if (_disposed || !_foreground || !automaticSyncEnabled) return;
+      try {
+        final lease = await syncCoordinator.refreshAutomaticLease();
+        automaticSyncOwnershipValid = lease != null;
+        syncMetadata = syncCoordinator.metadata;
+        automaticSyncEnabled = syncMetadata?.automaticSyncEnabled ?? false;
+        if (lease != null) {
+          scheduleAutomaticSync();
+        } else {
+          _cancelAutomaticTimers();
+        }
+      } catch (error) {
+        automaticSyncError = _syncErrorMessage(error);
+      }
+      if (!_disposed) notifyListeners();
+    }).whenComplete(() => _leaseRenewalFuture = null);
   }
 
   Future<void> _migrateRpgGeekToken(String catalogIdentity) async {
@@ -701,6 +863,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     syncCoordinator.resetRuntime();
     syncMetadata = null;
     _selectedProvider = null;
+    _clearAutomaticSyncState();
     _sessionBaselineWorkIds.clear();
     sessionNewWorkIds.clear();
     final prefs = await SharedPreferences.getInstance();
@@ -715,19 +878,17 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       );
     }
     if (!database.isOpen) throw StateError('Open a catalog first.');
-    final identity = await database.ensureCatalogIdentity();
+    if (isSyncing || _automaticCancellation != null || isConnectionPending) {
+      throw const SyncBusyException();
+    }
     _pendingConnectionProvider = provider;
     _pendingConnectionCancellationRequested = false;
     notifyListeners();
     try {
+      final identity = await database.ensureCatalogIdentity();
       syncMetadata = await syncCoordinator.connect(provider, identity);
       automaticSyncEnabled = syncMetadata?.automaticSyncEnabled ?? false;
-      automaticSyncOwnershipValid =
-          automaticSyncEnabled &&
-          syncMetadata?.deviceId == deviceId &&
-          syncMetadata?.leaseToken != null &&
-          (syncMetadata?.leaseExpiresAt?.isAfter(DateTime.now().toUtc()) ??
-              false);
+      automaticSyncOwnershipValid = _hasAutomaticOwnership;
       automaticSyncError = null;
       automaticSyncLastAttempt = null;
       automaticSyncLastSuccess = null;
@@ -776,10 +937,15 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       if (identical(_pendingConnectionProvider, provider)) {
         _pendingConnectionProvider = null;
         _pendingConnectionCancellationRequested = false;
+        _resumePendingAutomaticSync();
         notifyListeners();
       }
     }
     _selectedProvider = provider;
+    if (automaticSyncEnabled) {
+      await _refreshAutomaticLease();
+      _startLeaseRenewal();
+    }
     notifyListeners();
   }
 
@@ -808,9 +974,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> disconnectOneDrive() => disconnectGoogleDrive();
 
   Future<void> syncNow() {
+    if (isConnectionPending) return Future.error(const SyncBusyException());
     final running = _syncFuture;
     if (running != null) return Future<void>.error(const SyncBusyException());
-    final operation = _syncNowInternal();
+    final operation = _serialize(_syncNowInternal);
     _syncFuture = operation;
     return operation.whenComplete(() {
       if (identical(_syncFuture, operation)) _syncFuture = null;
@@ -903,8 +1070,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         }
         // Preserve the observed remote bytes locally before allowing a remote
         // overwrite. A DB backup alone cannot recover the remote catalog.
-        final remote = await syncCoordinator.download(
-          expectedRemote: decision.remote,
+        final remote = await _serialize(
+          () => syncCoordinator.download(expectedRemote: decision.remote),
         );
         final remotePath = path.join(
           path.dirname(database.databasePath),
@@ -922,14 +1089,16 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
           if (await f.exists()) await f.delete();
           rethrow;
         }
-        await syncCoordinator.resolveConflict(
-          choice,
-          currentLocalFingerprint: currentFingerprint,
-          expectedLocalFingerprint: localFingerprint,
-          observedRemote: decision.remote!,
-          payload: Uint8List.fromList(await File(bundlePath).readAsBytes()),
-          payloadFingerprint: currentFingerprint,
-          backup: localBackup,
+        await _serialize(
+          () async => syncCoordinator.resolveConflict(
+            choice,
+            currentLocalFingerprint: currentFingerprint,
+            expectedLocalFingerprint: localFingerprint,
+            observedRemote: decision.remote!,
+            payload: Uint8List.fromList(await File(bundlePath).readAsBytes()),
+            payloadFingerprint: currentFingerprint,
+            backup: localBackup,
+          ),
         );
         syncMetadata = syncCoordinator.metadata;
         notifyListeners();
@@ -942,6 +1111,24 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<bool> downloadRemoteBundle({
+    SyncRemoteMetadata? expectedRemote,
+    String? expectedLocalFingerprint,
+    Future<void> Function()? backup,
+  }) async {
+    _remoteDownloads++;
+    try {
+      return await _downloadAndReplaceRemoteBundle(
+        expectedRemote: expectedRemote,
+        expectedLocalFingerprint: expectedLocalFingerprint,
+        backup: backup,
+      );
+    } finally {
+      _remoteDownloads--;
+      _queuePendingAutomaticSync();
+    }
+  }
+
+  Future<bool> _downloadAndReplaceRemoteBundle({
     SyncRemoteMetadata? expectedRemote,
     String? expectedLocalFingerprint,
     Future<void> Function()? backup,
@@ -990,8 +1177,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       const initialBundleReadRetryDelay = Duration(milliseconds: 500);
       for (var attempt = 0; attempt < maxBundleReadRetries; attempt++) {
         try {
-          result = await syncCoordinator.download(
-            expectedRemote: discoveredRemote,
+          result = await _serialize<SyncDownloadResult>(
+            () => syncCoordinator.download(expectedRemote: discoveredRemote),
           );
           await File(bundlePath).writeAsBytes(result.payload, flush: true);
           manifest = await previewDeviceBundle(bundlePath);
@@ -1078,12 +1265,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         syncMetadata = syncCoordinator.metadata;
       }
       automaticSyncEnabled = syncMetadata?.automaticSyncEnabled ?? false;
-      automaticSyncOwnershipValid =
-          automaticSyncEnabled &&
-          syncMetadata?.deviceId == deviceId &&
-          syncMetadata?.leaseToken != null &&
-          (syncMetadata?.leaseExpiresAt?.isAfter(DateTime.now().toUtc()) ??
-              false);
+      automaticSyncOwnershipValid = _hasAutomaticOwnership;
       if (!automaticSyncOwnershipValid) {
         _automaticSyncTimer?.cancel();
       } else {
@@ -1139,28 +1321,18 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     includePersonalImages: includePersonalImagesInBundles,
   );
 
-  Future<void> setIncludePersonalImagesInBundles(bool value) async {
+  Future<void> setIncludePersonalImagesInBundles(bool value) =>
+      _serialize(() => _setIncludePersonalImagesInBundles(value));
+
+  Future<void> _setIncludePersonalImagesInBundles(bool value) async {
     includePersonalImagesInBundles = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('include_personal_images_in_bundles', value);
     final current = syncCoordinator.metadata;
     if (current != null) {
-      syncCoordinator.metadata = SyncMetadata(
-        catalogIdentity: current.catalogIdentity,
-        provider: current.provider,
-        accountId: current.accountId,
-        accountDisplayName: current.accountDisplayName,
-        remoteTargetId: current.remoteTargetId,
-        remoteTargetName: current.remoteTargetName,
-        revision: current.revision,
-        contentHash: current.contentHash,
-        lastSuccessfulLocalFingerprint: current.lastSuccessfulLocalFingerprint,
-        createdAt: current.createdAt,
-        updatedAt: current.updatedAt,
-        state: current.state,
-        error: current.error,
+      syncCoordinator.metadata = current.copyWith(
         includePersonalImages: value,
-        retainedRevisionCount: current.retainedRevisionCount,
+        updatedAt: clock().toUtc(),
       );
       syncMetadata = syncCoordinator.metadata;
       await syncCoordinator.metadataStorage.write(syncMetadata!);
@@ -1438,8 +1610,11 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _disposed = true;
+    _clearPendingAutomaticSync();
+    _cancelAutomaticTimers();
+    if (_syncCoordinatorInitialized) syncCoordinator.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    _automaticSyncTimer?.cancel();
     unawaited(backups.stop());
     unawaited(database.close());
     _http.close();

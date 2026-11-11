@@ -9,6 +9,114 @@ import 'package:realmwise/services/sync_contract.dart';
 import 'package:realmwise/services/sync_coordinator.dart';
 
 void main() {
+  test(
+    'typed metadata copies preserve timestamps and clear only explicit fields',
+    () {
+      final metadata = SyncMetadata(
+        catalogIdentity: 'catalog',
+        revision: 'r1',
+        error: 'error',
+        updatedAt: DateTime.utc(2026),
+        leaseToken: 'token',
+      );
+      final copied = metadata.copyWith(
+        includePersonalImages: true,
+        clearFields: {SyncMetadataField.error},
+      );
+      expect(copied.updatedAt, metadata.updatedAt);
+      expect(copied.revision, 'r1');
+      expect(copied.error, isNull);
+      expect(copied.leaseToken, 'token');
+      expect(copied.copyWith(clearLease: true).leaseToken, isNull);
+    },
+  );
+
+  for (final operation in [
+    'classify',
+    'upload',
+    'failure',
+    'restore',
+    'noop',
+  ]) {
+    test('automatic fields survive $operation', () async {
+      final provider = _PolicyProvider();
+      final coordinator = SyncCoordinator(
+        metadataStorage: _MemorySyncStorage(),
+      );
+      await coordinator.connect(provider, 'catalog');
+      final original = SyncMetadata(
+        catalogIdentity: 'catalog',
+        provider: 'fake',
+        accountId: 'a',
+        remoteTargetId: 'target',
+        revision: 'r1',
+        contentHash: 'h1',
+        lastSuccessfulLocalFingerprint: 'l1',
+        state: SyncState.ready,
+        automaticSyncEnabled: true,
+        deviceId: 'device',
+        deviceName: 'Desktop',
+        ownershipGeneration: 'generation',
+        leaseToken: 'lease',
+        leaseExpiresAt: DateTime.utc(2027),
+        lastLeaseRenewedAt: DateTime.utc(2026),
+        lastAutomaticAttemptAt: DateTime.utc(2026, 2),
+        lastAutomaticSuccessAt: DateTime.utc(2026, 3),
+        automaticSchedulerState: 'ready',
+        includePersonalImages: true,
+        retainedRevisionCount: 5,
+      );
+      coordinator.metadata = original;
+      if (operation == 'classify' || operation == 'noop') {
+        provider.remote = const SyncRemoteMetadata(
+          revision: SyncRevision('r2'),
+          contentHash: 'h1',
+        );
+      }
+      switch (operation) {
+        case 'classify':
+          await coordinator.classify('l1');
+        case 'restore':
+          await coordinator.restore(
+            provider,
+            const SyncAuthSession(accountId: 'a'),
+            original,
+          );
+        case 'failure':
+          provider.uploadFails = true;
+          await expectLater(
+            coordinator.sync(Uint8List.fromList([1]), localFingerprint: 'l2'),
+            throwsStateError,
+          );
+        default:
+          await coordinator.sync(
+            Uint8List.fromList([1]),
+            localFingerprint: operation == 'noop' ? 'l1' : 'l2',
+          );
+      }
+      for (final key in [
+        'automaticSyncEnabled',
+        'deviceId',
+        'deviceName',
+        'ownershipGeneration',
+        'leaseToken',
+        'leaseExpiresAt',
+        'lastLeaseRenewedAt',
+        'lastAutomaticAttemptAt',
+        'lastAutomaticSuccessAt',
+        'automaticSchedulerState',
+        'includePersonalImages',
+        'retainedRevisionCount',
+      ]) {
+        expect(
+          coordinator.metadata!.toJson()[key],
+          original.toJson()[key],
+          reason: key,
+        );
+      }
+    });
+  }
+
   test('metadata serializes without credentials and round trips', () {
     final metadata = SyncMetadata(
       catalogIdentity: 'catalog-a',
