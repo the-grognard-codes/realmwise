@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../services/app_controller.dart';
 import '../services/catalog_bundle_service.dart';
+import '../services/catalog_recovery.dart';
 import '../services/diagnostic_bundle_exporter.dart';
 import '../services/sync_coordinator.dart';
 import '../services/sync_contract.dart';
@@ -45,7 +46,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _showKey = false;
   bool _loading = true;
   bool _busy = false;
-  List<File> _backups = const [];
+  List<RestorePoint> _backups = const [];
   String _iconTier = 'gameSystem';
   String? _iconSection;
   String? _iconPreviewPath;
@@ -79,7 +80,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     try {
       final key = await widget.controller.rpgGeekKey();
-      final backups = await widget.controller.catalog.listBackups();
+      final backups = await widget.controller.recovery.restorePoints();
       if (mounted)
         setState(() {
           _key.text = key;
@@ -92,13 +93,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _run(Future<void> Function() action, {String? success}) async {
+  Future<void> _run<T>(Future<T> Function() action, {String? success}) async {
     setState(() => _busy = true);
     try {
-      await action();
+      final result = await action();
       if (mounted && success != null)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(success)));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              result is CatalogReplacementResult && result.needsAcknowledgement
+                  ? 'Catalog replaced, but recovery needs review. Automatic sync is paused.'
+                  : success,
+            ),
+          ),
+        );
       await _load();
     } catch (error) {
       if (mounted)
@@ -335,7 +343,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           decision: decision.result,
           localFingerprint: localFingerprint,
         );
-        if (restored && mounted) widget.onSyncRestore?.call();
+        if (restored && _afterRemoteRestore()) return;
       } catch (error) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -524,8 +532,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final backup = picked?.path;
     if (backup != null)
       await _run(
-        () => widget.controller.restoreFromBackup(backup),
-        success: 'Backup restored into a new active database.',
+        () async => widget.controller.restoreFromBackup(
+          await widget.controller.recovery.inspectRestorePoint(backup),
+        ),
+        success: 'Backup restored into the active database.',
       );
   }
 
@@ -794,7 +804,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             decision: decision.result,
             localFingerprint: decision.localFingerprint ?? '',
           );
-          if (restored && mounted) widget.onSyncRestore?.call();
+          if (restored) _afterRemoteRestore();
         } catch (error) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -839,8 +849,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (confirmed == true && mounted) {
       final restored = await widget.controller.downloadRemoteBundle();
-      if (restored && mounted) widget.onSyncRestore?.call();
+      if (restored) _afterRemoteRestore();
     }
+  }
+
+  /// Returns whether review feedback replaced the normal sync result.
+  bool _afterRemoteRestore() {
+    if (!mounted) return false;
+    widget.onSyncRestore?.call();
+    if (widget.controller.recoveryWarning == null) return false;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Downloaded catalog is active, but recovery needs review. '
+          'Automatic sync is paused.',
+        ),
+      ),
+    );
+    return true;
   }
 
   @override
@@ -1597,9 +1623,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   );
 
   Widget _databaseRecoverySection() {
-    final validBackups = _backups
-        .where((backup) => backupLastModifiedForSettings(backup) != null)
-        .toList();
+    final validBackups = _backups;
     return _Section(
       title: 'Database and Recovery',
       child: Column(
@@ -1632,10 +1656,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onPressed: _busy
                     ? null
                     : () => _run(() async {
-                        await widget.controller.backups.createBackup(
-                          databasePath: widget.controller.database.databasePath,
-                          database: widget.controller.database.databaseHandle,
-                        );
+                        await widget.controller.createManualSnapshot();
                       }, success: 'Backup created.'),
                 icon: const Icon(Icons.save_as_outlined),
                 label: const Text('Backup DB'),
@@ -1668,31 +1689,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Text('No backup snapshot has been created yet.'),
             ),
           ...validBackups
-              .map(
-                (backup) => (
-                  backup: backup,
-                  modified: backupLastModifiedForSettings(backup),
-                ),
-              )
-              .where((entry) => entry.modified != null)
+              .map((backup) => (backup: backup, modified: backup.timestamp))
               .take(6)
               .map((entry) {
                 final backup = entry.backup;
-                final modified = entry.modified!;
+                final modified = entry.modified;
                 return ListTile(
                   dense: true,
                   leading: const Icon(Icons.history),
-                  title: Text(backup.uri.pathSegments.last),
-                  subtitle: Text(DateFormat.yMMMd().add_jm().format(modified)),
+                  title: Text(backup.name),
+                  subtitle: Text(
+                    '${backup.kind.label} | ${DateFormat.yMMMd().add_jm().format(modified.toLocal())}',
+                  ),
                   trailing: TextButton(
                     onPressed: _busy
                         ? null
                         : () => _run(
-                            () => widget.controller.restoreFromBackup(
-                              backup.path,
-                            ),
+                            () => widget.controller.restoreFromBackup(backup),
                             success:
-                                'Backup restored into a new active database.',
+                                'Backup restored into the active database.',
                           ),
                     child: const Text('Restore'),
                   ),
@@ -1701,15 +1716,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
-  }
-}
-
-DateTime? backupLastModifiedForSettings(File backup) {
-  try {
-    if (!backup.existsSync()) return null;
-    return backup.lastModifiedSync();
-  } on FileSystemException {
-    return null;
   }
 }
 

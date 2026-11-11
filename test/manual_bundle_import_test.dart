@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:realmwise/services/app_controller.dart';
+import 'package:realmwise/services/catalog_recovery.dart';
 import 'package:realmwise/services/secure_storage_service.dart';
 import 'package:realmwise/services/sync_contract.dart';
 import 'package:realmwise/services/sync_coordinator.dart';
@@ -27,10 +28,44 @@ void main() {
   });
   tearDown(() => dir.delete(recursive: true));
 
-  test('replaces active database and leaves recoverable backup', () async {
+  test('snapshot restore keeps the active path and restores rows', () async {
+    final controller = AppController(
+      tokenStorage: _MemoryTokenStorage(),
+      imageRootPathOverride: p.join(dir.path, 'in-place-images'),
+    );
+    final active = p.join(dir.path, 'in-place.db');
+    await controller.openDatabase(active, remember: false);
+    await controller.database.databaseHandle.insert('works', {
+      'title': 'Original',
+    });
+    await controller.createManualSnapshot();
+    final snapshot = (await controller.recovery.restorePoints()).first;
+    await controller.database.databaseHandle.insert('works', {
+      'title': 'Later',
+    });
+    await controller.restoreFromBackup(snapshot);
+    expect(controller.activeDatabasePath, active);
+    expect(
+      (await controller.recovery.restorePoints()).any(
+        (point) => point.kind == SnapshotKind.preRestore,
+      ),
+      isTrue,
+    );
+    expect(
+      (await controller.database.databaseHandle.query('works'))
+          .map((row) => row['title']),
+      ['Original'],
+    );
+    await controller.closeDatabase();
+    controller.dispose();
+  });
+
+  test('replaces active database and retains protective snapshot after 15 routine snapshots', () async {
+    var now = DateTime.utc(2026);
     final controller = AppController(
       tokenStorage: _MemoryTokenStorage(),
       imageRootPathOverride: p.join(dir.path, 'images'),
+      clock: () => now,
     );
     final active = p.join(dir.path, 'active.db');
     await controller.openDatabase(active, remember: false);
@@ -42,10 +77,19 @@ void main() {
     final rows = await controller.database.databaseHandle.query('works');
     expect(rows.map((r) => r['title']), contains('Old'));
     expect(rows.map((r) => r['title']), isNot(contains('New')));
-    final backups = Directory(p.join(dir.path, 'backups'));
+    final protective = (await controller.recovery.restorePoints()).singleWhere(
+      (point) => point.kind == SnapshotKind.preImport,
+    );
+    for (var i = 0; i < 15; i++) {
+      now = now.add(const Duration(minutes: 10));
+      await controller.recovery.snapshot(SnapshotKind.routine);
+    }
+    expect(await File(protective.path).exists(), isTrue);
     expect(
-      backups.listSync().where((e) => e.path.endsWith('.backup.db')),
-      isNotEmpty,
+      (await controller.recovery.restorePoints()).where(
+        (point) => point.kind == SnapshotKind.routine,
+      ),
+      hasLength(12),
     );
     await controller.closeDatabase();
     controller.dispose();

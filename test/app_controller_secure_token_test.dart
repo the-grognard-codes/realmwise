@@ -94,6 +94,7 @@ void main() {
     expect(controller.automaticSyncEnabled, isFalse);
     expect(controller.automaticSyncOwnershipValid, isFalse);
     expect(controller.automaticSyncError, isNull);
+    await controller.closeDatabase();
     controller.dispose();
     await folder.delete(recursive: true);
   });
@@ -123,6 +124,7 @@ void main() {
       expect(controller.automaticSyncEnabled, isFalse);
       expect(controller.automaticSyncOwnershipValid, isFalse);
       expect(controller.automaticSyncError, isNull);
+      await controller.closeDatabase();
       controller.dispose();
       await folder.delete(recursive: true);
     },
@@ -215,7 +217,7 @@ void main() {
     final controller = AppController(tokenStorage: storage);
     await controller.openDatabase(oldPath, remember: false);
     await controller.setRpgGeekKey('rename-token');
-    await controller.backups.stop();
+    await controller.recovery.stop();
     await controller.database.close();
     File(oldPath).renameSync(newPath);
     await controller.openDatabase(newPath, remember: false);

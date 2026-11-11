@@ -122,20 +122,6 @@ class CatalogService {
       rethrow;
     }
   }
-
-  Future<List<File>> listBackups() async {
-    final folder = Directory(
-      '${File(database.databasePath).parent.path}${Platform.pathSeparator}backups',
-    );
-    if (!await folder.exists()) return const [];
-    final files = await folder
-        .list()
-        .where((entity) => entity is File && entity.path.endsWith('.backup.db'))
-        .cast<File>()
-        .toList();
-    files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
-    return files;
-  }
 }
 
 /// Visit-scoped draft. Only save publishes files or changes stored rows.
