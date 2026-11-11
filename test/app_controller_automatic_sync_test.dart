@@ -523,7 +523,7 @@ void main() {
     expect(renewal.isActive, isFalse);
     expect(provider.uploads, 0);
     expect(provider.renewals, 0);
-    await controller.backups.stop();
+    await controller.recovery.stop();
     await controller.database.close();
   });
 

@@ -13,6 +13,7 @@ import 'services/google_drive_runtime.dart';
 import 'services/onedrive_runtime.dart';
 import 'services/dropbox_runtime.dart';
 import 'theme/app_theme.dart';
+import 'widgets/catalog_recovery_notice.dart';
 
 class RealmwiseBootstrap extends StatefulWidget {
   const RealmwiseBootstrap({super.key});
@@ -292,7 +293,14 @@ class _CatalogShellState extends State<CatalogShell> {
                         )
                         .toList(),
                   ),
-                Expanded(child: pages[_page]),
+                Expanded(
+                  child: Column(
+                    children: [
+                      CatalogRecoveryNotice(controller: widget.controller),
+                      Expanded(child: pages[_page]),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),

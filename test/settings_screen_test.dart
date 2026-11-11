@@ -8,6 +8,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:realmwise/screens/settings_screen.dart';
 import 'package:realmwise/services/app_controller.dart';
+import 'package:realmwise/services/catalog_recovery.dart';
+import 'package:realmwise/services/sync_contract.dart';
+import 'package:realmwise/services/sync_metadata.dart';
 import 'package:realmwise/theme/app_theme.dart';
 
 class _FakePathProvider extends PathProviderPlatform {
@@ -33,10 +36,105 @@ class _MemoryTokenStorage implements TokenStorage {
 }
 
 void main() {
-  test('missing backup modification time is safe', () {
-    expect(backupLastModifiedForSettings(File('missing-backup.db')), isNull);
-  });
-
+  for (final route in [
+    'sync',
+    'sync conflict',
+    'download',
+    'download conflict',
+  ]) {
+    final conflict = route != 'sync';
+    final download = route.startsWith('download');
+    testWidgets('sync message handles $route', (tester) async {
+      tester.view.physicalSize = const Size(800, 4000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final previous = PathProviderPlatform.instance;
+      final folder = await tester.runAsync(
+        () => Directory.systemTemp.createTemp('settings_sync_'),
+      );
+      PathProviderPlatform.instance = _FakePathProvider(folder!.path);
+      SharedPreferences.setMockInitialValues({});
+      final controller = _SyncMessageController(
+        conflict: conflict,
+        downloadConflict: route == 'download conflict',
+        tokenStorage: _MemoryTokenStorage(),
+        imageRootPathOverride: '${folder.path}/images',
+      );
+      var restores = 0;
+      try {
+        await tester.runAsync(controller.initialize);
+        controller.syncCoordinator.provider = _Provider();
+        controller.syncCoordinator.session = const SyncAuthSession(
+          accountId: 'account',
+        );
+        controller.syncCoordinator.metadata = const SyncMetadata(
+          catalogIdentity: 'catalog',
+          state: SyncState.ready,
+        );
+        controller.syncMetadata = controller.syncCoordinator.metadata;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SettingsScreen(
+                controller: controller,
+                onSyncRestore: () => restores++,
+              ),
+            ),
+          ),
+        );
+        await _pumpUntilVisible(tester, find.text('Cloud Sync'));
+        await _selectTab(tester, 'Cloud Sync');
+        await tester.ensureVisible(
+          find.text(download ? 'Download Remote' : 'Sync Now'),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(download ? 'Download Remote' : 'Sync Now'));
+        await tester.pumpAndSettle();
+        if (download) {
+          await tester.tap(find.text('Download'));
+          await tester.pumpAndSettle();
+        }
+        if (route.endsWith('conflict')) {
+          await tester.tap(find.text('Download and replace local'));
+          await tester.pump();
+        }
+        final expected = conflict
+            ? 'Downloaded catalog is active, but recovery needs review. Automatic sync is paused.'
+            : 'Catalog synced to Google Drive.';
+        await _pumpUntilVisible(tester, find.text(expected));
+        expect(find.text(expected), findsOneWidget);
+        expect(restores, conflict ? 1 : 0);
+        if (conflict)
+          expect(find.text('Catalog synced to Google Drive.'), findsNothing);
+        final syncButton = find.ancestor(
+          of: find.text('Sync Now'),
+          matching: find.byWidgetPredicate((widget) => widget is FilledButton),
+        );
+        for (
+          var i = 0;
+          i < 100 && tester.widget<FilledButton>(syncButton).onPressed == null;
+          i++
+        ) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)),
+          );
+          await tester.pump();
+        }
+        expect(tester.widget<FilledButton>(syncButton).onPressed, isNotNull);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        // Drain database queries started by the final Settings rebuild.
+        await tester.runAsync(
+          () => controller.database.listCatalogTierSections('gameSystem'),
+        );
+        await tester.runAsync(controller.closeDatabase);
+        controller.dispose();
+        await tester.runAsync(() => folder.delete(recursive: true));
+        PathProviderPlatform.instance = previous;
+      }
+    });
+  }
   testWidgets('settings are grouped into local and cloud sync tabs', (
     tester,
   ) async {
@@ -62,6 +160,7 @@ void main() {
         controllerCreated = true;
         await controller.initialize();
         initialized = true;
+        await controller.recovery.snapshot(SnapshotKind.preRestore);
       });
       await tester.pumpWidget(
         MaterialApp(home: SettingsScreen(controller: controller)),
@@ -120,6 +219,8 @@ void main() {
       expect(find.text('Open RPGGeek API application page'), findsOneWidget);
       expect(find.textContaining('product and series details'), findsOneWidget);
       await _selectTab(tester, 'Database');
+      await _pumpUntilVisible(tester, find.textContaining('Before restore |'));
+      expect(find.textContaining('Before restore |'), findsOneWidget);
       expect(find.text('Local Image Library'), findsOneWidget);
       expect(find.text('Manual Device Sync'), findsOneWidget);
       expect(find.text('Database and Recovery'), findsOneWidget);
@@ -160,6 +261,65 @@ void main() {
       PathProviderPlatform.instance = previousPathProvider;
     }
   });
+}
+
+class _Provider implements SyncProvider {
+  @override
+  String get provider => 'fake';
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _SyncMessageController extends AppController {
+  _SyncMessageController({
+    required this.conflict,
+    this.downloadConflict = false,
+    super.tokenStorage,
+    super.imageRootPathOverride,
+  });
+  final bool conflict;
+  final bool downloadConflict;
+  CatalogRecoveryWarning? pendingWarning;
+  @override
+  CatalogRecoveryWarning? get recoveryWarning => pendingWarning;
+  @override
+  Future<void> syncNow() async {
+    if (conflict)
+      throw const SyncDecisionRequired(
+        SyncClassificationResult(SyncClassification.divergent),
+        localFingerprint: 'local',
+      );
+  }
+
+  @override
+  Future<bool> resolveSyncDecision(
+    SyncConflictChoice choice, {
+    required SyncClassificationResult decision,
+    required String localFingerprint,
+  }) async {
+    expect(choice, SyncConflictChoice.downloadReplaceLocal);
+    pendingWarning = const CatalogRecoveryWarning(
+      originalPath: 'original.rollback.tmp',
+    );
+    return true;
+  }
+
+  @override
+  Future<bool> downloadRemoteBundle({
+    SyncRemoteMetadata? expectedRemote,
+    String? expectedLocalFingerprint,
+    Future<void> Function()? backup,
+  }) async {
+    if (downloadConflict)
+      throw const SyncDecisionRequired(
+        SyncClassificationResult(SyncClassification.divergent),
+        localFingerprint: 'local',
+      );
+    pendingWarning = const CatalogRecoveryWarning(
+      originalPath: 'original.rollback.tmp',
+    );
+    return true;
+  }
 }
 
 Future<void> _pumpUntilVisible(WidgetTester tester, Finder finder) async {

@@ -13,7 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/database_service.dart';
 import '../models/catalog_models.dart';
-import 'backup_service.dart';
+import 'catalog_recovery.dart';
 import 'catalog_bundle_service.dart';
 import 'catalog_service.dart';
 import 'external_catalog_service.dart';
@@ -69,6 +69,10 @@ class _InMemorySyncMetadataStorage implements SyncMetadataStorage {
       _values.remove(catalogIdentity);
 }
 
+class _SyncActivity {
+  bool active = true;
+}
+
 /// Application session state: selected database, theme preference, and services.
 class AppController extends ChangeNotifier with WidgetsBindingObserver {
   AppController({
@@ -84,7 +88,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
        periodicTimer = periodicTimer ?? Timer.periodic,
        database = DatabaseService(),
        _http = http.Client(),
-       backups = BackupService(),
        _tokenStorage = tokenStorage ?? SecureStorageService(),
        _providers = {
          'google_drive': ?googleDriveProvider,
@@ -105,7 +108,14 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         final provider => {provider.provider: provider},
       };
 
-  final BackupService backups;
+  late final CatalogRecovery recovery = CatalogRecovery(
+    database: database,
+    waitForSync: _cancelAndAwaitSync,
+    reopen: _openDatabase,
+    clock: clock,
+    rehydrate: () => catalog.rehydrateMissingImages(),
+    onReady: _resumeAfterRecovery,
+  );
   final ExportService exporter = ExportService();
   final CatalogBundleService bundles = CatalogBundleService();
   late final ImportService importer = ImportService(database);
@@ -176,7 +186,37 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   SyncCancellationToken? _automaticTransferCancellation;
   Future<void> _operationTail = Future<void>.value();
   Timer? _syncCompletionTimer;
-  int _remoteDownloads = 0;
+  // Nested work may replace its own catalog. Only a live activity token
+  // permits that replacement to omit waiting on its own caller.
+  final _syncActivityZone = Object();
+  final Set<Future<void>> _syncActivities = {};
+
+  bool get _insideSyncActivity {
+    final activity = Zone.current[_syncActivityZone];
+    return activity is _SyncActivity && activity.active;
+  }
+
+  Future<T> _trackSyncActivity<T>(Future<T> Function() action) {
+    if (_insideSyncActivity) return action();
+    if (isSyncing) return Future.error(const SyncBusyException());
+    if (recovery.isReplacing)
+      return Future.error(StateError('Catalog replacement is in progress.'));
+    final activity = _SyncActivity();
+    final operation = runZoned(
+      action,
+      zoneValues: {_syncActivityZone: activity},
+    ).whenComplete(() => activity.active = false);
+    final settled = operation.then<void>((_) {}, onError: (Object _) {});
+    _syncActivities.add(settled);
+    unawaited(
+      settled.whenComplete(() {
+        _syncActivities.remove(settled);
+        _queuePendingAutomaticSync();
+      }),
+    );
+    return operation;
+  }
+
   bool automaticSyncEnabled = false;
   String deviceId = '';
   String deviceName = '';
@@ -191,7 +231,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   /// must never authorize an automatic upload.
   bool automaticSyncOwnershipValid = false;
   SyncProgress? syncProgress;
-  bool get isSyncing => _syncFuture != null || syncCoordinator.isSyncing;
+  bool get isSyncing =>
+      _syncActivities.isNotEmpty ||
+      _syncFuture != null ||
+      syncCoordinator.isSyncing;
   void cancelSync() => syncCoordinator.cancel();
 
   Future<void> _cancelAndAwaitSync() async {
@@ -209,6 +252,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     await _leaseRenewalFuture;
+    if (!_insideSyncActivity) {
+      await Future.wait(_syncActivities.toList());
+    }
     final automatic = _automaticFuture;
     if (automatic != null) {
       try {
@@ -262,7 +308,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   void _queuePendingAutomaticSync() {
     if (!_automaticSyncPending ||
         _disposed ||
-        _remoteDownloads > 0 ||
+        _syncActivities.isNotEmpty ||
         (_automaticSyncTimer?.isActive ?? false))
       return;
     _syncCompletionTimer?.cancel();
@@ -322,6 +368,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       includePersonalImagesInBundles =
           prefs.getBool('include_personal_images_in_bundles') ?? false;
       final saved = prefs.getString('last_database_path');
+      if (saved != null) await recovery.recoverInterruptedReplacement(saved);
       if (saved != null && await File(saved).exists()) {
         await openDatabase(saved, remember: false);
       } else {
@@ -410,6 +457,21 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> openDatabase(String databasePath, {bool remember = true}) async {
+    if (_syncCoordinatorInitialized) await _cancelAndAwaitSync();
+    await _openDatabase(databasePath, remember: remember);
+    try {
+      await recovery.start();
+      await _resumeAfterRecovery();
+    } on Object {
+      await closeDatabase();
+      rethrow;
+    }
+  }
+
+  Future<void> _openDatabase(
+    String databasePath, {
+    bool remember = true,
+  }) async {
     // A connection belongs to one catalog identity. Do not carry a live
     // provider/session into a different database, but retain its saved setup
     // so reopening it can restore normally.
@@ -426,14 +488,14 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       // metadata in that case.
     }
     _ensureSyncCoordinator(prefs);
-    await _cancelAndAwaitSync();
     syncCoordinator.resetRuntime();
     syncMetadata = null;
     _selectedProvider = null;
     error = null;
-    await backups.stop();
+    await recovery.stop();
     try {
       await database.open(databasePath);
+      await recovery.loadWarning();
       final catalogIdentity = await database.ensureCatalogIdentity();
       syncMetadata = await syncCoordinator.metadataStorage.read(
         catalogIdentity,
@@ -496,25 +558,16 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       hierarchyOrder = savedHierarchy == 'gameSystemBookTypeSetting'
           ? CatalogHierarchyOrder.gameSystemBookTypeSetting
           : CatalogHierarchyOrder.gameSystemSettingBookType;
-      await backups.start(
-        databasePath: database.databasePath,
-        database: database.databaseHandle,
-      );
       if (remember) {
         if (prefs != null) {
           await prefs.setString('last_database_path', database.databasePath);
         }
       }
-      notifyListeners();
-      if (automaticSyncEnabled && syncCoordinator.isConnected) {
-        await _refreshAutomaticLease();
-        _startLeaseRenewal();
-      }
     } catch (exception) {
       // Opening the database is a transaction from the UI's perspective. If
       // image storage (or any later bootstrap step) fails, leave no live DB
       // behind for callers to mistake for a ready catalog.
-      await backups.stop();
+      await recovery.stop();
       await database.close();
       syncCoordinator.resetRuntime();
       syncMetadata = null;
@@ -612,9 +665,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> takeOverAutomaticSync() => _serialize(_takeOverAutomaticSync);
+  Future<void> takeOverAutomaticSync() =>
+      _trackSyncActivity(() => _serialize(_takeOverAutomaticSyncInternal));
 
-  Future<void> _takeOverAutomaticSync() async {
+  Future<void> _takeOverAutomaticSyncInternal() async {
     if (!syncCoordinator.isConnected) {
       throw StateError('Connect a cloud provider first.');
     }
@@ -633,7 +687,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void scheduleAutomaticSync({Duration debounce = const Duration(seconds: 5)}) {
-    if (_disposed || !automaticSyncEnabled || !automaticSyncOwnershipValid)
+    if (recovery.warning != null ||
+        _disposed ||
+        !automaticSyncEnabled ||
+        !automaticSyncOwnershipValid)
       return;
     _automaticSyncPending = true;
     if (!_foreground) return;
@@ -657,7 +714,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   void _resumePendingAutomaticSync() {
     if (!_automaticSyncPending ||
-        _remoteDownloads > 0 ||
+        recovery.warning != null ||
+        recovery.isReplacing ||
         _disposed ||
         !automaticSyncEnabled ||
         !automaticSyncOwnershipValid ||
@@ -673,7 +731,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _runAutomaticSync() async {
-    if (_remoteDownloads > 0 ||
+    if (recovery.warning != null ||
+        recovery.isReplacing ||
         _disposed ||
         !automaticSyncEnabled ||
         !automaticSyncOwnershipValid ||
@@ -714,8 +773,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     SyncCancellationToken cancellation,
   ) async {
     cancellation.throwIfCancelled();
-    if (_remoteDownloads > 0 || isSyncing || isConnectionPending)
-      throw const SyncBusyException();
+    if (recovery.warning != null) return;
+    if (isSyncing || isConnectionPending) throw const SyncBusyException();
     if (!database.isOpen) throw StateError('Open a catalog first.');
     final temporary = await getTemporaryDirectory();
     final bundlePath = path.join(
@@ -728,8 +787,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       final manifest = await bundles.validateBundle(bundlePath);
       final payload = Uint8List.fromList(await File(bundlePath).readAsBytes());
       cancellation.throwIfCancelled();
-      if (_remoteDownloads > 0 || isSyncing || isConnectionPending)
-        throw const SyncBusyException();
+      if (isSyncing || isConnectionPending) throw const SyncBusyException();
       final upload = syncCoordinator.automaticUpload(
         payload,
         localFingerprint: manifest.contentFingerprint,
@@ -742,7 +800,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _validateAutomaticRemote() async {
+  Future<void> _validateAutomaticRemote() =>
+      _trackSyncActivity(_validateAutomaticRemoteInternal);
+
+  Future<void> _validateAutomaticRemoteInternal() async {
     final temporary = await getTemporaryDirectory();
     final bundlePath = path.join(
       temporary.path,
@@ -853,12 +914,12 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     if (legacy != null && legacy.isNotEmpty) {
       await database.deleteLegacyRpgGeekKey();
     }
-    await backups.scrubLegacyTokens(database.databasePath);
+    await recovery.scrubLegacyTokens();
   }
 
   Future<void> closeDatabase() async {
     await _cancelAndAwaitSync();
-    await backups.stop();
+    await recovery.stop();
     await database.close();
     syncCoordinator.resetRuntime();
     syncMetadata = null;
@@ -974,7 +1035,17 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> disconnectOneDrive() => disconnectGoogleDrive();
 
   Future<void> syncNow() {
-    if (isConnectionPending) return Future.error(const SyncBusyException());
+    if (recovery.warning != null) {
+      return Future.error(
+        StateError(
+          'Review and acknowledge the active catalog before syncing, or restore a protected snapshot.',
+        ),
+      );
+    }
+    if (_syncActivities.isNotEmpty ||
+        recovery.isReplacing ||
+        isConnectionPending)
+      return Future.error(const SyncBusyException());
     final running = _syncFuture;
     if (running != null) return Future<void>.error(const SyncBusyException());
     final operation = _serialize(_syncNowInternal);
@@ -1029,8 +1100,26 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     SyncConflictChoice choice, {
     required SyncClassificationResult decision,
     required String localFingerprint,
+  }) => _trackSyncActivity(
+    () => _resolveSyncDecisionInternal(
+      choice,
+      decision: decision,
+      localFingerprint: localFingerprint,
+    ),
+  );
+
+  Future<bool> _resolveSyncDecisionInternal(
+    SyncConflictChoice choice, {
+    required SyncClassificationResult decision,
+    required String localFingerprint,
   }) async {
     if (choice == SyncConflictChoice.cancel) return false;
+    if (choice == SyncConflictChoice.uploadReplaceRemote &&
+        recovery.warning != null) {
+      throw StateError(
+        'Review and acknowledge the active catalog before syncing, or restore a protected snapshot.',
+      );
+    }
     if (!database.isOpen) throw StateError('Open a catalog first.');
     final temporary = await getTemporaryDirectory();
     final bundlePath = path.join(
@@ -1038,10 +1127,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       'realmwise-conflict-${DateTime.now().microsecondsSinceEpoch}.realmwise',
     );
     try {
-      Future<void> localBackup() => backups.createBackup(
-        databasePath: database.databasePath,
-        database: database.databaseHandle,
-      );
+      Future<void> localBackup() async {
+        await recovery.snapshot(SnapshotKind.preConflict);
+      }
+
       if (choice == SyncConflictChoice.downloadReplaceLocal) {
         if (decision.remote == null)
           throw StateError('Remote metadata unavailable.');
@@ -1055,7 +1144,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         return await downloadRemoteBundle(
           expectedRemote: decision.remote,
           expectedLocalFingerprint: localFingerprint,
-          backup: localBackup,
         );
       } else {
         await exportDeviceBundle(bundlePath);
@@ -1073,22 +1161,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         final remote = await _serialize(
           () => syncCoordinator.download(expectedRemote: decision.remote),
         );
-        final remotePath = path.join(
-          path.dirname(database.databasePath),
-          'backups',
-          '${path.basenameWithoutExtension(database.databasePath)}_pre-remote-overwrite-${DateTime.now().microsecondsSinceEpoch}.realmwise',
+        await recovery.snapshot(
+          SnapshotKind.preRemoteOverwrite,
+          bundleBytes: remote.payload,
         );
-        final remoteTemp = '$remotePath.tmp';
-        await Directory(path.dirname(remotePath)).create(recursive: true);
-        await File(remoteTemp).writeAsBytes(remote.payload, flush: true);
-        try {
-          await bundles.validateBundle(remoteTemp);
-          await File(remoteTemp).rename(remotePath);
-        } catch (_) {
-          final f = File(remoteTemp);
-          if (await f.exists()) await f.delete();
-          rethrow;
-        }
         await _serialize(
           () async => syncCoordinator.resolveConflict(
             choice,
@@ -1114,21 +1190,15 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     SyncRemoteMetadata? expectedRemote,
     String? expectedLocalFingerprint,
     Future<void> Function()? backup,
-  }) async {
-    _remoteDownloads++;
-    try {
-      return await _downloadAndReplaceRemoteBundle(
-        expectedRemote: expectedRemote,
-        expectedLocalFingerprint: expectedLocalFingerprint,
-        backup: backup,
-      );
-    } finally {
-      _remoteDownloads--;
-      _queuePendingAutomaticSync();
-    }
-  }
+  }) => _trackSyncActivity(
+    () => _downloadRemoteBundleInternal(
+      expectedRemote: expectedRemote,
+      expectedLocalFingerprint: expectedLocalFingerprint,
+      backup: backup,
+    ),
+  );
 
-  Future<bool> _downloadAndReplaceRemoteBundle({
+  Future<bool> _downloadRemoteBundleInternal({
     SyncRemoteMetadata? expectedRemote,
     String? expectedLocalFingerprint,
     Future<void> Function()? backup,
@@ -1216,7 +1286,16 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
       if (backup != null) await backup();
-      await restoreDeviceBundle(bundlePath);
+      final replacement = await restoreDeviceBundle(
+        bundlePath,
+        snapshotKind: SnapshotKind.preDownload,
+      );
+      if (replacement.needsAcknowledgement) {
+        // Do not mark a partially recovered download as the remote baseline.
+        // The persistent warning also fences refresh and lifecycle scheduling.
+        notifyListeners();
+        return true;
+      }
       if (runtimeSnapshot != null) {
         SyncMetadata? rebound;
         final registered = _providers[runtimeSnapshot.provider.provider];
@@ -1306,12 +1385,40 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> restoreFromBackup(String backupFile) async {
-    final documents = await getApplicationDocumentsDirectory();
-    final name = 'restored_${DateTime.now().millisecondsSinceEpoch}.db';
-    final target = path.join(documents.path, name);
-    await File(backupFile).copy(target);
-    await openDatabase(target);
+  Future<CatalogReplacementResult> restoreFromBackup(RestorePoint point) async {
+    final result = await recovery.restore(
+      point,
+      imageRootPath: imageStorage.rootPath,
+    );
+    notifyListeners();
+    return result;
+  }
+
+  CatalogRecoveryWarning? get recoveryWarning =>
+      isOpen ? recovery.warning : null;
+
+  Future<void> acknowledgeRecoveryWarning() async {
+    await recovery.acknowledgeWarning();
+    await _resumeAfterRecovery();
+  }
+
+  Future<void> _resumeAfterRecovery() async {
+    if (recovery.warning != null) {
+      notifyListeners();
+      return;
+    }
+    // A downloaded catalog rebinds its connection after the local swap returns.
+    if (_syncActivities.isNotEmpty) return;
+    if (automaticSyncEnabled && syncCoordinator.isConnected) {
+      await _refreshAutomaticLease();
+      _startLeaseRenewal();
+    } else if (automaticSyncEnabled && automaticSyncOwnershipValid)
+      scheduleAutomaticSync();
+    notifyListeners();
+  }
+
+  Future<void> createManualSnapshot() async {
+    await recovery.snapshot(SnapshotKind.manual);
   }
 
   Future<void> exportDeviceBundle(String outputPath) => bundles.exportBundle(
@@ -1340,100 +1447,23 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> restoreDeviceBundle(String bundlePath) async {
-    await bundles.validateBundle(bundlePath);
-    if (!database.isOpen) throw StateError('No active database to replace.');
-    final active = database.databasePath;
-    final staged =
-        '$active.portable-import-${DateTime.now().microsecondsSinceEpoch}.tmp';
-    final backup = path.join(
-      path.dirname(active),
-      'backups',
-      '${path.basenameWithoutExtension(active)}_pre-import-${DateTime.now().microsecondsSinceEpoch}.backup.db',
+  Future<CatalogReplacementResult> restoreDeviceBundle(
+    String bundlePath, {
+    SnapshotKind snapshotKind = SnapshotKind.preImport,
+  }) async {
+    final result = await recovery.replaceCatalog(
+      bundlePath,
+      bundle: true,
+      snapshotKind: snapshotKind,
+      imageRootPath: imageStorage.rootPath,
     );
-    final importImageRoot = path.join(
-      imageStorage.rootPath,
-      'import-staging-${DateTime.now().microsecondsSinceEpoch}',
-    );
-    try {
-      await bundles.extractDatabase(
-        bundlePath,
-        staged,
-        imageRootPath: importImageRoot,
-      );
-    } catch (_) {
-      final partial = File(staged);
-      if (await partial.exists()) await partial.delete();
-      final importedAssets = Directory(importImageRoot);
-      if (await importedAssets.exists()) {
-        await importedAssets.delete(recursive: true);
-      }
-      rethrow;
-    }
-    try {
-      await _quiesceForBundleSwap();
-    } catch (_) {
-      try {
-        if (!database.isOpen) await openDatabase(active);
-      } catch (_) {}
-      final partial = File(staged);
-      if (await partial.exists()) await partial.delete();
-      final importedAssets = Directory(importImageRoot);
-      if (await importedAssets.exists())
-        await importedAssets.delete(recursive: true);
-      rethrow;
-    }
-    var swapped = false;
-    var committed = false;
-    var originalMoved = false;
-    try {
-      await Directory(path.dirname(backup)).create(recursive: true);
-      await File(active).copy(backup);
-      await File(active).rename('$backup.swap');
-      originalMoved = true;
-      await File(staged).rename(active);
-      swapped = true;
-      await openDatabase(active);
-      if (await catalog.rehydrateMissingImages()) notifyListeners();
-      committed = true;
-    } catch (_) {
-      try {
-        await database.close();
-        if (originalMoved) {
-          final current = File(active);
-          if (await current.exists()) await current.delete();
-          final old = File('$backup.swap');
-          if (await old.exists()) {
-            await old.rename(active);
-          } else if (await File(backup).exists()) {
-            await File(backup).copy(active);
-          }
-        }
-        await openDatabase(active);
-      } catch (_) {}
-      rethrow;
-    } finally {
-      final stagedFile = File(staged);
-      if (await stagedFile.exists()) await stagedFile.delete();
-      final old = File('$backup.swap');
-      if (await old.exists() && swapped) await old.delete();
-      if (!committed) {
-        final importedAssets = Directory(importImageRoot);
-        if (await importedAssets.exists()) {
-          await importedAssets.delete(recursive: true);
-        }
-      }
-    }
+    notifyListeners();
+    return result;
   }
 
   /// Validates an import without mutating the active catalog.
   Future<BundleManifest> previewDeviceBundle(String bundlePath) =>
       bundles.validateBundle(bundlePath);
-
-  Future<void> _quiesceForBundleSwap() async {
-    await backups.stop();
-    await database.close();
-  }
 
   Future<void> setImageFolder(String folder) async {
     await imageStorage.initialize(folder);
@@ -1615,7 +1645,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     _cancelAutomaticTimers();
     if (_syncCoordinatorInitialized) syncCoordinator.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    unawaited(backups.stop());
+    _automaticSyncTimer?.cancel();
+    unawaited(recovery.stop());
     unawaited(database.close());
     _http.close();
     super.dispose();
