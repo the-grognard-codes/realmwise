@@ -12,9 +12,9 @@ import '../services/app_controller.dart';
 import '../services/catalog_bundle_service.dart';
 import '../services/catalog_recovery.dart';
 import '../services/diagnostic_bundle_exporter.dart';
-import '../services/sync_coordinator.dart';
 import '../services/sync_contract.dart';
 import '../services/sync_metadata.dart';
+import '../sync/sync_session.dart';
 import '../theme/app_theme.dart';
 
 const _buildName = String.fromEnvironment(
@@ -93,7 +93,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _run<T>(Future<T> Function() action, {String? success}) async {
+  Future<void> _run<T>(
+    Future<T> Function() action, {
+    String? success,
+    bool cloudSync = false,
+  }) async {
     setState(() => _busy = true);
     try {
       final result = await action();
@@ -111,7 +115,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (error) {
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not complete action: $error')),
+          SnackBar(
+            content: Text(
+              cloudSync
+                  ? SyncFailed.fromError(error).message
+                  : 'Could not complete action: $error',
+            ),
+          ),
         );
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -228,7 +238,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not cancel connection: $error')),
+          SnackBar(content: Text(SyncFailed.fromError(error).message)),
         );
       }
     }
@@ -291,82 +301,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await _run(
         widget.controller.takeOverAutomaticSync,
         success: 'Automatic sync ownership request sent.',
+        cloudSync: true,
       );
     }
   }
 
-  Future<void> _syncNow() async {
+  Future<void> _runSync(Future<SyncResult> Function() action) async {
+    if (_busy) return;
+    setState(() => _busy = true);
     try {
-      await widget.controller.syncNow();
-    } on SyncDecisionRequired catch (decision) {
+      var result = await action();
+      while (result is SyncDecision) {
+        if (!mounted) return;
+        final request = result;
+        final choice = await showDialog<SyncChoice>(
+          context: context,
+          builder: (_) => _SyncDecisionDialog(request: request),
+        );
+        if (!mounted) return;
+        result = await widget.controller.answerSyncDecision(
+          request,
+          choice ?? SyncChoice.cancel,
+        );
+      }
       if (!mounted) return;
-      if (decision.result.classification == SyncClassification.unknownError) {
-        throw StateError(
-          'Sync status could not be checked. Retry without changing either catalog.',
-        );
+      final message = switch (result) {
+        SyncUploaded(:final providerName) => 'Catalog synced to $providerName.',
+        SyncAlreadyInSync() => 'Already synced-no local changes.',
+        SyncDownloaded(:final needsRecoveryReview) =>
+          needsRecoveryReview
+              ? 'Downloaded catalog is active, but recovery needs review. Automatic sync is paused.'
+              : 'Remote catalog downloaded.',
+        SyncBusy() => SyncFailed.busy.message,
+        SyncFailed(:final message) => message,
+        SyncCancelled() || SyncDecision() => null,
+      };
+      if (message != null) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
       }
-      final localFingerprint = decision.localFingerprint ?? '';
-      final choice = await showDialog<SyncConflictChoice>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Catalogs differ'),
-          content: const Text(
-            'Choose which catalog to keep. Download replaces this device with the remote catalog. Upload replaces the remote catalog with this device. Cancel leaves both unchanged.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () =>
-                  Navigator.pop(context, SyncConflictChoice.cancel),
-              child: const Text('Cancel'),
-            ),
-            OutlinedButton(
-              onPressed: () => Navigator.pop(
-                context,
-                SyncConflictChoice.downloadReplaceLocal,
-              ),
-              child: const Text('Download and replace local'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(
-                context,
-                SyncConflictChoice.uploadReplaceRemote,
-              ),
-              child: const Text('Upload and replace remote'),
-            ),
-          ],
-        ),
-      );
-      if (choice == null || choice == SyncConflictChoice.cancel) return;
-      try {
-        final restored = await widget.controller.resolveSyncDecision(
-          choice,
-          decision: decision.result,
-          localFingerprint: localFingerprint,
-        );
-        if (restored && _afterRemoteRestore()) return;
-      } catch (error) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not complete sync: $error')),
-          );
-        }
-        return;
-      }
+      if (result is SyncDownloaded) widget.onSyncRestore?.call();
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
-    if (!mounted) return;
-    final providerLabel =
-        widget.controller.selectedProvider?.provider == 'onedrive'
-        ? 'Microsoft OneDrive'
-        : widget.controller.selectedProvider?.provider == 'dropbox'
-        ? 'Dropbox'
-        : 'Google Drive';
-    final message =
-        widget.controller.syncCoordinator.lastOutcome ==
-            SyncOutcome.alreadySynced
-        ? 'Already synced—no local changes.'
-        : 'Catalog synced to $providerLabel.';
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _chooseImageFolder() async {
@@ -748,125 +725,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (yes == true && mounted && widget.controller.isOpen) {
       await widget.controller.closeDatabase();
     }
-  }
-
-  Future<void> _downloadRemote() async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    try {
-      await _downloadRemoteConfirmed();
-    } on SyncDecisionRequired catch (decision) {
-      if (!mounted) return;
-      if (decision.result.classification == SyncClassification.unknownError) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Sync status unavailable. Retry; nothing was changed.',
-            ),
-          ),
-        );
-        return;
-      }
-      final choice = await showDialog<SyncConflictChoice>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Catalogs differ'),
-          content: const Text(
-            'Downloading replaces this device with the remote catalog. Upload replaces the remote catalog with this device. Cancel leaves both unchanged.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () =>
-                  Navigator.pop(context, SyncConflictChoice.cancel),
-              child: const Text('Cancel'),
-            ),
-            OutlinedButton(
-              onPressed: () => Navigator.pop(
-                context,
-                SyncConflictChoice.downloadReplaceLocal,
-              ),
-              child: const Text('Download and replace local'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(
-                context,
-                SyncConflictChoice.uploadReplaceRemote,
-              ),
-              child: const Text('Upload and replace remote'),
-            ),
-          ],
-        ),
-      );
-      if (choice != null && choice != SyncConflictChoice.cancel) {
-        try {
-          final restored = await widget.controller.resolveSyncDecision(
-            choice,
-            decision: decision.result,
-            localFingerprint: decision.localFingerprint ?? '',
-          );
-          if (restored) _afterRemoteRestore();
-        } catch (error) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Could not download remote catalog: $error'),
-              ),
-            );
-          }
-          return;
-        }
-      }
-      return;
-    } catch (error) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not download remote catalog: $error')),
-        );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _downloadRemoteConfirmed() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Download remote catalog?'),
-        content: const Text(
-          'This replaces the active catalog. A recoverable pre-import backup will be created first.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Download'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true && mounted) {
-      final restored = await widget.controller.downloadRemoteBundle();
-      if (restored) _afterRemoteRestore();
-    }
-  }
-
-  /// Returns whether review feedback replaced the normal sync result.
-  bool _afterRemoteRestore() {
-    if (!mounted) return false;
-    widget.onSyncRestore?.call();
-    if (widget.controller.recoveryWarning == null) return false;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Downloaded catalog is active, but recovery needs review. '
-          'Automatic sync is paused.',
-        ),
-      ),
-    );
-    return true;
   }
 
   @override
@@ -1333,20 +1191,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final selected = widget.controller.selectedProvider;
     final connected = widget.controller.providerSelectionLocked;
     final connectionPending = widget.controller.isConnectionPending;
-    String label(SyncProvider p) => p.provider == 'onedrive'
-        ? 'Microsoft OneDrive'
-        : p.provider == 'dropbox'
-        ? 'Dropbox'
-        : 'Google Drive';
-    final pendingProviderLabel = selected == null
-        ? 'cloud provider'
-        : label(selected);
+    final pendingProviderLabel = selected?.displayName ?? 'cloud provider';
     final status = providers.isEmpty
         ? 'Cloud sync is not configured on this build.'
         : connectionPending
-        ? 'Connecting to $pendingProviderLabel… (not connected)'
+        ? 'Connecting to $pendingProviderLabelÃ¢â‚¬Â¦ (not connected)'
         : connected
-        ? 'Connected provider: ${selected == null ? 'Unknown' : label(selected)} (${metadata?.accountDisplayName ?? metadata?.accountId ?? 'account unavailable'})'
+        ? 'Connected provider: ${selected?.displayName ?? 'Unknown'} (${metadata?.accountDisplayName ?? metadata?.accountId ?? 'account unavailable'})'
         : metadata?.state.label ?? 'Not connected';
     final progress = widget.controller.syncProgress;
     final statusSection = _Section(
@@ -1401,6 +1252,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     () => value
                         ? widget.controller.setAutomaticSyncEnabled(true)
                         : widget.controller.setAutomaticSyncEnabled(false),
+                    cloudSync: true,
                   ),
           ),
           ListTile(
@@ -1452,7 +1304,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: providers
                   .map(
                     (provider) => ChoiceChip(
-                      label: Text(label(provider)),
+                      label: Text(provider.displayName),
                       selected: selected?.provider == provider.provider,
                       onSelected: connected || connectionPending || _busy
                           ? null
@@ -1472,16 +1324,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _busy || connectionPending || selected == null || connected
                     ? null
                     : () => _run(
-                        selected.provider == 'onedrive'
-                            ? widget.controller.connectOneDrive
-                            : selected.provider == 'dropbox'
-                            ? widget.controller.connectDropbox
-                            : widget.controller.connectGoogleDrive,
-                        success: '${label(selected)} connected.',
+                        widget.controller.connectSelectedProvider,
+                        success: '${selected.displayName} connected.',
+                        cloudSync: true,
                       ),
                 icon: const Icon(Icons.login),
                 label: Text(
-                  selected == null ? 'Connect' : 'Connect ${label(selected)}',
+                  selected == null
+                      ? 'Connect'
+                      : 'Connect ${selected.displayName}',
                 ),
               ),
               if (connectionPending)
@@ -1500,6 +1351,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     : () => _run(
                         widget.controller.disconnectGoogleDrive,
                         success: 'Disconnected.',
+                        cloudSync: true,
                       ),
                 icon: const Icon(Icons.logout),
                 label: const Text('Disconnect'),
@@ -1521,7 +1373,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               FilledButton.icon(
                 onPressed: _busy || !connected || widget.controller.isSyncing
                     ? null
-                    : () => _run(_syncNow),
+                    : () => _runSync(widget.controller.syncCatalog),
                 icon: const Icon(Icons.sync),
                 label: const Text('Sync Now'),
               ),
@@ -1533,12 +1385,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               if (metadata?.error != null)
                 TextButton.icon(
-                  onPressed: _busy || !connected ? null : () => _run(_syncNow),
+                  onPressed: _busy || !connected
+                      ? null
+                      : () => _runSync(widget.controller.syncCatalog),
                   icon: const Icon(Icons.refresh),
                   label: const Text('Retry'),
                 ),
               OutlinedButton.icon(
-                onPressed: _busy || !connected ? null : _downloadRemote,
+                onPressed: _busy || !connected
+                    ? null
+                    : () => _runSync(widget.controller.downloadCatalog),
                 icon: const Icon(Icons.cloud_download_outlined),
                 label: const Text('Download Remote'),
               ),
@@ -1715,6 +1571,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
               }),
         ],
       ),
+    );
+  }
+}
+
+class _SyncDecisionDialog extends StatelessWidget {
+  const _SyncDecisionDialog({required this.request});
+
+  final SyncDecision request;
+
+  @override
+  Widget build(BuildContext context) {
+    final (title, message, downloadLabel) = switch (request) {
+      RemoteNewerDecision() => (
+        'Remote catalog is newer',
+        'Download replaces this device with the newer remote catalog. A recoverable backup will be created first.',
+        'Download',
+      ),
+      CatalogsDivergedDecision() => (
+        'Catalogs differ',
+        'Choose which catalog to keep. Download replaces this device with the remote catalog. Upload replaces the remote catalog with this device. Cancel leaves both unchanged.',
+        'Download and replace local',
+      ),
+      DownloadCatalogDecision() => (
+        'Download remote catalog?',
+        'This replaces the active catalog. A recoverable pre-import backup will be created first.',
+        'Download',
+      ),
+      StatusUnknownDecision() => (
+        'Sync status unavailable',
+        'Sync status could not be checked. Retry without changing either catalog.',
+        'Download',
+      ),
+      SyncChangedDecision() => (
+        'Sync status changed',
+        'The catalog changed while you were reviewing it. Retry to check the latest versions.',
+        'Download',
+      ),
+    };
+    return AlertDialog(
+      title: Text(title),
+      content: Text(message),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, SyncChoice.cancel),
+          child: const Text('Cancel'),
+        ),
+        if (request.choices.contains(SyncChoice.download))
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context, SyncChoice.download),
+            child: Text(downloadLabel),
+          ),
+        if (request.choices.contains(SyncChoice.upload))
+          FilledButton(
+            onPressed: () => Navigator.pop(context, SyncChoice.upload),
+            child: const Text('Upload and replace remote'),
+          ),
+        if (request.choices.contains(SyncChoice.retry))
+          FilledButton(
+            onPressed: () => Navigator.pop(context, SyncChoice.retry),
+            child: const Text('Retry'),
+          ),
+      ],
     );
   }
 }

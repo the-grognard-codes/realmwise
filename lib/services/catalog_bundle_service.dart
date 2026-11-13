@@ -37,6 +37,19 @@ class CatalogBundleService {
     ),
   );
 
+  /// Compares the current portable catalog without writing or validating a zip.
+  Future<String> localFingerprint({
+    required DatabaseService database,
+    required bool includePersonalImages,
+  }) => database.withCatalogFiles(
+    () => _withPortableDatabase(
+      database: database,
+      includePersonalImages: includePersonalImages,
+      missingAssetPolicy: MissingAssetPolicy.continueExport,
+      use: (file, assets) => _computeLogicalFingerprint(file.path, assets),
+    ),
+  );
+
   Future<void> _exportBundle({
     required DatabaseService database,
     required String outputPath,
@@ -44,8 +57,60 @@ class CatalogBundleService {
     required bool includePersonalImages,
     required MissingAssetPolicy missingAssetPolicy,
   }) async {
-    if (!database.isOpen) throw StateError('No database is currently open.');
     final identity = await database.ensureCatalogIdentity();
+    await _withPortableDatabase(
+      database: database,
+      includePersonalImages: includePersonalImages,
+      missingAssetPolicy: missingAssetPolicy,
+      compact: true,
+      use: (temp, assetFiles) async {
+        final bytes = await temp.readAsBytes();
+        final fingerprint = await _computeLogicalFingerprint(
+          temp.path,
+          assetFiles,
+        );
+        final manifest = <String, Object?>{
+          'format_version': formatVersion,
+          'app_version': appVersion,
+          'created_at': DateTime.now().toUtc().toIso8601String(),
+          'catalog_identity': identity,
+          'database_filename': databaseEntry,
+          'database_sha256': sha256.convert(bytes).toString(),
+          'content_fingerprint': fingerprint,
+          'assets': <Map<String, Object?>>[],
+        };
+        final archive = Archive()
+          ..addFile(ArchiveFile(databaseEntry, bytes.length, bytes));
+        for (final entry in assetFiles.entries) {
+          final data = await entry.value.readAsBytes();
+          archive.addFile(ArchiveFile(entry.key, data.length, data));
+          (manifest['assets'] as List<Map<String, Object?>>).add({
+            'path': entry.key,
+            'size': data.length,
+            'type': entry.key.startsWith('assets/images/') ? 'image' : 'icon',
+            'sha256': sha256.convert(data).toString(),
+          });
+        }
+        // Manifest is assembled after assets so its metadata is complete.
+        final manifestBytes = utf8.encode(jsonEncode(manifest));
+        archive.addFile(
+          ArchiveFile(manifestEntry, manifestBytes.length, manifestBytes),
+        );
+        final encoded = ZipEncoder().encode(archive);
+        await File(outputPath).writeAsBytes(encoded, flush: true);
+      },
+    );
+  }
+
+  Future<T> _withPortableDatabase<T>({
+    required DatabaseService database,
+    required bool includePersonalImages,
+    required MissingAssetPolicy missingAssetPolicy,
+    required Future<T> Function(File, Map<String, File>) use,
+    bool compact = false,
+  }) async {
+    if (!database.isOpen) throw StateError('No database is currently open.');
+    await database.ensureCatalogIdentity();
     await database.databaseHandle.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
     final source = File(database.databasePath);
     if (!await source.exists())
@@ -180,44 +245,11 @@ class CatalogBundleService {
             );
         }
         await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
-        await db.execute('VACUUM');
+        if (compact) await db.execute('VACUUM');
       } finally {
         await db.close();
       }
-      final bytes = await temp.readAsBytes();
-      final fingerprint = await _computeLogicalFingerprint(
-        temp.path,
-        assetFiles,
-      );
-      final manifest = <String, Object?>{
-        'format_version': formatVersion,
-        'app_version': appVersion,
-        'created_at': DateTime.now().toUtc().toIso8601String(),
-        'catalog_identity': identity,
-        'database_filename': databaseEntry,
-        'database_sha256': sha256.convert(bytes).toString(),
-        'content_fingerprint': fingerprint,
-        'assets': <Map<String, Object?>>[],
-      };
-      final archive = Archive()
-        ..addFile(ArchiveFile(databaseEntry, bytes.length, bytes));
-      for (final entry in assetFiles.entries) {
-        final data = await entry.value.readAsBytes();
-        archive.addFile(ArchiveFile(entry.key, data.length, data));
-        (manifest['assets'] as List<Map<String, Object?>>).add({
-          'path': entry.key,
-          'size': data.length,
-          'type': entry.key.startsWith('assets/images/') ? 'image' : 'icon',
-          'sha256': sha256.convert(data).toString(),
-        });
-      }
-      // Manifest is assembled after assets so its metadata is complete.
-      final manifestBytes = utf8.encode(jsonEncode(manifest));
-      archive.addFile(
-        ArchiveFile(manifestEntry, manifestBytes.length, manifestBytes),
-      );
-      final encoded = ZipEncoder().encode(archive);
-      await File(outputPath).writeAsBytes(encoded, flush: true);
+      return await use(temp, assetFiles);
     } finally {
       if (await temp.exists()) await temp.delete();
     }

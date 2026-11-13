@@ -9,6 +9,7 @@ import 'package:realmwise/services/app_controller.dart';
 import 'package:realmwise/services/catalog_recovery.dart';
 import 'package:realmwise/services/secure_storage_service.dart';
 import 'package:realmwise/services/sync_contract.dart';
+import 'package:realmwise/sync/sync_session.dart';
 import 'package:realmwise/services/sync_coordinator.dart';
 import 'package:realmwise/services/sync_metadata.dart';
 
@@ -197,13 +198,8 @@ void main() {
       );
     controller.syncMetadata = controller.syncCoordinator.metadata;
     provider.payload = await File(bundle).readAsBytes();
-    final applied = await controller.downloadRemoteBundle(
-      expectedRemote: const SyncRemoteMetadata(
-        revision: SyncRevision('1'),
-        contentHash: 'remote',
-      ),
-    );
-    expect(applied, isTrue);
+    final applied = await _confirmDownload(controller);
+    expect(applied, isA<SyncDownloaded>());
     expect(identical(controller.selectedProvider, provider), isTrue);
     expect(controller.syncCoordinator.isConnected, isTrue);
     await source.closeDatabase();
@@ -259,14 +255,9 @@ void main() {
         await File(bundle).readAsBytes(),
       ];
 
-      final applied = await controller.downloadRemoteBundle(
-        expectedRemote: const SyncRemoteMetadata(
-          revision: SyncRevision('1'),
-          contentHash: 'remote',
-        ),
-      );
+      final applied = await _confirmDownload(controller);
 
-      expect(applied, isTrue);
+      expect(applied, isA<SyncDownloaded>());
       expect(provider.downloadCalls, 3);
       await source.closeDatabase();
       source.dispose();
@@ -310,13 +301,8 @@ void main() {
         remoteTargetId: 'target',
       );
     unregistered.payload = await File(bundle).readAsBytes();
-    final applied = await controller.downloadRemoteBundle(
-      expectedRemote: const SyncRemoteMetadata(
-        revision: SyncRevision('1'),
-        contentHash: 'remote',
-      ),
-    );
-    expect(applied, isTrue);
+    final applied = await _confirmDownload(controller);
+    expect(applied, isA<SyncDownloaded>());
     expect(controller.selectedProvider, isNull);
     expect(controller.syncCoordinator.isConnected, isFalse);
     await source.closeDatabase();
@@ -355,7 +341,10 @@ class _FakeSyncProvider implements SyncProvider {
   Future<SyncRemoteMetadata?> metadata(
     SyncAuthSession session,
     SyncRemoteTarget target,
-  ) async => null;
+  ) async => const SyncRemoteMetadata(
+    revision: SyncRevision('1'),
+    contentHash: 'remote',
+  );
 
   @override
   Future<SyncUploadResult> upload(
@@ -386,4 +375,14 @@ class _FakeSyncProvider implements SyncProvider {
       ),
     );
   }
+}
+
+Future<SyncResult> _confirmDownload(AppController controller) async {
+  final result = await controller.downloadCatalog();
+  return switch (result) {
+    final SyncDecision request
+        when request.choices.contains(SyncChoice.download) =>
+      controller.answerSyncDecision(request, SyncChoice.download),
+    _ => result,
+  };
 }

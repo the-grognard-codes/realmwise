@@ -65,7 +65,7 @@ void main() {
     await controller.setIncludePersonalImagesInBundles(true);
     final edit = controller.catalog.beginEditing(original)..setCover(1);
     final saved = await edit.save();
-    await controller.syncNow();
+    await controller.syncCatalog();
     final uploaded = File('${folder.path}/uploaded.realmwise');
     await uploaded.writeAsBytes(provider.payload!);
     final manifest = await controller.bundles.validateBundle(uploaded.path);
