@@ -401,6 +401,19 @@ enum ImageSourceType {
   }
 }
 
+/// List order is authoritative; the first marked cover wins, or the first image.
+List<BookImage> normalizeBookImages(Iterable<BookImage> images) {
+  final list = images.toList();
+  final selected = list.indexWhere((image) => image.isCover);
+  return List.generate(
+    list.length,
+    (index) => list[index].copyWith(
+      sortOrder: index,
+      isCover: index == (selected < 0 ? 0 : selected),
+    ),
+  );
+}
+
 /// Complete, editable catalog record shown in the UI.
 class CatalogRecord {
   const CatalogRecord({

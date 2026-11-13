@@ -260,17 +260,34 @@ void main() {
     'replacement waits for sync before taking snapshot or closing',
     () async {
       final entered = Completer<void>(), sync = Completer<void>();
+      var preparedToClose = false;
       recovery = CatalogRecovery(
         database: database,
         waitForSync: () async {
           entered.complete();
           await sync.future;
         },
+        beforeClose: () async {
+          expect(database.isOpen, isTrue);
+          expect(await recovery.restorePoints(), hasLength(1));
+          expect(
+            await File('${database.databasePath}.recovery-review.json')
+                .exists(),
+            isTrue,
+          );
+          preparedToClose = true;
+        },
+        copyFile: (file, target) async {
+          expect(preparedToClose, isTrue);
+          expect(database.isOpen, isFalse);
+          return file.copy(target);
+        },
       );
       final active = database.databasePath;
       final operation = recovery.replaceCatalog(await replacement());
       await entered.future;
       expect(database.isOpen, isTrue);
+      expect(preparedToClose, isFalse);
       expect(await recovery.restorePoints(), isEmpty);
       await database.databaseHandle.insert('works', {
         'title': 'Last sync edit',

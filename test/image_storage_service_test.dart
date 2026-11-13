@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -7,7 +8,165 @@ import 'package:realmwise/models/catalog_models.dart';
 import 'package:realmwise/services/image_storage_service.dart';
 
 void main() {
+  test(
+    'staged image publication, rollback and discard preserve image bytes',
+    () async {
+      final folder = await Directory.systemTemp.createTemp('staged_storage_');
+      PathProviderPlatform.instance = _FakePathProvider(folder.path);
+      final storage = ImageStorageService(null);
+      await storage.initialize('${folder.path}/images');
+      final source = File('${folder.path}/source.png');
+      await source.writeAsBytes([1, 2, 3]);
+      final staging = await storage.createEditStaging();
+      try {
+        final staged = await storage.stageFile(
+          directory: staging,
+          work: const BookWork(title: 'Staged'),
+          sourcePath: source.path,
+          label: 'test',
+          cover: true,
+        );
+        expect(storage.isManagedImage(staged.localPath), isTrue);
+        expect(storage.isManagedImage(source.path), isFalse);
+        final published = await storage.publishStagedImage(
+          staged,
+          const BookWork(title: 'Staged'),
+        );
+        expect(published.localPath, isNot(contains('.staging')));
+        expect(await File(published.localPath).readAsBytes(), [1, 2, 3]);
+        await storage.rollbackPublishedImage(
+          published.localPath,
+          staged.localPath,
+        );
+        expect(await File(published.localPath).exists(), isFalse);
+        expect(await File(staged.localPath).readAsBytes(), [1, 2, 3]);
+      } finally {
+        await storage.discardEditStaging(staging);
+        expect(await staging.exists(), isFalse);
+        await folder.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'cleanup preserves live process staging and a live lock without a folder',
+    () async {
+      final folder = await Directory.systemTemp.createTemp('staging_owner_');
+      PathProviderPlatform.instance = _FakePathProvider(folder.path);
+      final storage = ImageStorageService(null);
+      await storage.initialize('${folder.path}/images');
+      final foreign = Directory('${storage.rootPath}/.staging/process-42-123');
+      await foreign.create(recursive: true);
+      await File('${foreign.path}/photo.png').writeAsBytes([1]);
+      final script = File('${folder.path}/hold_lock.dart');
+      await script.writeAsString("""
+import 'dart:io';
+Future<void> main(List<String> args) async {
+  final file = await File(args.single).open(mode: FileMode.append);
+  await file.lock(FileLock.exclusive);
+  stdout.writeln('locked');
+  await stdin.first;
+  await file.close();
+}
+""");
+      var sdkFolder = File(Platform.resolvedExecutable).parent;
+      final executableName = Platform.isWindows ? 'dart.exe' : 'dart';
+      while (!await File('${sdkFolder.path}/dart-sdk/bin/$executableName')
+          .exists()) {
+        if (sdkFolder.parent.path == sdkFolder.path)
+          throw StateError('Dart SDK not found');
+        sdkFolder = sdkFolder.parent;
+      }
+      final child = await Process.start(
+        '${sdkFolder.path}/dart-sdk/bin/$executableName',
+        [script.path, '${foreign.path}.lock'],
+      );
+      try {
+        expect(
+          await child.stdout
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())
+              .first,
+          'locked',
+        );
+        await storage.cleanupAbandonedEdits();
+        expect(await File('${foreign.path}/photo.png').exists(), isTrue);
+        await foreign.delete(recursive: true);
+        await storage.cleanupAbandonedEdits();
+        expect(await File('${foreign.path}.lock').exists(), isTrue);
+      } finally {
+        child.stdin.writeln('exit');
+        await child.stdin.flush();
+        await child.exitCode;
+        await child.stdin.close();
+      }
+      await storage.cleanupAbandonedEdits();
+      expect(await foreign.exists(), isFalse);
+      expect(await File('${foreign.path}.lock').exists(), isFalse);
+      await folder.delete(recursive: true);
+    },
+  );
+
+  test('a retired owner with an open lock cannot affect the next edit', () async {
+    final folder = await Directory.systemTemp.createTemp('retired_staging_');
+    PathProviderPlatform.instance = _FakePathProvider(folder.path);
+    final storage = ImageStorageService(null);
+    await storage.initialize('${folder.path}/images');
+    final first = await storage.createEditStaging();
+    final concurrent = await storage.createEditStaging();
+    expect(concurrent.parent.path, first.parent.path);
+    final oldLock = File('${first.parent.path}.lock');
+    final staleHandle = await oldLock.open(mode: FileMode.append);
+    Directory? next;
+    try {
+      await storage.discardEditStaging(first);
+      expect(await concurrent.exists(), isTrue);
+      await storage.discardEditStaging(concurrent);
+      expect(await first.parent.exists(), isFalse);
+      // Windows refuses deletion while another cleanup has the lock file open.
+      // Discard must still release the in-memory owner and allow another edit.
+      if (Platform.isWindows) expect(await oldLock.exists(), isTrue);
+      next = await storage.createEditStaging();
+      expect(next.parent.path, isNot(first.parent.path));
+      final image = File('${next.path}/photo.png');
+      await image.writeAsBytes([4, 5, 6]);
+      // A cleanup holding the retired file can only target its retired folder.
+      await staleHandle.lock(FileLock.exclusive);
+      expect(await first.parent.exists(), isFalse);
+      expect(await image.readAsBytes(), [4, 5, 6]);
+      await staleHandle.unlock();
+    } finally {
+      await staleHandle.close();
+      if (next != null) await storage.discardEditStaging(next);
+      await storage.cleanupAbandonedEdits();
+      expect(await oldLock.exists(), isFalse);
+      await folder.delete(recursive: true);
+    }
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'cleanup removes orphan process locks and leaves unrelated files intact',
+    () async {
+      final folder = await Directory.systemTemp.createTemp(
+        'orphan_staging_lock_',
+      );
+      PathProviderPlatform.instance = _FakePathProvider(folder.path);
+      final storage = ImageStorageService(null);
+      await storage.initialize('${folder.path}/images');
+      final staging = Directory('${storage.rootPath}/.staging');
+      await staging.create();
+      final orphan = File('${staging.path}/process-12-34.lock');
+      final unrelated = File('${staging.path}/other.lock');
+      await orphan.writeAsBytes([]);
+      await unrelated.writeAsBytes([1]);
+      await storage.cleanupAbandonedEdits();
+      expect(await orphan.exists(), isFalse);
+      expect(await unrelated.readAsBytes(), [1]);
+      await folder.delete(recursive: true);
+    },
+  );
 
   test('reuses legacy default image directory when present', () async {
     final folder = await Directory.systemTemp.createTemp('realmwise_images_');

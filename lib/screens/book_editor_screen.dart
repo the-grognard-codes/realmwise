@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../book_intake/book_intake_adapters.dart';
 import '../models/catalog_models.dart';
 import '../services/app_controller.dart';
+import '../services/catalog_service.dart';
 import '../widgets/autocomplete_field.dart';
 import '../widgets/cover_image.dart';
 import 'search_add_screen.dart';
@@ -112,7 +114,9 @@ class BookEditorScreen extends StatefulWidget {
 class _BookEditorScreenState extends State<BookEditorScreen>
     with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
-  late CatalogRecord _record;
+  late CatalogEditSession _edit;
+  CatalogRecord get _record => _edit.record;
+  set _record(CatalogRecord value) => _edit.update(value);
   late CatalogRecord _savedRecord;
   late TabController _tabs;
   var _copyIndex = 0;
@@ -146,17 +150,19 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     _navigationIndex = widget.navigationIndex;
     _navigationRecords = List<CatalogRecord>.of(widget.navigationRecords);
     final defaultCurrency = _defaultCurrencyForDeviceLocale();
-    _record = widget.record.copyWith(
-      copies: widget.record.copies.isEmpty
-          ? [UserCopy(currency: defaultCurrency)]
-          : widget.record.copies
-                .map(
-                  (copy) => copy.id == null && copy.currency == 'USD'
-                      ? copy.copyWith(currency: defaultCurrency)
-                      : copy,
-                )
-                .toList(),
-      images: List.of(widget.record.images),
+    _edit = widget.controller.catalog.beginEditing(
+      widget.record.copyWith(
+        copies: widget.record.copies.isEmpty
+            ? [UserCopy(currency: defaultCurrency)]
+            : widget.record.copies
+                  .map(
+                    (copy) => copy.id == null && copy.currency == 'USD'
+                        ? copy.copyWith(currency: defaultCurrency)
+                        : copy,
+                  )
+                  .toList(),
+        images: List.of(widget.record.images),
+      ),
     );
     _savedRecord = _record;
     _tabs = TabController(length: 3, vsync: this);
@@ -190,22 +196,10 @@ class _BookEditorScreenState extends State<BookEditorScreen>
   /// before the user saves the record. A failed fetch is intentionally
   /// non-fatal: the URL remains available for the save-time retry.
   Future<void> _loadRemoteCover() async {
-    final work = _record.work;
-    final remoteUrl = work.remoteCoverUrl.trim();
-    if (remoteUrl.isEmpty || _record.images.isNotEmpty) return;
-
+    final edit = _edit;
     try {
-      final downloaded = await widget.controller.imageStorage
-          .downloadRemoteCover(work: work, remoteUrl: remoteUrl);
-      if (!mounted) {
-        await widget.controller.imageStorage.deleteImage(downloaded);
-        return;
-      }
-      if (_record.images.isNotEmpty) {
-        await widget.controller.imageStorage.deleteImage(downloaded);
-        return;
-      }
-      setState(() => _record = _record.copyWith(images: [downloaded]));
+      await edit.addRemoteCover();
+      if (mounted && identical(_edit, edit)) setState(() {});
     } catch (_) {
       // Network images are optional; retain the URL for the save-time retry.
     }
@@ -213,6 +207,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
 
   @override
   void dispose() {
+    unawaited(_edit.discard());
     _tabs.dispose();
     for (final controller in [
       _isbn,
@@ -316,9 +311,10 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     _commitCopy();
     setState(() => _saving = true);
     try {
-      _record = await widget.controller.catalog.save(
-        _record.copyWith(work: _committedWork()),
-      );
+      _edit.update(_record.copyWith(work: _committedWork()));
+      final saved = await _edit.save();
+      if (!mounted) return true;
+      _edit = widget.controller.catalog.beginEditing(saved);
       _savedRecord = _record;
       if (_navigationIndex >= 0 &&
           _navigationIndex < _navigationRecords.length) {
@@ -374,8 +370,9 @@ class _BookEditorScreenState extends State<BookEditorScreen>
                 .toList(),
       images: List.of(record.images),
     );
+    unawaited(_edit.discard());
+    _edit = widget.controller.catalog.beginEditing(loaded);
     setState(() {
-      _record = loaded;
       _savedRecord = loaded;
       _isbn.text = loaded.work.isbn13;
       _productCode.text = loaded.work.productCode;
@@ -525,7 +522,8 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     if (accepted != true) return;
     setState(() => _saving = true);
     try {
-      await widget.controller.catalog.delete(_record);
+      await widget.controller.catalog.delete(_savedRecord);
+      await _edit.discard();
       if (mounted) Navigator.pop(context, true);
     } catch (error) {
       if (mounted)
@@ -585,46 +583,38 @@ class _BookEditorScreenState extends State<BookEditorScreen>
 
   Future<void> _importImages() async {
     final label = await _imageLabelDialog();
-    if (label == null) return;
+    if (label == null || !mounted) return;
     final result = await FilePicker.pickFiles(
       type: FileType.image,
       dialogTitle: 'Add local book images',
     );
-    if (result.isEmpty) return;
+    if (result.isEmpty || !mounted) return;
     _commitCopy();
-    final imported = <BookImage>[];
+    _edit.update(_record.copyWith(work: _committedWork()));
+    final edit = _edit;
     for (final selected in result) {
       final selectedPath = selected.path;
       if (selectedPath == null) continue;
       try {
-        imported.add(
-          await widget.controller.imageStorage.importFile(
-            work: _committedWork(),
-            sourcePath: selectedPath,
-            label: result.length == 1
-                ? label
-                : '${label}_${path.basenameWithoutExtension(selected.name)}',
-            cover: _record.images.isEmpty && imported.isEmpty,
-          ),
+        await edit.addFile(
+          selectedPath,
+          label: result.length == 1
+              ? label
+              : '${label}_${path.basenameWithoutExtension(selected.name)}',
         );
-      } on Exception catch (error) {
+      } on Object catch (error) {
         if (mounted)
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Could not add ${selected.name}: $error')),
           );
       }
     }
-    if (imported.isNotEmpty && mounted)
-      setState(
-        () => _record = _record.copyWith(
-          images: [..._record.images, ...imported],
-        ),
-      );
+    if (mounted && identical(_edit, edit)) setState(() {});
   }
 
   Future<String?> _imageLabelDialog() async {
     final label = TextEditingController(text: 'image');
-    final result = await showDialog<String>(
+    final route = DialogRoute<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Image filename label'),
@@ -646,39 +636,25 @@ class _BookEditorScreenState extends State<BookEditorScreen>
         ],
       ),
     );
-    label.dispose();
-    return result;
+    try {
+      final result = await Navigator.of(
+        context,
+        rootNavigator: true,
+      ).push(route);
+      // The pop result arrives before the closing animation releases TextField.
+      await route.completed;
+      return result;
+    } finally {
+      label.dispose();
+    }
   }
 
   Future<void> _setCover(int index) async {
-    final revised = List<BookImage>.of(_record.images);
-    final old = revised.indexWhere((image) => image.isCover);
-    if (old >= 0 && old != index)
-      revised[old] = await widget.controller.imageStorage.setCover(
-        revised[old],
-        false,
-      );
-    revised[index] = await widget.controller.imageStorage.setCover(
-      revised[index],
-      true,
-    );
-    if (mounted) setState(() => _record = _record.copyWith(images: revised));
+    setState(() => _edit.setCover(index));
   }
 
   Future<void> _removeImage(int index) async {
-    final image = _record.images[index];
-    await widget.controller.imageStorage.deleteImage(image);
-    final revised = List<BookImage>.of(_record.images)..removeAt(index);
-    if (revised.isNotEmpty && !revised.any((item) => item.isCover))
-      await _setCoverAfterRemoval(revised, 0);
-    if (mounted) setState(() => _record = _record.copyWith(images: revised));
-  }
-
-  Future<void> _setCoverAfterRemoval(List<BookImage> images, int index) async {
-    images[index] = await widget.controller.imageStorage.setCover(
-      images[index],
-      true,
-    );
+    setState(() => _edit.removeImage(index));
   }
 
   @override

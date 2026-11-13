@@ -111,6 +111,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   late final CatalogRecovery recovery = CatalogRecovery(
     database: database,
     waitForSync: _cancelAndAwaitSync,
+    beforeClose: () => catalog.discardEdits(),
     reopen: _openDatabase,
     clock: clock,
     rehydrate: () => catalog.rehydrateMissingImages(),
@@ -458,6 +459,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> openDatabase(String databasePath, {bool remember = true}) async {
     if (_syncCoordinatorInitialized) await _cancelAndAwaitSync();
+    await catalog.discardEdits();
     await _openDatabase(databasePath, remember: remember);
     try {
       await recovery.start();
@@ -538,6 +540,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       sessionNewWorkIds.clear();
       final imageFolder = await database.getSetting('image_folder');
       await imageStorage.initialize(imageFolder ?? imageRootPathOverride);
+      await catalog.cleanupAbandonedEdits();
       final savedTheme = await database.getSetting('theme_seed');
       seedName = canonicalThemeName(savedTheme);
       if (savedTheme != seedName) {
@@ -919,6 +922,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> closeDatabase() async {
     await _cancelAndAwaitSync();
+    await catalog.discardEdits();
     await recovery.stop();
     await database.close();
     syncCoordinator.resetRuntime();
@@ -1506,35 +1510,39 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     double alignmentY = 0,
     double zoom = 1,
   }) async {
-    final old = await database.getCatalogIcon(tier, sectionName);
-    final local = await imageStorage.importCatalogIcon(
-      sourcePath: sourcePath,
-      tier: tier,
-      sectionName: sectionName,
-    );
-    try {
-      await database.upsertCatalogIcon(
-        CatalogIconMapping(
-          tier: tier,
-          sectionName: sectionName,
-          localPath: local,
-          alignmentX: alignmentX,
-          alignmentY: alignmentY,
-          zoom: zoom,
-        ),
+    await database.withCatalogFiles(() async {
+      final old = await database.getCatalogIcon(tier, sectionName);
+      final local = await imageStorage.importCatalogIcon(
+        sourcePath: sourcePath,
+        tier: tier,
+        sectionName: sectionName,
       );
-    } catch (_) {
-      await _deleteManagedIcon(local);
-      rethrow;
-    }
-    if (old != null && old.localPath != local)
-      await _deleteManagedIcon(old.localPath);
+      try {
+        await database.upsertCatalogIcon(
+          CatalogIconMapping(
+            tier: tier,
+            sectionName: sectionName,
+            localPath: local,
+            alignmentX: alignmentX,
+            alignmentY: alignmentY,
+            zoom: zoom,
+          ),
+        );
+      } catch (_) {
+        await _deleteManagedIcon(local);
+        rethrow;
+      }
+      if (old != null && old.localPath != local)
+        await _deleteManagedIcon(old.localPath);
+    });
   }
 
   Future<void> removeCatalogIcon(String tier, String sectionName) async {
-    final old = await database.getCatalogIcon(tier, sectionName);
-    await database.removeCatalogIcon(tier, sectionName);
-    if (old != null) await _deleteManagedIcon(old.localPath);
+    await database.withCatalogFiles(() async {
+      final old = await database.getCatalogIcon(tier, sectionName);
+      await database.removeCatalogIcon(tier, sectionName);
+      if (old != null) await _deleteManagedIcon(old.localPath);
+    });
   }
 
   Future<void> _deleteManagedIcon(String filePath) async {
@@ -1544,6 +1552,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       if (!path.isWithin(root, target)) return;
       final mappings = await database.listCatalogIcons();
       if (mappings.any((m) => path.normalize(m.localPath) == target)) return;
+      if (await database.referencesImage(filePath)) return;
       final file = File(target);
       if (await file.exists()) await file.delete();
     } catch (_) {}
@@ -1646,8 +1655,11 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     if (_syncCoordinatorInitialized) syncCoordinator.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _automaticSyncTimer?.cancel();
-    unawaited(recovery.stop());
-    unawaited(database.close());
+    unawaited(() async {
+      await catalog.discardEdits();
+      await recovery.stop();
+      await database.close();
+    }());
     _http.close();
     super.dispose();
   }

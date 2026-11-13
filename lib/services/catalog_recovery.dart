@@ -70,6 +70,7 @@ class CatalogRecovery {
   CatalogRecovery({
     required this.database,
     Future<void> Function()? waitForSync,
+    Future<void> Function()? beforeClose,
     Future<void> Function(String)? reopen,
     Future<bool> Function()? rehydrate,
     Future<void> Function()? onReady,
@@ -79,6 +80,7 @@ class CatalogRecovery {
     Future<File> Function(File, String)? renameFile,
     Future<void> Function(File)? deleteFile,
   }) : waitForSync = waitForSync ?? (() async {}),
+       beforeClose = beforeClose ?? (() async {}),
        reopen = reopen ?? database.open,
        rehydrate = rehydrate ?? (() async => false),
        onReady = onReady ?? (() async {}),
@@ -94,6 +96,9 @@ class CatalogRecovery {
 
   final DatabaseService database;
   final Future<void> Function() waitForSync;
+
+  /// Runs after snapshot, checkpoint, and warning persistence, before closing.
+  final Future<void> Function() beforeClose;
   final Future<void> Function(String) reopen;
   final Future<bool> Function() rehydrate;
   final Future<void> Function() onReady;
@@ -635,6 +640,7 @@ class CatalogRecovery {
         );
         ownsWarning = true;
       }
+      await beforeClose();
       closing = true;
       await database.close();
       // Copy first so copy failure cannot destroy the original catalog.
