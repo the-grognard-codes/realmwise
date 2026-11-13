@@ -110,7 +110,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   late final CatalogRecovery recovery = CatalogRecovery(
     database: database,
-    waitForSync: _prepareForReplacement,
+    waitForSync: _cancelAndAwaitSync,
+    beforeClose: () => catalog.discardEdits(),
     reopen: _openDatabase,
     clock: clock,
     rehydrate: () => catalog.rehydrateMissingImages(),
@@ -236,11 +237,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       _syncFuture != null ||
       syncCoordinator.isSyncing;
   void cancelSync() => syncCoordinator.cancel();
-
-  Future<void> _prepareForReplacement() async {
-    await _cancelAndAwaitSync();
-    await catalog.discardEdits();
-  }
 
   Future<void> _cancelAndAwaitSync() async {
     _clearPendingAutomaticSync();

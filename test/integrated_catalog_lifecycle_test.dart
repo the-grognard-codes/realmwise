@@ -4,8 +4,10 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:realmwise/models/catalog_models.dart';
 import 'package:realmwise/services/app_controller.dart';
+import 'package:realmwise/services/catalog_recovery.dart';
 import 'package:realmwise/services/secure_storage_service.dart';
 import 'package:realmwise/services/sync_contract.dart';
 
@@ -68,6 +70,126 @@ void main() {
         const MethodChannel('plugins.flutter.io/path_provider'),
         (_) async => Directory.systemTemp.path,
       );
+
+  for (final refusal in ['busy checkpoint', 'failed snapshot']) {
+    test(
+      'replacement refused by $refusal preserves usable staged edits',
+      () async {
+        final dir = await Directory.systemTemp.createTemp('refused_import_');
+        final controller = AppController(
+          tokenStorage: _Tokens(),
+          imageRootPathOverride: '${dir.path}/images',
+        );
+        Database? reader;
+        final backups = Directory('${dir.path}/backups');
+        final parkedBackups = Directory('${dir.path}/protected-backups');
+        try {
+          await controller.openDatabase(
+            '${dir.path}/catalog.db',
+            remember: false,
+          );
+          final original = await controller.database.saveRecord(
+            CatalogRecord(work: BookWork(title: 'Original')),
+          );
+          final bundle = '${dir.path}/original.realmwise';
+          await controller.exportDeviceBundle(bundle);
+          final source = File('${dir.path}/cover.jpg');
+          await source.writeAsBytes([1, 2, 3]);
+          final edit = controller.catalog.beginEditing(original);
+          edit.update(
+            original.copyWith(
+              work: original.work.copyWith(title: 'Unsaved title'),
+            ),
+          );
+          await edit.addFile(source.path, label: 'Unsaved cover');
+          final staged = edit.record.images.single.localPath;
+          final originalHandle = controller.database.databaseHandle;
+
+          if (refusal == 'busy checkpoint') {
+            await originalHandle.rawQuery('PRAGMA journal_mode=WAL');
+            await originalHandle.execute('PRAGMA busy_timeout=0');
+            await originalHandle.insert('works', {
+              'title': 'Committed WAL row',
+            });
+            reader = await databaseFactory.openDatabase(
+              controller.database.databasePath,
+              options: OpenDatabaseOptions(singleInstance: false),
+            );
+            await reader.execute('BEGIN');
+            await reader.rawQuery('SELECT * FROM works');
+            expect(
+              (await originalHandle.rawQuery('PRAGMA wal_checkpoint(FULL)'))
+                  .single['busy'],
+              0,
+            );
+          } else {
+            // A filesystem failure at snapshot creation must leave the editor intact.
+            await backups.rename(parkedBackups.path);
+            await File(backups.path)
+                .writeAsString('Snapshot destination unavailable');
+          }
+          try {
+            await expectLater(
+              controller.restoreDeviceBundle(bundle),
+              refusal == 'busy checkpoint'
+                  ? throwsA(
+                      isA<StateError>().having(
+                        (error) => error.message,
+                        'message',
+                        contains('catalog is busy'),
+                      ),
+                    )
+                  : throwsA(isA<FileSystemException>()),
+            );
+            if (refusal == 'busy checkpoint') {
+              expect(
+                (await controller.recovery.restorePoints()).any(
+                  (point) => point.kind == SnapshotKind.preImport,
+                ),
+                isTrue,
+              );
+            }
+            expect(controller.database.databaseHandle, same(originalHandle));
+            expect(await File(staged).readAsBytes(), [1, 2, 3]);
+            expect(
+              (await controller.database.getRecord(original.work.id!))
+                  .work
+                  .title,
+              'Original',
+            );
+          } finally {
+            if (reader != null) {
+              await reader.execute('ROLLBACK');
+              await reader.close();
+              reader = null;
+            }
+            if (await parkedBackups.exists()) {
+              await File(backups.path).delete();
+              await parkedBackups.rename(backups.path);
+            }
+          }
+
+          final saved = await edit.save();
+          expect(saved.work.title, 'Unsaved title');
+          final reopened = await controller.database.getRecord(saved.work.id!);
+          expect(reopened.work.title, 'Unsaved title');
+          expect(await File(reopened.images.single.localPath).readAsBytes(), [
+            1,
+            2,
+            3,
+          ]);
+        } finally {
+          if (reader != null) {
+            await reader.execute('ROLLBACK');
+            await reader.close();
+          }
+          await controller.closeDatabase();
+          controller.dispose();
+          await dir.delete(recursive: true);
+        }
+      },
+    );
+  }
 
   test('restore discards active image edits; subsequent save and export remain consistent', () async {
     final dir = await Directory.systemTemp.createTemp('integrated_catalog_');
