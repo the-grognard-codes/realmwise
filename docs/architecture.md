@@ -22,7 +22,7 @@ flowchart TD
   adapters --> ext[external_catalog_service<br/>OpenLibrary + RPGGeek]
   adapters --> csvc[catalog_service]
   screens --> ctrl
-  set --> sync
+  set --> session
   ctrl --> db[data/database_service<br/>SQLite]
   ctrl --> csvc
   ctrl --> img[image_storage_service]
@@ -31,8 +31,10 @@ flowchart TD
   ctrl --> io[import_service / export_service<br/>CSV]
   ctrl --> diag[diagnostic_logging / bundle]
   ctrl --> sec[secure_storage_service]
-  ctrl --> sync
+  ctrl --> session
   subgraph sync[Sync]
+    session[sync_session] --> coord
+    session --> recovery[catalog_recovery]
     coord[sync_coordinator] --> contract[sync_contract<br/>provider-neutral interfaces]
     coord --> meta[sync_metadata<br/>state machine]
     gd[google_drive_sync] -.implements.-> contract
@@ -60,6 +62,7 @@ flowchart TD
 | Backups | `services/backup_service.dart` | Crash-recovery snapshots every 10 min while open, trimming, legacy-token scrubbing. | |
 | Bundles | `services/catalog_bundle_service.dart` | `.realmwise` zip: `manifest.json` + `catalog.db` (+ optional personal images), logical fingerprint, validation, extraction. | Used by manual export/restore and by every sync provider. |
 | Sync contract | `services/sync_contract.dart` | Provider-neutral interfaces: `SyncProvider`, `SyncAuthenticator`, `SyncTransfer`, `SyncLeaseProvider`, revisions/preconditions, conflict and lease exceptions. | Change here ripples into all three providers. |
+| Manual sync session | `sync/sync_session.dart` | Returns typed results and decisions, checks both catalogs before replacement, and delegates snapshots and swaps to catalog recovery. | Manual transfers and automatic sync use the same controller operation queue. |
 | Sync orchestration | `services/sync_coordinator.dart`, `sync_metadata.dart` | Connect, classify local vs remote, resolve conflicts, upload/download, automatic sync lease (single active device), rebind after restore. Metadata stored per catalog identity in shared preferences. | Model is one active device + controlled handoff, never a merge. |
 | Sync providers | `google_drive_sync.dart`, `onedrive_sync.dart`, `dropbox_sync.dart` + `*_runtime.dart` | OAuth (PKCE, loopback on desktop, platform callbacks on Android), token stores, provider-specific HTTP. `*_runtime.dart` holds the platform glue and build-mode (DEV/PROD) client selection. | Each provider ~650–1130 lines with parallel structure. |
 | Secrets | `services/secure_storage_service.dart` | `TokenStorage` over `flutter_secure_storage`. OAuth tokens and the RPGGeek key (keyed by catalog identity) live here. | Legacy plaintext key in the DB is migrated out on read. |
@@ -71,7 +74,7 @@ flowchart TD
 
 - **Startup:** `RealmwiseBootstrap` → `AppController.initialize()` → reopen last database (or show `DatabaseGateway`) → start backups → restore sync metadata for the catalog identity.
 - **Add a book:** `SearchAddScreen` → `BookIntakeSession` lookup → user picks a candidate → ISBN-13 duplicate check → `BookEditorScreen` → `CatalogService.save` → controller notifies → automatic sync debounced (5 s).
-- **Sync:** `SyncCoordinator.classify` compares local fingerprint/metadata with remote revision → upload, download, or `SyncDecisionRequired` for the user → bundle swap quiesces the database, replaces it, and rebinds metadata.
+- **Sync:** `SyncSession` compares the local fingerprint and remote revision through `SyncCoordinator`. Settings renders decisions in one dialog. A confirmed replacement protects the affected catalog through `CatalogRecovery`. A successful download rebinds the cloud connection to the restored catalog.
 
 ## Tests
 

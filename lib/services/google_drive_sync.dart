@@ -418,7 +418,7 @@ class _GoogleDriveHttpClient extends http.BaseClient {
   }
 }
 
-class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
+class GoogleDriveProvider implements NamedSyncProvider, SyncLeaseProvider {
   GoogleDriveProvider({
     required this.authenticator,
     required this.tokenStore,
@@ -445,6 +445,9 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
   final Map<String, String> _etags = {};
   @override
   String get provider => 'google_drive';
+
+  @override
+  String get displayName => 'Google Drive';
 
   Future<String?> _leaseFile(SyncAuthSession s, String c) async {
     final q = Uri.encodeQueryComponent(
@@ -783,7 +786,7 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
   ) async {
     final r = await _http.get(
       Uri.parse(
-        'https://www.googleapis.com/drive/v3/files/${t.id}?fields=md5Checksum,version,modifiedTime,description,appProperties',
+        'https://www.googleapis.com/drive/v3/files/${t.id}?fields=md5Checksum,version,modifiedTime,description,appProperties,size',
       ),
       headers: {'Authorization': 'Bearer ${await _access(s)}'},
     );
@@ -794,7 +797,7 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
     }
     if (r.statusCode != 200) {
       _googleTrace('provider.metadata.error', {'status': r.statusCode});
-      throw Exception('Drive metadata failed');
+      _driveFailure(r, 'Drive metadata failed');
     }
     final j = jsonDecode(r.body);
     final etag = r.headers['etag'];
@@ -821,6 +824,7 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
           // divergent during precondition and download validation.
           '',
       updatedAt: DateTime.tryParse(j['modifiedTime'] ?? ''),
+      isEmpty: j['size']?.toString() == '0',
     );
   }
 
@@ -1073,7 +1077,7 @@ class GoogleDriveProvider implements SyncProvider, SyncLeaseProvider {
         ),
         headers: {'Authorization': 'Bearer ${await _access(s)}'},
       );
-      if (r.statusCode != 200) throw Exception('Drive download failed');
+      if (r.statusCode != 200) _driveFailure(r, 'Drive download failed');
       return Uint8List.fromList(r.bodyBytes);
     }
 

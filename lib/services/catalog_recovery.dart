@@ -591,11 +591,14 @@ class CatalogRecovery {
 
   /// A bundle or database is staged beside the active file before quiescing.
   /// Successful imported images remain in their unique restore namespace.
+  /// [beforeReplacement] can reject a stale source after the snapshot and
+  /// before the active catalog is closed.
   Future<CatalogReplacementResult> replaceCatalog(
     String sourcePath, {
     SnapshotKind snapshotKind = SnapshotKind.preImport,
     bool bundle = false,
     String? imageRootPath,
+    Future<void> Function()? beforeReplacement,
   }) async {
     if (isReplacing)
       throw StateError('Catalog replacement is already in progress.');
@@ -628,6 +631,7 @@ class CatalogRecovery {
       quiesced = true;
       _quiesced = true;
       await _snapshot(snapshotKind);
+      await beforeReplacement?.call();
       await _checkpointForReplacement();
       await loadWarning();
       if (warning == null) {

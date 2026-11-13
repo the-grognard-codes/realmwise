@@ -11,6 +11,7 @@ import 'package:realmwise/services/app_controller.dart';
 import 'package:realmwise/services/catalog_recovery.dart';
 import 'package:realmwise/services/secure_storage_service.dart';
 import 'package:realmwise/services/sync_contract.dart';
+import 'package:realmwise/sync/sync_session.dart';
 import 'package:realmwise/services/sync_metadata.dart';
 
 void main() {
@@ -179,9 +180,9 @@ void main() {
       await controller.recovery.loadWarning();
       final exports = controller.exports;
       await expectLater(
-        controller.syncNow(),
-        throwsA(
-          isA<StateError>().having(
+        controller.syncCatalog(),
+        completion(
+          isA<SyncFailed>().having(
             (error) => error.message,
             'message',
             contains('acknowledge'),
@@ -191,7 +192,7 @@ void main() {
       expect(controller.exports, exports);
       expect(provider.uploads, 0);
       await controller.acknowledgeRecoveryWarning();
-      await controller.syncNow();
+      await controller.syncCatalog();
       expect(controller.exports, greaterThan(exports));
       expect(provider.uploads, 1);
     },
@@ -200,21 +201,15 @@ void main() {
   test(
     'a retained conflict choice cannot upload an unreviewed catalog',
     () async {
+      final request = await _conflict(controller);
       final active = controller.database.databasePath;
       await File('$active.recovery-review.json')
           .writeAsString('{"originalPath":"original.rollback.tmp"}');
       await controller.recovery.loadWarning();
       final exports = controller.exports;
       await expectLater(
-        controller.resolveSyncDecision(
-          SyncConflictChoice.uploadReplaceRemote,
-          decision: const SyncClassificationResult(
-            SyncClassification.divergent,
-            remote: _Provider.remote,
-          ),
-          localFingerprint: fingerprint,
-        ),
-        throwsStateError,
+        controller.answerSyncDecision(request, SyncChoice.upload),
+        completion(isA<SyncFailed>()),
       );
       expect(controller.exports, exports);
       expect(provider.uploads, 0);
@@ -233,12 +228,7 @@ void main() {
         expect(result.needsAcknowledgement, isFalse);
         expect(controller.schedules, greaterThan(0));
       } else {
-        expect(
-          await controller.downloadRemoteBundle(
-            expectedRemote: _Provider.remote,
-          ),
-          isTrue,
-        );
+        expect(await _confirmDownload(controller), isA<SyncDownloaded>());
         expect(controller.syncCoordinator.isConnected, isTrue);
         expect(
           controller.syncCoordinator.metadata!.lastSuccessfulLocalFingerprint,
@@ -276,12 +266,7 @@ void main() {
           },
         );
         if (operation == 'download') {
-          expect(
-            await controller.downloadRemoteBundle(
-              expectedRemote: _Provider.remote,
-            ),
-            isTrue,
-          );
+          expect(await _confirmDownload(controller), isA<SyncDownloaded>());
         } else {
           final result = operation == 'import'
               ? await controller.restoreDeviceBundle(bundle)
@@ -355,19 +340,22 @@ void main() {
 
   test('callback retained from a completed download cannot bypass a later activity', () async {
     final identity = await controller.database.ensureCatalogIdentity();
-    await controller.downloadRemoteBundle(expectedRemote: _Provider.remote);
+    await _confirmDownload(controller);
     final oldZone = provider.downloadZone!;
     await controller.syncCoordinator.connect(provider, identity);
+    controller.syncCoordinator.metadata = controller.syncCoordinator.metadata!
+        .copyWith(
+          revision: 'r1',
+          contentHash: 'h1',
+          lastSuccessfulLocalFingerprint: fingerprint,
+        );
     provider.holdMetadata = true;
     final validation = controller.takeOverAutomaticSync();
     await provider.entered.future;
     try {
       await expectLater(
-        oldZone.run(
-          () =>
-              controller.downloadRemoteBundle(expectedRemote: _Provider.remote),
-        ),
-        throwsA(isA<SyncBusyException>()),
+        oldZone.run(() => _confirmDownload(controller)),
+        completion(isA<SyncBusy>()),
       );
     } finally {
       provider.release.complete();
@@ -377,7 +365,7 @@ void main() {
 
   test('remote replacement defers scheduling through rebind', () async {
     final eligible = controller.syncCoordinator.metadata!;
-    await controller.downloadRemoteBundle(expectedRemote: _Provider.remote);
+    await _confirmDownload(controller);
     expect(controller.schedules, 0);
     expect(controller.syncCoordinator.metadata!.automaticSyncEnabled, isFalse);
     // Rebind intentionally disabled ownership. A later plain import may resume
@@ -411,14 +399,11 @@ void main() {
     'import waits for conflict resolution and preserves manual snapshots',
     () async {
       final manual = await controller.recovery.snapshot(SnapshotKind.manual);
+      final request = await _conflict(controller);
       provider.holdDownload = true;
-      final resolving = controller.resolveSyncDecision(
-        SyncConflictChoice.uploadReplaceRemote,
-        decision: const SyncClassificationResult(
-          SyncClassification.divergent,
-          remote: _Provider.remote,
-        ),
-        localFingerprint: fingerprint,
+      final resolving = controller.answerSyncDecision(
+        request,
+        SyncChoice.upload,
       );
       await provider.entered.future;
       final replacing = controller.restoreDeviceBundle(bundle);
@@ -577,4 +562,24 @@ class _Tokens implements TokenStorage {
   Future<void> write(String key, String value) async {}
   @override
   Future<void> delete(String key) async {}
+}
+
+Future<SyncResult> _confirmDownload(AppController controller) async {
+  final result = await controller.downloadCatalog();
+  return switch (result) {
+    final SyncDecision request
+        when request.choices.contains(SyncChoice.download) =>
+      controller.answerSyncDecision(request, SyncChoice.download),
+    _ => result,
+  };
+}
+
+Future<SyncDecision> _conflict(AppController controller) async {
+  controller.syncCoordinator.metadata = controller.syncCoordinator.metadata!
+      .copyWith(
+        revision: 'previous',
+        contentHash: 'previous',
+        lastSuccessfulLocalFingerprint: 'previous',
+      );
+  return await controller.syncCatalog() as CatalogsDivergedDecision;
 }

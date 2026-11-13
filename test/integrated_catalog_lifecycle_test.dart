@@ -265,7 +265,7 @@ void main() {
             contentHash: 'h1',
             lastSuccessfulLocalFingerprint: 'previous',
           );
-      final sync = controller.syncNow();
+      final sync = controller.syncCatalog();
       await provider.started.future;
       var restored = false;
       final restore = controller

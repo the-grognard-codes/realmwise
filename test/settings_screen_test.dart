@@ -10,6 +10,7 @@ import 'package:realmwise/screens/settings_screen.dart';
 import 'package:realmwise/services/app_controller.dart';
 import 'package:realmwise/services/catalog_recovery.dart';
 import 'package:realmwise/services/sync_contract.dart';
+import 'package:realmwise/sync/sync_session.dart';
 import 'package:realmwise/services/sync_metadata.dart';
 import 'package:realmwise/theme/app_theme.dart';
 
@@ -41,9 +42,12 @@ void main() {
     'sync conflict',
     'download',
     'download conflict',
+    'remote newer',
+    'unknown status',
   ]) {
-    final conflict = route != 'sync';
+    final conflict = route.endsWith('conflict');
     final download = route.startsWith('download');
+    final restoresCatalog = conflict || download || route == 'remote newer';
     testWidgets('sync message handles $route', (tester) async {
       tester.view.physicalSize = const Size(800, 4000);
       tester.view.devicePixelRatio = 1;
@@ -56,8 +60,7 @@ void main() {
       PathProviderPlatform.instance = _FakePathProvider(folder!.path);
       SharedPreferences.setMockInitialValues({});
       final controller = _SyncMessageController(
-        conflict: conflict,
-        downloadConflict: route == 'download conflict',
+        route: route,
         tokenStorage: _MemoryTokenStorage(),
         imageRootPathOverride: '${folder.path}/images',
       );
@@ -91,22 +94,37 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(find.text(download ? 'Download Remote' : 'Sync Now'));
         await tester.pumpAndSettle();
-        if (download) {
-          await tester.tap(find.text('Download'));
-          await tester.pumpAndSettle();
-        }
-        if (route.endsWith('conflict')) {
+        if (conflict) {
+          expect(find.text('Catalogs differ'), findsOneWidget);
+          expect(find.text('Upload and replace remote'), findsOneWidget);
           await tester.tap(find.text('Download and replace local'));
           await tester.pump();
+        } else if (route == 'remote newer' || download) {
+          expect(
+            find.text(
+              download ? 'Download remote catalog?' : 'Remote catalog is newer',
+            ),
+            findsOneWidget,
+          );
+          expect(find.text('Catalogs differ'), findsNothing);
+          expect(find.text('Upload and replace remote'), findsNothing);
+          await tester.tap(find.text('Download'));
+          await tester.pumpAndSettle();
+        } else if (route == 'unknown status') {
+          expect(find.text('Sync status unavailable'), findsOneWidget);
+          expect(find.text('Upload and replace remote'), findsNothing);
+          await tester.tap(find.text('Retry'));
+          await tester.pumpAndSettle();
         }
-        final expected = conflict
+        final expected = restoresCatalog
             ? 'Downloaded catalog is active, but recovery needs review. Automatic sync is paused.'
             : 'Catalog synced to Google Drive.';
         await _pumpUntilVisible(tester, find.text(expected));
         expect(find.text(expected), findsOneWidget);
-        expect(restores, conflict ? 1 : 0);
-        if (conflict)
+        expect(restores, restoresCatalog ? 1 : 0);
+        if (restoresCatalog) {
           expect(find.text('Catalog synced to Google Drive.'), findsNothing);
+        }
         final syncButton = find.ancestor(
           of: find.text('Sync Now'),
           matching: find.byWidgetPredicate((widget) => widget is FilledButton),
@@ -272,53 +290,43 @@ class _Provider implements SyncProvider {
 
 class _SyncMessageController extends AppController {
   _SyncMessageController({
-    required this.conflict,
-    this.downloadConflict = false,
+    required this.route,
     super.tokenStorage,
     super.imageRootPathOverride,
   });
-  final bool conflict;
-  final bool downloadConflict;
-  CatalogRecoveryWarning? pendingWarning;
-  @override
-  CatalogRecoveryWarning? get recoveryWarning => pendingWarning;
-  @override
-  Future<void> syncNow() async {
-    if (conflict)
-      throw const SyncDecisionRequired(
-        SyncClassificationResult(SyncClassification.divergent),
-        localFingerprint: 'local',
-      );
-  }
+
+  final String route;
+  static const _revision = SyncRevision('remote');
+  static const _conflict = CatalogsDivergedDecision(
+    SyncClassification.divergent,
+    _revision,
+    'local',
+  );
 
   @override
-  Future<bool> resolveSyncDecision(
-    SyncConflictChoice choice, {
-    required SyncClassificationResult decision,
-    required String localFingerprint,
-  }) async {
-    expect(choice, SyncConflictChoice.downloadReplaceLocal);
-    pendingWarning = const CatalogRecoveryWarning(
-      originalPath: 'original.rollback.tmp',
-    );
-    return true;
-  }
+  Future<SyncResult> syncCatalog() async => switch (route) {
+    'sync conflict' => _conflict,
+    'remote newer' => const RemoteNewerDecision(_revision, 'local'),
+    'unknown status' => const StatusUnknownDecision('local'),
+    _ => const SyncUploaded('Google Drive'),
+  };
 
   @override
-  Future<bool> downloadRemoteBundle({
-    SyncRemoteMetadata? expectedRemote,
-    String? expectedLocalFingerprint,
-    Future<void> Function()? backup,
-  }) async {
-    if (downloadConflict)
-      throw const SyncDecisionRequired(
-        SyncClassificationResult(SyncClassification.divergent),
-        localFingerprint: 'local',
-      );
-    pendingWarning = const CatalogRecoveryWarning(
-      originalPath: 'original.rollback.tmp',
-    );
-    return true;
+  Future<SyncResult> downloadCatalog() async => route == 'download conflict'
+      ? _conflict
+      : const DownloadCatalogDecision(_revision, 'local');
+
+  @override
+  Future<SyncResult> answerSyncDecision(
+    SyncDecision request,
+    SyncChoice choice,
+  ) async {
+    if (request is StatusUnknownDecision) {
+      expect(choice, SyncChoice.retry);
+      return const SyncUploaded('Google Drive');
+    }
+    expect(choice, SyncChoice.download);
+    return const SyncDownloaded(needsRecoveryReview: true);
   }
 }
 
