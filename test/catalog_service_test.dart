@@ -297,6 +297,56 @@ void _editSessionTests() {
     },
   );
 
+  test('freeze waits for an active save and rejects later saves', () async {
+    images.block = true;
+    final edit = catalog.beginEditing(original)..setCover(1);
+    final saving = edit.save();
+    await images.published.future;
+    var frozen = false;
+    final freezing = catalog.freezeEdits().then((_) => frozen = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(frozen, isFalse);
+    final later = catalog.beginEditing(original);
+    await expectLater(
+      later.save(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('try saving again'),
+        ),
+      ),
+    );
+    images.release.complete();
+    await saving;
+    await freezing;
+    expect(frozen, isTrue);
+    await expectLater(later.save(), throwsStateError);
+    catalog.unfreezeEdits();
+    expect((await later.save()).work.title, 'Original');
+  });
+
+  test('unfreeze keeps staged images and permits saving', () async {
+    final edit = catalog.beginEditing(original);
+    await edit.addFile(original.images.first.localPath, label: 'staged');
+    final staged = edit.record.images.last.localPath;
+    await catalog.freezeEdits();
+    await expectLater(
+      edit.save(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('try saving again'),
+        ),
+      ),
+    );
+    expect(await File(staged).exists(), isTrue);
+    catalog.unfreezeEdits();
+    final saved = await edit.save();
+    expect(saved.images, hasLength(3));
+  });
+
   test(
     'rollback continues after a rename error and preserves the database error',
     () async {

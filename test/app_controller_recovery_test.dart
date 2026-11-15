@@ -89,7 +89,10 @@ void main() {
       final ready = '$saved.replace-10.tmp.ready';
       await controller.bundles.extractDatabase(bundle, ready);
       final marker = File('$saved.recovery-review.json');
-      final markerContents = jsonEncode({'originalPath': rollback});
+      final markerContents = jsonEncode({
+        'originalPath': rollback,
+        'swapRollback': rollback,
+      });
       await marker.writeAsString(markerContents, flush: true);
       SharedPreferences.setMockInitialValues({'last_database_path': saved});
       controller = _SchedulingController(directory.path);
@@ -125,6 +128,35 @@ void main() {
       expect(await File(ready).exists(), isFalse);
     });
   }
+
+  test(
+    'startup preserves the restored notice after a completed rename',
+    () async {
+      final saved = controller.database.databasePath;
+      await controller.closeDatabase();
+      controller.dispose();
+      final marker = File('$saved.recovery-review.json');
+      await marker.writeAsString(
+        jsonEncode({
+          'originalPath': saved,
+          'originalRestored': true,
+          'swapRollback': '$saved.rollback-10.tmp',
+        }),
+      );
+      SharedPreferences.setMockInitialValues({'last_database_path': saved});
+      controller = _SchedulingController(directory.path);
+
+      await controller.initialize();
+
+      expect(controller.error, isNull);
+      expect(controller.recoveryWarning?.originalRestored, isTrue);
+      expect(controller.recoveryWarning?.originalPath, saved);
+      expect(
+        await controller.database.databaseHandle.query('works'),
+        contains(containsPair('title', 'Original')),
+      );
+    },
+  );
 
   for (final reason in ['no review marker', 'cleanup already pending']) {
     test('startup falls back when rollback has $reason', () async {
@@ -167,6 +199,38 @@ void main() {
       }
     });
   }
+
+  test(
+    'a new fallback catalog does not inherit a stale review marker',
+    () async {
+      await controller.closeDatabase();
+      controller.dispose();
+      final saved = '${directory.path}${Platform.pathSeparator}my_realmwise.db';
+      final rollback = File('$saved.rollback-50.tmp');
+      await rollback.writeAsBytes([1, 2, 3]);
+      final marker = File('$saved.recovery-review.json');
+      await marker.writeAsString(jsonEncode({'originalPath': rollback.path}));
+      SharedPreferences.setMockInitialValues({'last_database_path': saved});
+      controller = _SchedulingController(directory.path);
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const channel = MethodChannel('plugins.flutter.io/path_provider');
+      messenger.setMockMethodCallHandler(channel, (_) async => directory.path);
+      try {
+        await controller.initialize();
+        expect(controller.error, isNull);
+        expect(controller.activeDatabasePath, File(saved).absolute.path);
+        expect(controller.recoveryWarning, isNull);
+        expect(await marker.exists(), isFalse);
+        expect(await rollback.readAsBytes(), [1, 2, 3]);
+      } finally {
+        messenger.setMockMethodCallHandler(
+          channel,
+          (_) async => Directory.systemTemp.path,
+        );
+      }
+    },
+  );
 
   test(
     'manual sync cannot export or upload an unacknowledged catalog',
