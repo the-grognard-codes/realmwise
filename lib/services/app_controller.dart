@@ -111,8 +111,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   late final CatalogRecovery recovery = CatalogRecovery(
     database: database,
     waitForSync: () => _cancelAndAwaitSync(cancelManual: false),
-    beforeSnapshot: () => catalog.freezeEdits(),
-    afterReplacement: () async => catalog.unfreezeEdits(),
+    freezeEdits: () => catalog.freezeEdits(),
+    releaseEdits: () async => catalog.unfreezeEdits(),
     beforeClose: () => catalog.discardEdits(),
     reopen: _openDatabase,
     clock: clock,

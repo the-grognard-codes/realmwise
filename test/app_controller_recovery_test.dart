@@ -129,6 +129,35 @@ void main() {
     });
   }
 
+  test(
+    'startup preserves the restored notice after a completed rename',
+    () async {
+      final saved = controller.database.databasePath;
+      await controller.closeDatabase();
+      controller.dispose();
+      final marker = File('$saved.recovery-review.json');
+      await marker.writeAsString(
+        jsonEncode({
+          'originalPath': saved,
+          'originalRestored': true,
+          'swapRollback': '$saved.rollback-10.tmp',
+        }),
+      );
+      SharedPreferences.setMockInitialValues({'last_database_path': saved});
+      controller = _SchedulingController(directory.path);
+
+      await controller.initialize();
+
+      expect(controller.error, isNull);
+      expect(controller.recoveryWarning?.originalRestored, isTrue);
+      expect(controller.recoveryWarning?.originalPath, saved);
+      expect(
+        await controller.database.databaseHandle.query('works'),
+        contains(containsPair('title', 'Original')),
+      );
+    },
+  );
+
   for (final reason in ['no review marker', 'cleanup already pending']) {
     test('startup falls back when rollback has $reason', () async {
       final saved = controller.database.databasePath;

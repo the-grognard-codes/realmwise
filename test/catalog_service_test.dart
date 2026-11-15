@@ -307,7 +307,16 @@ void _editSessionTests() {
     await Future<void>.delayed(Duration.zero);
     expect(frozen, isFalse);
     final later = catalog.beginEditing(original);
-    await expectLater(later.save(), throwsStateError);
+    await expectLater(
+      later.save(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('try saving again'),
+        ),
+      ),
+    );
     images.release.complete();
     await saving;
     await freezing;
@@ -322,7 +331,16 @@ void _editSessionTests() {
     await edit.addFile(original.images.first.localPath, label: 'staged');
     final staged = edit.record.images.last.localPath;
     await catalog.freezeEdits();
-    await expectLater(edit.save(), throwsStateError);
+    await expectLater(
+      edit.save(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('try saving again'),
+        ),
+      ),
+    );
     expect(await File(staged).exists(), isTrue);
     catalog.unfreezeEdits();
     final saved = await edit.save();

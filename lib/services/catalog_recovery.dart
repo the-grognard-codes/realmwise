@@ -70,8 +70,8 @@ class CatalogRecovery {
   CatalogRecovery({
     required this.database,
     Future<void> Function()? waitForSync,
-    Future<void> Function()? beforeSnapshot,
-    Future<void> Function()? afterReplacement,
+    Future<void> Function()? freezeEdits,
+    Future<void> Function()? releaseEdits,
     Future<void> Function()? beforeClose,
     Future<void> Function(String)? reopen,
     Future<bool> Function()? rehydrate,
@@ -82,8 +82,8 @@ class CatalogRecovery {
     Future<File> Function(File, String)? renameFile,
     Future<void> Function(File)? deleteFile,
   }) : waitForSync = waitForSync ?? (() async {}),
-       beforeSnapshot = beforeSnapshot ?? (() async {}),
-       afterReplacement = afterReplacement ?? (() async {}),
+       freezeEdits = freezeEdits ?? (() async {}),
+       releaseEdits = releaseEdits ?? (() async {}),
        beforeClose = beforeClose ?? (() async {}),
        reopen = reopen ?? database.open,
        rehydrate = rehydrate ?? (() async => false),
@@ -100,8 +100,12 @@ class CatalogRecovery {
 
   final DatabaseService database;
   final Future<void> Function() waitForSync;
-  final Future<void> Function() beforeSnapshot;
-  final Future<void> Function() afterReplacement;
+
+  /// Blocks new saves and drains in-flight saves before the protective snapshot.
+  final Future<void> Function() freezeEdits;
+
+  /// Reopens edits after refusal, or after the new catalog has been reopened.
+  final Future<void> Function() releaseEdits;
 
   /// Runs after snapshot, checkpoint, and warning persistence, before closing.
   final Future<void> Function() beforeClose;
@@ -143,6 +147,13 @@ class CatalogRecovery {
     await renameFile(marker, '${marker.path}.stale-${_stamp()}');
   }
 
+  Future<void> _clearSwapRollback(File marker) async {
+    await _writeMarker(
+      marker,
+      {...?await _readMarker(marker)}..remove('swapRollback'),
+    );
+  }
+
   /// Recover the original before startup can create a new catalog at its path.
   Future<void> recoverInterruptedReplacement(String savedPath) async {
     if (await File(savedPath).exists()) return;
@@ -156,14 +167,14 @@ class CatalogRecovery {
     }
     final rollbackPath = value?['swapRollback'];
     final pattern = RegExp(
+      '^${RegExp.escape(p.basename(savedPath))}'
       r'\.rollback-\d+\.tmp$',
       caseSensitive: !Platform.isWindows,
     );
     final rollback =
         rollbackPath is String &&
-            p.dirname(rollbackPath) == p.dirname(savedPath) &&
-            rollbackPath.startsWith('$savedPath.rollback-') &&
-            pattern.hasMatch(rollbackPath)
+            p.equals(p.dirname(rollbackPath), p.dirname(savedPath)) &&
+            pattern.hasMatch(p.basename(rollbackPath))
         ? File(rollbackPath)
         : null;
     if (rollback == null ||
@@ -645,7 +656,7 @@ class CatalogRecovery {
         : p.join(imageRootPath, 'recovery-$stamp');
     var moved = false, committed = false, quiesced = false;
     var closing = false, installed = false, replacementRetained = false;
-    var freezeStarted = false, markerPrepared = false;
+    var freezeStarted = false, editsReleased = false, markerPrepared = false;
     Map<String, dynamic>? priorMarker;
     try {
       if (bundle) {
@@ -663,12 +674,17 @@ class CatalogRecovery {
       quiesced = true;
       _quiesced = true;
       freezeStarted = true;
-      await beforeSnapshot();
+      await freezeEdits();
       await _snapshot(snapshotKind);
       await beforeReplacement?.call();
       await _checkpointForReplacement();
       await loadWarning();
-      priorMarker = await _readMarker(warningFile);
+      try {
+        priorMarker = await _readMarker(warningFile);
+      } on Object catch (error) {
+        _reportFailure('warning_read', error);
+        priorMarker = <String, dynamic>{};
+      }
       // An existing active catalog means an older swap is no longer pending.
       priorMarker?.remove('swapRollback');
       // Record this swap even when an older warning remains unacknowledged.
@@ -693,11 +709,12 @@ class CatalogRecovery {
       await _moveSidecars(active, rollback, renameFile);
       await renameFile(File('$staged.ready'), active);
       installed = true;
-      await _writeMarker(
-        warningFile,
-        {...?await _readMarker(warningFile)}..remove('swapRollback'),
-      );
+      await _clearSwapRollback(warningFile);
       await reopen(active);
+      // The old sessions are discarded. Rehydration creates new edit sessions
+      // against the replacement and must be allowed to save its fetched covers.
+      await releaseEdits();
+      editsReleased = true;
       await rehydrate();
       committed = true;
     } catch (error) {
@@ -775,10 +792,7 @@ class CatalogRecovery {
             if (await warningFile.exists()) await deleteFile(warningFile);
             warning = null;
           } else if (replacementRetained) {
-            await _writeMarker(
-              warningFile,
-              {...?await _readMarker(warningFile)}..remove('swapRollback'),
-            );
+            await _clearSwapRollback(warningFile);
             await loadWarning();
           } else {
             await _writeMarker(warningFile, priorMarker!);
@@ -788,9 +802,9 @@ class CatalogRecovery {
           _reportFailure('warning_clear', warningError);
         }
       }
-      if (freezeStarted) {
+      if (freezeStarted && !editsReleased) {
         try {
-          await afterReplacement();
+          await releaseEdits();
         } on Object catch (editError) {
           _reportFailure('edit_release', editError);
         }

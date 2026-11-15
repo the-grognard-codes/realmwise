@@ -177,8 +177,12 @@ class CatalogEditSession {
   }
 
   Future<T> _run<T>(Future<T> Function() action) {
-    if (_discardRequested || _frozen)
+    if (_discardRequested)
       return Future.error(StateError('This edit session has ended.'));
+    if (_frozen)
+      return Future.error(
+        StateError('Catalog replacement is in progress; try saving again.'),
+      );
     final result = _tail.then((_) {
       _check();
       return action();

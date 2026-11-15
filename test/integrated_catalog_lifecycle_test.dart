@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:realmwise/models/catalog_models.dart';
@@ -45,6 +46,42 @@ class _HeldImageController extends AppController {
 
   @override
   ImageStorageService get imageStorage => heldImages;
+}
+
+class _FetchedImageController extends AppController {
+  _FetchedImageController(String imageRoot)
+    : super(tokenStorage: _Tokens(), imageRootPathOverride: imageRoot);
+
+  int fetches = 0;
+
+  @override
+  ImageStorageService get imageStorage => _fetchedImages;
+
+  late final ImageStorageService _fetchedImages = ImageStorageService(
+    null,
+    resolver: (_) async => [InternetAddress('93.184.216.34')],
+    transport: (uri, peer) async {
+      fetches++;
+      return http.StreamedResponse(
+        Stream<List<int>>.value(const [
+          0x89,
+          0x50,
+          0x4e,
+          0x47,
+          0x0d,
+          0x0a,
+          0x1a,
+          0x0a,
+          0,
+          0,
+          0,
+          0,
+        ]),
+        200,
+        headers: const {'content-type': 'image/png'},
+      );
+    },
+  );
 }
 
 class _Sync extends Object implements SyncProvider {
@@ -97,6 +134,42 @@ void main() {
         const MethodChannel('plugins.flutter.io/path_provider'),
         (_) async => Directory.systemTemp.path,
       );
+
+  test('bundle import commits when a remote cover is fetched', () async {
+    final dir = await Directory.systemTemp.createTemp('fetched_cover_import_');
+    final controller = _FetchedImageController('${dir.path}/images');
+    try {
+      await controller.openDatabase('${dir.path}/catalog.db', remember: false);
+      await controller.database.saveRecord(
+        const CatalogRecord(
+          work: BookWork(title: 'Cloud work'),
+          images: [
+            BookImage(
+              localPath: '',
+              remoteUrl: 'https://example.com/cover.png',
+              sourceType: ImageSourceType.remoteCache,
+              isCover: true,
+            ),
+          ],
+        ),
+      );
+      final bundle = '${dir.path}/cloud.realmwise';
+      await controller.exportDeviceBundle(bundle);
+
+      final result = await controller.restoreDeviceBundle(bundle);
+
+      expect(result.needsAcknowledgement, isFalse);
+      expect(controller.fetches, greaterThan(0));
+      final restored = (await controller.database.listRecords()).single;
+      expect(restored.work.title, 'Cloud work');
+      expect(restored.cover!.localPath, isNotEmpty);
+      expect(await File(restored.cover!.localPath).exists(), isTrue);
+    } finally {
+      await controller.closeDatabase();
+      controller.dispose();
+      await dir.delete(recursive: true);
+    }
+  });
 
   for (final refusal in ['busy checkpoint', 'failed snapshot']) {
     test(
@@ -255,8 +328,8 @@ void main() {
         await images.published.future;
         recovery = CatalogRecovery(
           database: controller.database,
-          beforeSnapshot: catalog.freezeEdits,
-          afterReplacement: () async => catalog.unfreezeEdits(),
+          freezeEdits: catalog.freezeEdits,
+          releaseEdits: () async => catalog.unfreezeEdits(),
           beforeClose: () async {
             await expectLater(lateEdit.save(), throwsStateError);
             await catalog.discardEdits();
@@ -378,8 +451,8 @@ void main() {
       final staged = edit.record.images.single.localPath;
       recovery = CatalogRecovery(
         database: database,
-        beforeSnapshot: catalog.freezeEdits,
-        afterReplacement: () async => catalog.unfreezeEdits(),
+        freezeEdits: catalog.freezeEdits,
+        releaseEdits: () async => catalog.unfreezeEdits(),
         beforeClose: catalog.discardEdits,
         renameFile: (file, target) async {
           if (file.path.contains('.recovery-review.json.write-')) {
