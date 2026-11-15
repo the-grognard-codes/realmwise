@@ -101,8 +101,17 @@ class CatalogService {
         }
         if (recordChanged) {
           edit.update(record.copyWith(images: restored));
-          await edit.save();
-          changed = true;
+          try {
+            await edit.save();
+            changed = true;
+          } on Object catch (error) {
+            // A cover is optional; its failed save must not undo a replacement.
+            DiagnosticDiagnostics.emit(
+              DiagnosticSeverity.warning,
+              'catalog.rehydrate.error',
+              {'errorClass': error.runtimeType.toString()},
+            );
+          }
         }
       } finally {
         await edit.discard();
@@ -137,6 +146,16 @@ class CatalogService {
       rethrow;
     }
   }
+}
+
+/// Retryable refusal while catalog replacement temporarily pauses edits.
+class CatalogEditPausedException implements Exception {
+  const CatalogEditPausedException();
+
+  String get message => 'Catalog replacement is in progress. Try saving again.';
+
+  @override
+  String toString() => message;
 }
 
 /// Visit-scoped draft. Only save publishes files or changes stored rows.
@@ -177,12 +196,9 @@ class CatalogEditSession {
   }
 
   Future<T> _run<T>(Future<T> Function() action) {
-    if (_discardRequested)
+    if (_discardRequested || _closed)
       return Future.error(StateError('This edit session has ended.'));
-    if (_frozen)
-      return Future.error(
-        StateError('Catalog replacement is in progress; try saving again.'),
-      );
+    if (_frozen) return Future.error(const CatalogEditPausedException());
     final result = _tail.then((_) {
       _check();
       return action();
