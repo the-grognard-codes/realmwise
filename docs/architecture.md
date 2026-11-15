@@ -135,7 +135,7 @@ These rules live in `AppController`.
 **Lease**
 
 - 10-minute lease, renewed every 5 minutes while the app is in the foreground.
-- Lease renewal, policy changes, takeover, and each transfer run through `_serialize`.
+- Lease renewal, policy changes, takeover, manual sync sessions (`_runManualSync`), and each automatic transfer run through `_serialize`.
 - Losing the lease goes through the coordinator's single `lease_lost` path.
 
 **Edits**
@@ -199,9 +199,17 @@ CI (`.github/workflows/ci.yml`) runs `dart format --set-exit-if-changed`, `flutt
 Observations for planning:
 
 - **`AppController` still mixes concerns:** database lifecycle, sync scheduling, bundles, preferences, and icons. Recovery moved out to `CatalogRecovery` (#101), record editing moved out to `CatalogService` (#104), and transfer decisions moved to `SyncSession` (#102). The controller still owns the automatic-sync scheduler and operation queue.
-- **Open recovery follow-ups:**
+- **Overlapping sync fences:** #102 did not consolidate them. Four separate busy or cancellation mechanisms guard sync work, and any new sync entry point has to respect all four:
+  - `AppController._serialize`, the operation queue;
+  - `_syncActivities` / `_trackSyncActivity`, which track long remote work, with an expiring zone token;
+  - `SyncCoordinator._exclusive` and its cancellation token;
+  - `SyncSession`'s own `_cancellation` guard.
+
+  The pending-sync flags (`_automaticSyncPending`, `_automaticBackgroundFlushPending`) sit on top. Collapsing these into one sync-work owner belongs to the `AppController` split (overhaul Phase 1, "App structure").
+- **Open sync and recovery follow-ups:**
   - #113 tightens startup recovery. It records the exact rollback for each swap, handles a stale marker when recovery declines, and makes the marker write crash-safe.
   - #114 makes sure a save that finishes during replacement is in the protective snapshot.
+  - #121 validates and retries the remote download before "replace remote", stops holding the upload bundle while a decision is pending, and uses `localFingerprint()` where no bundle is uploaded.
 - **Rollback files are not restore points.** A retained replacement's original sits at `<catalog>.rollback-<stamp>.tmp`. Settings lists only `backups/`, so recovering that file by hand means finding it on disk.
 - **Misleading name:** `disconnectOneDrive()` delegates to `disconnectGoogleDrive()`, which actually disconnects whichever provider is active.
 - **Stale version:** `CatalogBundleService.appVersion` is hard-coded to `1.0.0+1` while `pubspec.yaml` is `1.3.0+6`.
