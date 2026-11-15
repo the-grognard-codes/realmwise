@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 //import 'package:flutter/widgets.dart';
@@ -13,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/database_service.dart';
 import '../models/catalog_models.dart';
+import '../sync/sync_session.dart';
 import 'catalog_recovery.dart';
 import 'catalog_bundle_service.dart';
 import 'catalog_service.dart';
@@ -110,7 +110,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   late final CatalogRecovery recovery = CatalogRecovery(
     database: database,
-    waitForSync: _cancelAndAwaitSync,
+    waitForSync: () => _cancelAndAwaitSync(cancelManual: false),
     beforeClose: () => catalog.discardEdits(),
     reopen: _openDatabase,
     clock: clock,
@@ -173,7 +173,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   bool includePersonalImagesInBundles = false;
   bool diagnosticOptionsEnabled = false;
   bool debugLoggingEnabled = false;
-  Future<void>? _syncFuture;
   Timer? _automaticSyncTimer;
   Timer? _leaseRenewalTimer;
   Future<void>? _leaseRenewalFuture;
@@ -198,10 +197,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<T> _trackSyncActivity<T>(Future<T> Function() action) {
-    if (_insideSyncActivity) return action();
-    if (isSyncing) return Future.error(const SyncBusyException());
-    if (recovery.isReplacing)
-      return Future.error(StateError('Catalog replacement is in progress.'));
+    if (isSyncing || recovery.isReplacing || isConnectionPending) {
+      return Future.error(const SyncBusyException());
+    }
     final activity = _SyncActivity();
     final operation = runZoned(
       action,
@@ -234,28 +232,28 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   SyncProgress? syncProgress;
   bool get isSyncing =>
       _syncActivities.isNotEmpty ||
-      _syncFuture != null ||
-      syncCoordinator.isSyncing;
-  void cancelSync() => syncCoordinator.cancel();
+      (_syncCoordinatorInitialized && syncCoordinator.isSyncing);
 
-  Future<void> _cancelAndAwaitSync() async {
+  void cancelSync() {
+    syncSession.cancel();
+    if (_syncCoordinatorInitialized) syncCoordinator.cancel();
+  }
+
+  Future<void> _cancelAndAwaitSync({bool cancelManual = true}) async {
     _clearPendingAutomaticSync();
     _cancelAutomaticTimers();
     _automaticCancellation?.cancel();
-    syncCoordinator.cancel();
-    final running = _syncFuture;
-    if (running != null) {
-      try {
-        await running;
-      } on Object {
-        // Lifecycle changes intentionally absorb cancellation/failure; the
-        // catalog remains intact and the next open can restore its metadata.
-      }
+    // A download replaces its own catalog while it holds the operation queue.
+    // Awaiting that download or anything queued behind it would deadlock.
+    if (_insideSyncActivity) return;
+    if (cancelManual) {
+      syncSession.invalidateDecision();
+      cancelSync();
+    } else if (_syncCoordinatorInitialized) {
+      syncCoordinator.cancel();
     }
+    await Future.wait(_syncActivities.toList());
     await _leaseRenewalFuture;
-    if (!_insideSyncActivity) {
-      await Future.wait(_syncActivities.toList());
-    }
     final automatic = _automaticFuture;
     if (automatic != null) {
       try {
@@ -286,8 +284,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       syncMetadata?.leaseToken != null &&
       (syncMetadata?.leaseExpiresAt?.isAfter(clock().toUtc()) ?? false);
 
-  String _syncErrorMessage(Object error) =>
-      error.toString().replaceFirst('Exception: ', '');
+  String _syncErrorMessage(Object error) => SyncFailed.fromError(error).message;
 
   void _clearAutomaticSyncState() {
     _clearPendingAutomaticSync();
@@ -777,53 +774,32 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   ) async {
     cancellation.throwIfCancelled();
     if (recovery.warning != null) return;
-    if (isSyncing || isConnectionPending) throw const SyncBusyException();
-    if (!database.isOpen) throw StateError('Open a catalog first.');
-    final temporary = await getTemporaryDirectory();
-    final bundlePath = path.join(
-      temporary.path,
-      'realmwise-auto-${DateTime.now().microsecondsSinceEpoch}.realmwise',
-    );
-    try {
-      cancellation.throwIfCancelled();
-      await exportDeviceBundle(bundlePath);
-      final manifest = await bundles.validateBundle(bundlePath);
-      final payload = Uint8List.fromList(await File(bundlePath).readAsBytes());
-      cancellation.throwIfCancelled();
+    void ensureIdle() {
       if (isSyncing || isConnectionPending) throw const SyncBusyException();
-      final upload = syncCoordinator.automaticUpload(
-        payload,
-        localFingerprint: manifest.contentFingerprint,
-      );
-      _automaticTransferCancellation = syncCoordinator.activeCancellation;
-      syncMetadata = await upload;
-    } finally {
-      final file = File(bundlePath);
-      if (await file.exists()) await file.delete();
     }
+
+    ensureIdle();
+    if (!database.isOpen) throw StateError('Open a catalog first.');
+    await syncSession.automaticUpload(
+      cancellation,
+      beforeTransfer: ensureIdle,
+      onTransfer: (token) => _automaticTransferCancellation = token,
+    );
+    syncMetadata = syncCoordinator.metadata;
   }
 
-  Future<void> _validateAutomaticRemote() =>
-      _trackSyncActivity(_validateAutomaticRemoteInternal);
-
-  Future<void> _validateAutomaticRemoteInternal() async {
-    final temporary = await getTemporaryDirectory();
-    final bundlePath = path.join(
-      temporary.path,
-      'realmwise-auto-validate-${DateTime.now().microsecondsSinceEpoch}.realmwise',
-    );
+  Future<void> _validateAutomaticRemote() async {
     try {
-      await exportDeviceBundle(bundlePath);
-      final manifest = await bundles.validateBundle(bundlePath);
-      final decision = await syncCoordinator.classify(
-        manifest.contentFingerprint,
-      );
-      if (decision.classification == SyncClassification.divergent ||
-          decision.classification == SyncClassification.unknownError ||
-          decision.classification == SyncClassification.remoteOnly) {
-        throw SyncDecisionRequired(
-          decision,
-          localFingerprint: manifest.contentFingerprint,
+      final status = await syncSession.validateAutomaticRemote();
+      final classification = status.classification;
+      if (classification != SyncClassification.localOnly &&
+          classification != SyncClassification.noChanges) {
+        throw SyncConflictException(
+          status.remote ??
+              const SyncRemoteMetadata(
+                revision: SyncRevision(''),
+                contentHash: '',
+              ),
         );
       }
       automaticSyncOwnershipValid = true;
@@ -833,9 +809,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     } catch (_) {
       automaticSyncOwnershipValid = false;
       rethrow;
-    } finally {
-      final file = File(bundlePath);
-      if (await file.exists()) await file.delete();
     }
   }
 
@@ -1032,333 +1005,73 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  Future<void> connectSelectedProvider() => _connect(_selectedProvider);
+
   Future<void> connectGoogleDrive() => _connect(_providers['google_drive']);
   Future<void> connectOneDrive() => _connect(_providers['onedrive']);
   Future<void> connectDropbox() => _connect(_providers['dropbox']);
 
   Future<void> disconnectOneDrive() => disconnectGoogleDrive();
 
-  Future<void> syncNow() {
-    if (recovery.warning != null) {
-      return Future.error(
-        StateError(
-          'Review and acknowledge the active catalog before syncing, or restore a protected snapshot.',
-        ),
-      );
-    }
-    if (_syncActivities.isNotEmpty ||
-        recovery.isReplacing ||
-        isConnectionPending)
-      return Future.error(const SyncBusyException());
-    final running = _syncFuture;
-    if (running != null) return Future<void>.error(const SyncBusyException());
-    final operation = _serialize(_syncNowInternal);
-    _syncFuture = operation;
-    return operation.whenComplete(() {
-      if (identical(_syncFuture, operation)) _syncFuture = null;
-      syncProgress = null;
-    });
-  }
-
-  Future<void> _syncNowInternal() async {
-    if (!database.isOpen) throw StateError('Open a catalog first.');
-    final identity = await database.ensureCatalogIdentity();
-    final temporary = await getTemporaryDirectory();
-    final bundlePath = path.join(
-      temporary.path,
-      'realmwise-sync-${DateTime.now().microsecondsSinceEpoch}.realmwise',
-    );
-    try {
-      await exportDeviceBundle(bundlePath);
-      final manifest = await bundles.validateBundle(bundlePath);
-      final classification = await syncCoordinator.classify(
-        manifest.contentFingerprint,
-      );
-      if (classification.classification == SyncClassification.divergent ||
-          classification.classification == SyncClassification.remoteOnly ||
-          classification.classification == SyncClassification.unknownError) {
-        throw SyncDecisionRequired(
-          classification,
-          localFingerprint: manifest.contentFingerprint,
-        );
-      }
-      syncMetadata = await syncCoordinator.sync(
-        Uint8List.fromList(await File(bundlePath).readAsBytes()),
-        localFingerprint: manifest.contentFingerprint,
-        onProgress: (value) {
-          syncProgress = value;
-          notifyListeners();
-        },
-      );
-      assert(syncMetadata?.catalogIdentity == identity);
+  late final SyncSession syncSession = SyncSession(
+    coordinator: () => syncCoordinator,
+    recovery: () => recovery,
+    exportBundle: exportDeviceBundle,
+    localFingerprint: () => bundles.localFingerprint(
+      database: database,
+      includePersonalImages: includePersonalImagesInBundles,
+    ),
+    catalogGeneration: () => database.catalogGeneration,
+    registeredProvider: (id) => _providers[id],
+    imageRootPath: () => imageStorage.rootPath,
+    bundles: bundles,
+    runOperation: _runManualSync,
+    onProgress: (progress) {
+      syncProgress = progress;
       notifyListeners();
-    } finally {
-      final file = File(bundlePath);
-      if (await file.exists()) await file.delete();
-    }
-  }
-
-  /// Applies a choice made in the conflict dialog. Every replacement creates
-  /// a recoverable local snapshot before transfer or database swap.
-  Future<bool> resolveSyncDecision(
-    SyncConflictChoice choice, {
-    required SyncClassificationResult decision,
-    required String localFingerprint,
-  }) => _trackSyncActivity(
-    () => _resolveSyncDecisionInternal(
-      choice,
-      decision: decision,
-      localFingerprint: localFingerprint,
-    ),
+    },
+    onReplacement: _onCloudCatalogReplacement,
   );
 
-  Future<bool> _resolveSyncDecisionInternal(
-    SyncConflictChoice choice, {
-    required SyncClassificationResult decision,
-    required String localFingerprint,
-  }) async {
-    if (choice == SyncConflictChoice.cancel) return false;
-    if (choice == SyncConflictChoice.uploadReplaceRemote &&
-        recovery.warning != null) {
-      throw StateError(
-        'Review and acknowledge the active catalog before syncing, or restore a protected snapshot.',
-      );
-    }
-    if (!database.isOpen) throw StateError('Open a catalog first.');
-    final temporary = await getTemporaryDirectory();
-    final bundlePath = path.join(
-      temporary.path,
-      'realmwise-conflict-${DateTime.now().microsecondsSinceEpoch}.realmwise',
-    );
-    try {
-      Future<void> localBackup() async {
-        await recovery.snapshot(SnapshotKind.preConflict);
-      }
+  Future<SyncResult> syncCatalog() => syncSession.sync();
 
-      if (choice == SyncConflictChoice.downloadReplaceLocal) {
-        if (decision.remote == null)
-          throw StateError('Remote metadata unavailable.');
-        await exportDeviceBundle(bundlePath);
-        final now = await bundles.validateBundle(bundlePath);
-        if (now.contentFingerprint != localFingerprint) {
-          throw StateError(
-            'The local catalog changed; review the conflict again.',
-          );
-        }
-        return await downloadRemoteBundle(
-          expectedRemote: decision.remote,
-          expectedLocalFingerprint: localFingerprint,
-        );
-      } else {
-        await exportDeviceBundle(bundlePath);
-        final manifest = await bundles.validateBundle(bundlePath);
-        final currentFingerprint = manifest.contentFingerprint;
-        if (decision.remote == null ||
-            currentFingerprint == null ||
-            currentFingerprint != localFingerprint) {
-          throw StateError(
-            'The local catalog changed; review the conflict again.',
-          );
-        }
-        // Preserve the observed remote bytes locally before allowing a remote
-        // overwrite. A DB backup alone cannot recover the remote catalog.
-        final remote = await _serialize(
-          () => syncCoordinator.download(expectedRemote: decision.remote),
-        );
-        await recovery.snapshot(
-          SnapshotKind.preRemoteOverwrite,
-          bundleBytes: remote.payload,
-        );
-        await _serialize(
-          () async => syncCoordinator.resolveConflict(
-            choice,
-            currentLocalFingerprint: currentFingerprint,
-            expectedLocalFingerprint: localFingerprint,
-            observedRemote: decision.remote!,
-            payload: Uint8List.fromList(await File(bundlePath).readAsBytes()),
-            payloadFingerprint: currentFingerprint,
-            backup: localBackup,
-          ),
-        );
-        syncMetadata = syncCoordinator.metadata;
-        notifyListeners();
-        return false;
-      }
-    } finally {
-      final file = File(bundlePath);
-      if (await file.exists()) await file.delete();
-    }
-  }
+  Future<SyncResult> downloadCatalog() => syncSession.download();
 
-  Future<bool> downloadRemoteBundle({
-    SyncRemoteMetadata? expectedRemote,
-    String? expectedLocalFingerprint,
-    Future<void> Function()? backup,
-  }) => _trackSyncActivity(
-    () => _downloadRemoteBundleInternal(
-      expectedRemote: expectedRemote,
-      expectedLocalFingerprint: expectedLocalFingerprint,
-      backup: backup,
-    ),
-  );
+  Future<SyncResult> answerSyncDecision(
+    SyncDecision request,
+    SyncChoice choice,
+  ) => syncSession.answer(request, choice);
 
-  Future<bool> _downloadRemoteBundleInternal({
-    SyncRemoteMetadata? expectedRemote,
-    String? expectedLocalFingerprint,
-    Future<void> Function()? backup,
-  }) async {
-    if (!database.isOpen) throw StateError('Open a catalog first.');
-    final temporary = await getTemporaryDirectory();
-    SyncRemoteMetadata? discoveredRemote = expectedRemote;
-    if (expectedRemote == null) {
-      final checkPath = path.join(
-        temporary.path,
-        'realmwise-check-${DateTime.now().microsecondsSinceEpoch}.realmwise',
-      );
-      try {
-        await exportDeviceBundle(checkPath);
-        final local = await bundles.validateBundle(checkPath);
-        final decision = await syncCoordinator.classify(
-          local.contentFingerprint,
-        );
-        if (decision.classification == SyncClassification.localOnly ||
-            decision.classification == SyncClassification.divergent ||
-            decision.classification == SyncClassification.unknownError) {
-          throw SyncDecisionRequired(
-            decision,
-            localFingerprint: local.contentFingerprint,
-          );
-        }
-        discoveredRemote = decision.remote;
-      } finally {
-        final f = File(checkPath);
-        if (await f.exists()) await f.delete();
-      }
-    }
-    final bundlePath = path.join(
-      temporary.path,
-      'realmwise-remote-${DateTime.now().microsecondsSinceEpoch}.realmwise',
-    );
-    final runtimeSnapshot = syncCoordinator.captureRuntime();
-    try {
-      SyncDownloadResult? result;
-      BundleManifest? manifest;
-      // OneDrive can return an older, incomplete file immediately after the
-      // manifest is created or replaced. Keep this finite so a permanently
-      // malformed bundle still fails promptly, while allowing propagation to
-      // settle over several seconds.
-      const maxBundleReadRetries = 5;
-      const initialBundleReadRetryDelay = Duration(milliseconds: 500);
-      for (var attempt = 0; attempt < maxBundleReadRetries; attempt++) {
-        try {
-          result = await _serialize<SyncDownloadResult>(
-            () => syncCoordinator.download(expectedRemote: discoveredRemote),
-          );
-          await File(bundlePath).writeAsBytes(result.payload, flush: true);
-          manifest = await previewDeviceBundle(bundlePath);
-          break;
-        } catch (error) {
-          // Only an invalid bundle can be caused by OneDrive's short
-          // read-after-write window. Authentication, transport, missing
-          // targets, conflicts, and local-change guards must surface at once.
-          if (error is! FormatException) rethrow;
-          if (attempt == maxBundleReadRetries - 1) rethrow;
-          await Future<void>.delayed(
-            initialBundleReadRetryDelay * (1 << attempt),
-          );
-        }
-      }
-      if (result == null || manifest == null) {
-        throw StateError('Remote bundle could not be read.');
-      }
-      if (expectedLocalFingerprint != null) {
-        final checkPath = path.join(
-          temporary.path,
-          'realmwise-final-check-${DateTime.now().microsecondsSinceEpoch}.realmwise',
-        );
-        try {
-          await exportDeviceBundle(checkPath);
-          final current = await bundles.validateBundle(checkPath);
-          if (current.contentFingerprint != expectedLocalFingerprint) {
-            throw StateError(
-              'The local catalog changed; review the conflict again.',
-            );
-          }
-        } finally {
-          final check = File(checkPath);
-          if (await check.exists()) await check.delete();
-        }
-      }
-      if (backup != null) await backup();
-      final replacement = await restoreDeviceBundle(
-        bundlePath,
-        snapshotKind: SnapshotKind.preDownload,
-      );
-      if (replacement.needsAcknowledgement) {
-        // Do not mark a partially recovered download as the remote baseline.
-        // The persistent warning also fences refresh and lifecycle scheduling.
-        notifyListeners();
-        return true;
-      }
-      if (runtimeSnapshot != null) {
-        SyncMetadata? rebound;
-        final registered = _providers[runtimeSnapshot.provider.provider];
-        if (!identical(registered, runtimeSnapshot.provider)) {
-          SyncDebug.trace('restore.rebind.error', const {
-            'status': 'provider_mismatch',
-          });
-          syncCoordinator.resetRuntime();
-          syncMetadata = null;
-          _selectedProvider = null;
-        } else {
+  Future<SyncResult> _runManualSync(Future<SyncResult> Function() action) =>
+      _trackSyncActivity(
+        () => _serialize(() async {
           try {
-            rebound = await syncCoordinator.rebindAfterCatalogRestore(
-              runtimeSnapshot,
-              catalogIdentity: manifest.catalogIdentity,
-              remote: result.metadata,
-              localFingerprint: manifest.contentFingerprint,
-            );
-          } catch (_) {
-            // Rebinding is best effort, but never fall back to credentials or
-            // metadata restored from the replacement catalog.
-            SyncDebug.trace('restore.rebind.error', const {'status': 'failed'});
-            syncCoordinator.resetRuntime();
-            syncMetadata = null;
-            _selectedProvider = null;
-            automaticSyncEnabled = false;
-            automaticSyncOwnershipValid = false;
-            rethrow;
+            if (!database.isOpen) {
+              return const SyncFailed(
+                SyncFailureCategory.storage,
+                'Open a catalog first.',
+              );
+            }
+            return await action();
+          } finally {
+            if (_syncCoordinatorInitialized)
+              syncMetadata = syncCoordinator.metadata;
+            syncProgress = null;
+            if (!_disposed) notifyListeners();
           }
-          if (rebound == null) {
-            SyncDebug.trace('restore.rebind.error', const {
-              'status': 'rejected',
-            });
-            syncCoordinator.resetRuntime();
-            syncMetadata = null;
-            _selectedProvider = null;
-          } else {
-            _selectedProvider = registered;
-            syncMetadata = rebound;
-          }
-        }
-      } else {
-        // A plain/manual import must not inherit the just-downloaded remote
-        // revision. Keep only any normal persisted restoration performed by
-        // openDatabase for this catalog identity.
-        syncMetadata = syncCoordinator.metadata;
-      }
-      automaticSyncEnabled = syncMetadata?.automaticSyncEnabled ?? false;
-      automaticSyncOwnershipValid = _hasAutomaticOwnership;
-      if (!automaticSyncOwnershipValid) {
-        _automaticSyncTimer?.cancel();
-      } else {
-        scheduleAutomaticSync();
-      }
-      notifyListeners();
-      return true;
-    } finally {
-      final file = File(bundlePath);
-      if (await file.exists()) await file.delete();
+        }),
+      );
+
+  void _onCloudCatalogReplacement() {
+    syncMetadata = syncCoordinator.metadata;
+    _selectedProvider = syncCoordinator.provider;
+    automaticSyncEnabled = syncMetadata?.automaticSyncEnabled ?? false;
+    automaticSyncOwnershipValid =
+        recovery.warning == null && _hasAutomaticOwnership;
+    if (automaticSyncOwnershipValid) {
+      scheduleAutomaticSync();
+    } else {
+      _automaticSyncTimer?.cancel();
     }
   }
 
@@ -1652,7 +1365,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     _disposed = true;
     _clearPendingAutomaticSync();
     _cancelAutomaticTimers();
-    if (_syncCoordinatorInitialized) syncCoordinator.cancel();
+    syncSession.invalidateDecision();
+    cancelSync();
     WidgetsBinding.instance.removeObserver(this);
     _automaticSyncTimer?.cancel();
     unawaited(() async {

@@ -61,14 +61,6 @@ class SyncClassificationResult {
   final Object? error;
 }
 
-class SyncDecisionRequired implements Exception {
-  const SyncDecisionRequired(this.result, {this.localFingerprint});
-  final SyncClassificationResult result;
-  final String? localFingerprint;
-  @override
-  String toString() => 'Sync decision required: ${result.classification.name}';
-}
-
 /// Provider-neutral authentication/session contract. Implementations must keep
 /// credentials in [TokenStorage], never in these value objects.
 abstract interface class SyncAuthenticator {
@@ -107,6 +99,17 @@ abstract interface class SyncProvider
         SyncMetadataLookup,
         SyncTransfer {
   String get provider;
+}
+
+abstract interface class NamedSyncProvider implements SyncProvider {
+  String get displayName;
+}
+
+extension SyncProviderDisplayName on SyncProvider {
+  String get displayName => switch (this) {
+    NamedSyncProvider(:final displayName) => displayName,
+    _ => provider,
+  };
 }
 
 /// A provider-side, advisory fencing lease.  Implementations store this as a
@@ -193,7 +196,7 @@ abstract interface class SyncRetentionProvider {
 }
 
 class SyncConflictException implements Exception {
-  SyncConflictException(this.remote);
+  const SyncConflictException(this.remote);
   final SyncRemoteMetadata remote;
 }
 
@@ -232,10 +235,12 @@ class SyncRemoteMetadata {
     required this.revision,
     required this.contentHash,
     this.updatedAt,
+    this.isEmpty = false,
   });
   final SyncRevision revision;
   final String contentHash;
   final DateTime? updatedAt;
+  final bool isEmpty;
 }
 
 class SyncUploadResult {

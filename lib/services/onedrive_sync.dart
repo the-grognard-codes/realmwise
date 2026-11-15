@@ -453,7 +453,7 @@ class OneDriveOAuthAuthenticator implements SyncAuthenticator {
   }
 }
 
-class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
+class OneDriveProvider implements NamedSyncProvider, SyncLeaseProvider {
   OneDriveProvider({
     required this.authenticator,
     required this.tokenStore,
@@ -517,6 +517,9 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
 
   @override
   String get provider => 'onedrive';
+
+  @override
+  String get displayName => 'Microsoft OneDrive';
   String _leasePath(String c) =>
       'Realmwise/Realmwise.lease.${sha256.convert(utf8.encode(c)).toString()}.json';
   Future<String> _appRootId(SyncAuthSession s) async {
@@ -946,6 +949,7 @@ class OneDriveProvider implements SyncProvider, SyncLeaseProvider {
       revision: SyncRevision(tag),
       contentHash: (h is Map ? h['quickXorHash'] : null) as String? ?? '',
       updatedAt: DateTime.tryParse(j['lastModifiedDateTime'] ?? ''),
+      isEmpty: j['size'] == 0,
     );
     _oneDriveTrace('provider.metadata', {
       'status': r.statusCode,
