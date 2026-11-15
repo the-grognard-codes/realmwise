@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:650090b1-79cc-41e2-a0fd-7d427fe7e39a",
+  "serialNumber": "urn:uuid:b408ce44-18ba-4164-a2ec-921a3dbbe775",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-11-10T04:02:49Z",
+    "timestamp": "2026-11-15T19:39:22Z",
     "component": {
       "type": "application",
       "bom-ref": "realmwise",
@@ -226,9 +226,9 @@
     {
       "type": "library",
       "name": "sqflite_common_ffi",
-      "version": "2.4.6",
+      "version": "2.4.7",
       "scope": "required",
-      "purl": "pkg:dart/sqflite_common_ffi@2.4.6",
+      "purl": "pkg:dart/sqflite_common_ffi@2.4.7",
       "properties": [
         {
           "name": "pub:dependency",
@@ -248,7 +248,7 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "26911d808e4d33b3965da8821440ef4b021d3bc7282f5eb76e6621827995dd86"
+          "content": "9aad7a63bb8de6fe4c1e5367e8dcd8dfc89d491f44a526edf8e58a5a1fb1feed"
         }
       ]
     },
