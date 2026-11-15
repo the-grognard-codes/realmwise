@@ -171,6 +171,10 @@ void main() {
         );
         await tester.tap(find.text('Open editor'));
         await tester.pumpAndSettle();
+        await tester.enterText(
+          find.bySemanticsLabel('Product code'),
+          'UNSAVED',
+        );
         await tester.tap(find.text('Images'));
         await tester.pumpAndSettle();
         if (operation == 'cover') {
@@ -194,6 +198,20 @@ void main() {
           }
           expect(picker.calls, 1);
           expect(find.text('Set cover'), findsNWidgets(3));
+          await controller.catalog.freezeEdits();
+          await tester.tap(find.text('Save'));
+          await tester.pumpAndSettle();
+          expect(find.byType(BookEditorScreen), findsOneWidget);
+          final snackBar = tester.widget<SnackBar>(find.byType(SnackBar));
+          expect(
+            (snackBar.content as Text).data,
+            'Catalog replacement is in progress. Try saving again.',
+          );
+          expect(find.text('Set cover'), findsNWidgets(3));
+          await tester.tap(find.text('Work'));
+          await tester.pumpAndSettle();
+          expect(find.text('UNSAVED'), findsOneWidget);
+          controller.catalog.unfreezeEdits();
         }
         await tester.pump();
 
@@ -431,7 +449,12 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(BookEditorScreen), findsOneWidget);
-      expect(find.textContaining('try saving again'), findsOneWidget);
+      final snackBar = tester.widget<SnackBar>(find.byType(SnackBar));
+      expect(
+        (snackBar.content as Text).data,
+        'Catalog replacement is in progress. Try saving again.',
+      );
+      expect(find.textContaining('Bad state:'), findsNothing);
       expect(find.text('NEW'), findsOneWidget);
       expect(
         (await tester.runAsync(

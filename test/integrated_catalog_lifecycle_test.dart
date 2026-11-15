@@ -57,9 +57,7 @@ class _FetchedImageController extends AppController {
   @override
   ImageStorageService get imageStorage => _fetchedImages;
 
-  late final ImageStorageService _fetchedImages = ImageStorageService(
-    null,
-    resolver: (_) async => [InternetAddress('93.184.216.34')],
+  late final _FetchedImages _fetchedImages = _FetchedImages(
     transport: (uri, peer) async {
       fetches++;
       return http.StreamedResponse(
@@ -82,6 +80,25 @@ class _FetchedImageController extends AppController {
       );
     },
   );
+}
+
+class _FetchedImages extends ImageStorageService {
+  _FetchedImages({required ImageSecureTransport transport})
+    : super(
+        null,
+        resolver: (_) async => [InternetAddress('93.184.216.34')],
+        transport: transport,
+      );
+
+  String? failPublishTitle;
+
+  @override
+  Future<BookImage> publishStagedImage(BookImage image, BookWork work) {
+    if (work.title == failPublishTitle) {
+      throw const FileSystemException('injected cover publish failure');
+    }
+    return super.publishStagedImage(image, work);
+  }
 }
 
 class _Sync extends Object implements SyncProvider {
@@ -164,6 +181,59 @@ void main() {
       expect(restored.work.title, 'Cloud work');
       expect(restored.cover!.localPath, isNotEmpty);
       expect(await File(restored.cover!.localPath).exists(), isTrue);
+    } finally {
+      await controller.closeDatabase();
+      controller.dispose();
+      await dir.delete(recursive: true);
+    }
+  });
+
+  test('bundle import commits despite a failed cover publish and rehydrates the next work', () async {
+    final dir = await Directory.systemTemp.createTemp('failed_cover_import_');
+    final controller = _FetchedImageController('${dir.path}/images');
+    try {
+      await controller.openDatabase('${dir.path}/catalog.db', remember: false);
+      for (final title in ['A failed cover', 'B restored cover']) {
+        await controller.database.saveRecord(
+          CatalogRecord(
+            work: BookWork(title: title),
+            images: [
+              BookImage(
+                localPath: '',
+                remoteUrl: 'https://example.com/cover.png',
+                caption: 'Retained caption',
+                sourceType: ImageSourceType.remoteCache,
+                isCover: true,
+              ),
+            ],
+          ),
+        );
+      }
+      final bundle = '${dir.path}/incoming.realmwise';
+      await controller.exportDeviceBundle(bundle);
+      // Distinguish the replacement from the original that would be rolled back.
+      for (final record in await controller.database.listRecords()) {
+        await controller.database.deleteRecord(record.work.id!);
+      }
+      await controller.database.saveRecord(
+        const CatalogRecord(work: BookWork(title: 'Original catalog')),
+      );
+      controller._fetchedImages.failPublishTitle = 'A failed cover';
+
+      final result = await controller.restoreDeviceBundle(bundle);
+
+      expect(result.needsAcknowledgement, isFalse);
+      expect(controller.recoveryWarning, isNull);
+      final restored = await controller.database.listRecords();
+      expect(restored.map((record) => record.work.title), [
+        'A failed cover',
+        'B restored cover',
+      ]);
+      expect(restored.first.cover!.localPath, isEmpty);
+      expect(restored.first.cover!.caption, 'Retained caption');
+      expect(restored.first.cover!.remoteUrl, 'https://example.com/cover.png');
+      expect(await File(restored.last.cover!.localPath).exists(), isTrue);
+      expect(controller.fetches, 2);
     } finally {
       await controller.closeDatabase();
       controller.dispose();
@@ -331,7 +401,10 @@ void main() {
           freezeEdits: catalog.freezeEdits,
           releaseEdits: () async => catalog.unfreezeEdits(),
           beforeClose: () async {
-            await expectLater(lateEdit.save(), throwsStateError);
+            await expectLater(
+              lateEdit.save(),
+              throwsA(isA<CatalogEditPausedException>()),
+            );
             await catalog.discardEdits();
           },
         );
