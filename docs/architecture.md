@@ -112,7 +112,7 @@ flowchart TD
 9. `beforeClose`: discard the frozen edit sessions.
 10. Close, copy, and swap the original to `<catalog>.rollback-<stamp>.tmp`. The `-shm`/`-journal` sidecars move with it, and an empty WAL is discarded.
 11. Install the replacement, then clear `swapRollback` from the marker.
-12. Reopen, `releaseEdits`, then rehydrate missing remote-cache covers through new edit sessions.
+12. Reopen, `releaseEdits`, then rehydrate missing remote-cache covers through new edit sessions. A failed cover save preserves that work's image rows, emits an `errorClass` diagnostic, and continues to the next work without rolling back the replacement.
 13. Restart routine snapshots and call `onReady`.
 
 **Refusal before close**
@@ -120,7 +120,7 @@ flowchart TD
 - A refusal before close leaves the original catalog open: a busy checkpoint, a failed snapshot, a changed observation, or a marker write failure.
 - `releaseEdits` unfreezes the existing sessions, so their staged images and unsaved fields stay usable.
 - The earlier marker is restored, or removed if there was none.
-- A save attempted while frozen is refused with a retryable "Catalog replacement is in progress" message. A discarded session reports that it has ended.
+- A save attempted while frozen throws `CatalogEditPausedException`. The editor shows "Catalog replacement is in progress. Try saving again." and keeps its draft and staged images for retry. A discarded or closed session still reports that it has ended with `StateError`.
 
 **Failure after close**
 
@@ -237,7 +237,6 @@ Observations for planning:
 
   The pending-sync flags (`_automaticSyncPending`, `_automaticBackgroundFlushPending`) sit on top. Collapsing these into one sync-work owner belongs to the `AppController` split (overhaul Phase 1, "App structure").
 - **Open sync and recovery follow-ups:**
-  - #123 makes cover rehydration best effort: one failed cover save currently rolls back the whole replacement. It also gives the paused-edit refusal its own type, which the editor shows without the `Bad state:` prefix.
   - #121 validates and retries the remote download before "replace remote", stops holding the upload bundle while a decision is pending, and uses `localFingerprint()` where no bundle is uploaded.
 - **Rollback files are not restore points.** A retained replacement's original sits at `<catalog>.rollback-<stamp>.tmp`. Settings lists only `backups/`, so recovering that file by hand means finding it on disk.
 - **Misleading name:** `disconnectOneDrive()` delegates to `disconnectGoogleDrive()`, which actually disconnects whichever provider is active.

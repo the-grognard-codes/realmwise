@@ -331,8 +331,15 @@ class _BookEditorScreenState extends State<BookEditorScreen>
       return true;
     } catch (error) {
       if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Could not save: $error')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              error is CatalogEditPausedException
+                  ? error.message
+                  : 'Could not save: $error',
+            ),
+          ),
+        );
     } finally {
       if (mounted) setState(() => _saving = false);
     }
