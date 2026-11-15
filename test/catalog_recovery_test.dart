@@ -42,7 +42,9 @@ void main() {
         await File('$rollback$suffix').writeAsBytes([1, 2, 3]);
       }
       final marker = File('$active.recovery-review.json');
-      await marker.writeAsString(jsonEncode({'originalPath': rollback}));
+      await marker.writeAsString(
+        jsonEncode({'originalPath': rollback, 'swapRollback': rollback}),
+      );
 
       await recovery.recoverInterruptedReplacement(active);
 
@@ -55,6 +57,7 @@ void main() {
       expect(jsonDecode(await marker.readAsString()), {
         'originalPath': active,
         'originalRestored': true,
+        'swapRollback': rollback,
       });
     },
   );
@@ -68,8 +71,9 @@ void main() {
     await committed.writeAsBytes([1, 2, 3]);
     final cleanup = File('${committed.path}.cleanup-pending');
     await cleanup.writeAsString('');
-    await File('$active.recovery-review.json')
-        .writeAsString(jsonEncode({'originalPath': rollback}));
+    await File('$active.recovery-review.json').writeAsString(
+      jsonEncode({'originalPath': rollback, 'swapRollback': rollback}),
+    );
 
     await recovery.recoverInterruptedReplacement(active);
 
@@ -80,6 +84,107 @@ void main() {
     );
     expect(await committed.readAsBytes(), [1, 2, 3]);
     expect(await cleanup.exists(), isTrue);
+  });
+
+  test('startup never revives an earlier unmarked original', () async {
+    final active = database.databasePath;
+    await database.close();
+    final rollback = File('$active.rollback-50.tmp');
+    await File(active).rename(rollback.path);
+    final marker = File('$active.recovery-review.json');
+    await marker.writeAsString(jsonEncode({'originalPath': rollback.path}));
+
+    await recovery.recoverInterruptedReplacement(active);
+
+    expect(await File(active).exists(), isFalse);
+    expect(await rollback.exists(), isTrue);
+    expect(await marker.exists(), isFalse);
+  });
+
+  test('startup restores only the rollback named by this swap', () async {
+    final active = database.databasePath;
+    await database.close();
+    final selected = File('$active.rollback-10.tmp');
+    await File(active).rename(selected.path);
+    final newer = File('$active.rollback-20.tmp');
+    await newer.writeAsBytes([1, 2, 3]);
+    final marker = File('$active.recovery-review.json');
+    await marker.writeAsString(
+      jsonEncode({
+        'originalPath': selected.path,
+        'swapRollback': selected.path,
+      }),
+    );
+
+    await recovery.recoverInterruptedReplacement(active);
+
+    expect(await File(active).exists(), isTrue);
+    expect(await selected.exists(), isFalse);
+    expect(await newer.readAsBytes(), [1, 2, 3]);
+  });
+
+  for (final point in ['marker update', 'rollback rename']) {
+    test('startup can retry after interruption at $point', () async {
+      final active = database.databasePath;
+      await database.close();
+      final rollback = File('$active.rollback-10.tmp');
+      await File(active).rename(rollback.path);
+      final marker = File('$active.recovery-review.json');
+      await marker.writeAsString(
+        jsonEncode({
+          'originalPath': rollback.path,
+          'swapRollback': rollback.path,
+        }),
+      );
+      recovery = CatalogRecovery(
+        database: database,
+        renameFile: (file, target) async {
+          if (point == 'marker update' && file.path.contains('.write-') ||
+              point == 'rollback rename' && file.path == rollback.path) {
+            throw const FileSystemException('simulated process stop');
+          }
+          return file.rename(target);
+        },
+      );
+      await expectLater(
+        recovery.recoverInterruptedReplacement(active),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(await File(active).exists(), isFalse);
+      expect(await rollback.exists(), isTrue);
+      final interrupted = jsonDecode(await marker.readAsString());
+      expect(interrupted['swapRollback'], rollback.path);
+      expect(
+        interrupted['originalRestored'] == true,
+        point == 'rollback rename',
+      );
+
+      recovery = CatalogRecovery(database: database);
+      await recovery.recoverInterruptedReplacement(active);
+      await database.open(active);
+      await recovery.loadWarning();
+      expect(await File(active).exists(), isTrue);
+      expect(recovery.warning!.originalRestored, isTrue);
+      expect(recovery.warning!.originalPath, active);
+    });
+  }
+
+  test('a new swap records its rollback despite an earlier warning', () async {
+    final active = database.databasePath;
+    final marker = File('$active.recovery-review.json');
+    await marker.writeAsString(jsonEncode({'originalPath': 'older-original'}));
+    final source = p.join(dir.path, 'replacement.db');
+    await File(active).copy(source);
+    recovery = CatalogRecovery(
+      database: database,
+      beforeClose: () async {
+        final value = jsonDecode(await marker.readAsString());
+        expect(value['originalPath'], 'older-original');
+        expect(value['swapRollback'], startsWith('$active.rollback-'));
+      },
+    );
+    await recovery.replaceCatalog(source);
+    expect(await marker.exists(), isFalse);
   });
 
   test(
@@ -835,7 +940,7 @@ void main() {
           return file.copy(target);
         },
         renameFile: (file, target) async {
-          renames++;
+          if (file.path == active || file.path.contains('.replace-')) renames++;
           return file.rename(target);
         },
       );
