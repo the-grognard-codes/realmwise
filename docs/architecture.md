@@ -1,6 +1,6 @@
 # Architecture map
 
-Architecture after the automatic-sync fixes (#98), centralized catalog recovery (#101), staged record editing (#104), and typed sync sessions (#102). Realmwise is a single Flutter package (no internal packages) targeting Windows, Linux, and Android. Domain terms (**work**, **owned copy**, **work candidate**) are defined in [`CONTEXT.md`](../CONTEXT.md); decisions live in [`docs/adr/`](adr/); planned changes live in [`docs/spec/`](spec/).
+Architecture after the automatic-sync fixes (#98), centralized catalog recovery (#101), staged record editing (#104), typed sync sessions (#102), and tightened startup recovery with edit freezing during replacement (#113, #114). Realmwise is a single Flutter package (no internal packages) targeting Windows, Linux, and Android. Domain terms (**work**, **owned copy**, **work candidate**) are defined in [`CONTEXT.md`](../CONTEXT.md); decisions live in [`docs/adr/`](adr/); planned changes live in [`docs/spec/`](spec/).
 
 ## Layers
 
@@ -104,19 +104,30 @@ flowchart TD
 1. Stage and validate the replacement.
 2. `waitForSync`: cancel and drain sync.
 3. Stop routine snapshots.
-4. Take the protective snapshot.
-5. Run a `wal_checkpoint(TRUNCATE)`. The replacement is refused while another connection is busy.
-6. Write the review marker.
-7. `beforeClose`: discard edit sessions.
-8. Close, copy, and swap the original to a rollback file. Its sidecars move with it.
-9. Reopen and rehydrate.
-10. Restart routine snapshots and call `onReady`.
+4. `freezeEdits`: block new edit saves and wait for in-flight saves to commit, so the snapshot includes them. Staging is kept.
+5. Take the protective snapshot.
+6. `beforeReplacement` (optional, used by `SyncSession` downloads): recheck the local fingerprint and the remote revision, and refuse if either changed.
+7. Run a `wal_checkpoint(TRUNCATE)`. The replacement is refused while another connection is busy.
+8. Write the review marker atomically (temp file, then rename). It records this swap's exact rollback path as `swapRollback`, and keeps any earlier unacknowledged warning.
+9. `beforeClose`: discard the frozen edit sessions.
+10. Close, copy, and swap the original to `<catalog>.rollback-<stamp>.tmp`. The `-shm`/`-journal` sidecars move with it, and an empty WAL is discarded.
+11. Install the replacement, then clear `swapRollback` from the marker.
+12. Reopen, `releaseEdits`, then rehydrate missing remote-cache covers through new edit sessions.
+13. Restart routine snapshots and call `onReady`.
+
+**Refusal before close**
+
+- A refusal before close leaves the original catalog open: a busy checkpoint, a failed snapshot, a changed observation, or a marker write failure.
+- `releaseEdits` unfreezes the existing sessions, so their staged images and unsaved fields stay usable.
+- The earlier marker is restored, or removed if there was none.
+- A save attempted while frozen is refused with a retryable "Catalog replacement is in progress" message. A discarded session reports that it has ended.
 
 **Failure after close**
 
 - The original is restored and reopened, and the original error propagates.
 - If the original can't be restored but the replacement can be reopened, the replacement stays active. A persistent review marker, `<catalog>.recovery-review.json`, then fences "Sync now", upload-to-remote, and automatic sync until the user acknowledges the banner.
 - A deliberate replacement that commits clears any earlier marker.
+- An unreadable earlier marker is treated as empty, so it can't block replacement. `loadWarning` still treats it as a warning, so sync stays fenced.
 
 **Cleanup**
 
@@ -126,7 +137,26 @@ flowchart TD
 
 **Startup**
 
-`recoverInterruptedReplacement` runs before the saved catalog is opened. If the saved file is missing and a review marker exists, it restores the newest rollback that has no `.cleanup-pending` marker.
+`recoverInterruptedReplacement` runs before the saved catalog is opened. It does nothing if the saved file exists or if there is no review marker.
+
+**When it restores**
+
+All of these must hold:
+- The marker names a `swapRollback`.
+- That rollback is in the same folder and belongs to the saved catalog. On Windows the match ignores case.
+- The rollback file exists.
+- It has no `.cleanup-pending` marker.
+
+It then restores exactly that rollback. It never picks one by stamp. Steps:
+1. Rewrite the marker atomically as "original restored". The banner says the original was restored and the interrupted import discarded.
+2. Move the sidecars.
+3. Rename the rollback to the saved path.
+
+A crash at any of these steps can be retried on the next launch.
+
+**When it declines**
+
+The marker is renamed aside (`.stale-<stamp>`). Normal fallback then runs, and a new catalog at that path does not inherit the old notice. Unmarked older rollbacks are never touched.
 
 ### Automatic sync lifecycle
 
@@ -207,8 +237,7 @@ Observations for planning:
 
   The pending-sync flags (`_automaticSyncPending`, `_automaticBackgroundFlushPending`) sit on top. Collapsing these into one sync-work owner belongs to the `AppController` split (overhaul Phase 1, "App structure").
 - **Open sync and recovery follow-ups:**
-  - #113 tightens startup recovery. It records the exact rollback for each swap, handles a stale marker when recovery declines, and makes the marker write crash-safe.
-  - #114 makes sure a save that finishes during replacement is in the protective snapshot.
+  - #123 makes cover rehydration best effort: one failed cover save currently rolls back the whole replacement. It also gives the paused-edit refusal its own type, which the editor shows without the `Bad state:` prefix.
   - #121 validates and retries the remote download before "replace remote", stops holding the upload bundle while a decision is pending, and uses `localFingerprint()` where no bundle is uploaded.
 - **Rollback files are not restore points.** A retained replacement's original sits at `<catalog>.rollback-<stamp>.tmp`. Settings lists only `backups/`, so recovering that file by hand means finding it on disk.
 - **Misleading name:** `disconnectOneDrive()` delegates to `disconnectGoogleDrive()`, which actually disconnects whichever provider is active.
