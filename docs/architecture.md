@@ -203,7 +203,7 @@ These rules live in `AppController`.
   3. Save publishes files and commits rows under the catalog-files lock. Back, cancel, or dispose discards staging.
   4. The controller notifies → automatic sync is scheduled (5 s debounce).
 - **Sync:**
-  1. `SyncSession` prepares the local bundle and asks `SyncCoordinator.classify` to compare its fingerprint and metadata with the remote revision.
+  1. `SyncSession` computes the local fingerprint and asks `SyncCoordinator.classify` to compare it and metadata with the remote revision. It exports a bundle only for an upload, and verifies that the exported fingerprint still matches the observation. Pending decisions retain observations, without bundle bytes.
   2. The session returns a typed upload result or a decision; Settings renders decisions in one dialog.
   3. After an explicit choice, the session rechecks both catalogs. A download replaces the catalog through `CatalogRecovery` (`preDownload` snapshot), then rebinds the remote baseline unless the result needs review.
 - **Import / restore:** Settings → `restoreDeviceBundle` or `restoreFromBackup(RestorePoint)` → `CatalogRecovery.replaceCatalog` → `CatalogReplacementResult` (a review notice if the replacement was retained).
@@ -238,7 +238,6 @@ Observations for planning:
   The pending-sync flags (`_automaticSyncPending`, `_automaticBackgroundFlushPending`) sit on top. Collapsing these into one sync-work owner belongs to the `AppController` split (overhaul Phase 1, "App structure").
 - **Open sync and recovery follow-ups:**
   - #123 makes cover rehydration best effort: one failed cover save currently rolls back the whole replacement. It also gives the paused-edit refusal its own type, which the editor shows without the `Bad state:` prefix.
-  - #121 validates and retries the remote download before "replace remote", stops holding the upload bundle while a decision is pending, and uses `localFingerprint()` where no bundle is uploaded.
 - **Rollback files are not restore points.** A retained replacement's original sits at `<catalog>.rollback-<stamp>.tmp`. Settings lists only `backups/`, so recovering that file by hand means finding it on disk.
 - **Misleading name:** `disconnectOneDrive()` delegates to `disconnectGoogleDrive()`, which actually disconnects whichever provider is active.
 - **Stale version:** `CatalogBundleService.appVersion` is hard-coded to `1.0.0+1` while `pubspec.yaml` is `1.3.0+6`.

@@ -190,7 +190,6 @@ typedef _PendingDecision = ({
   SyncDecision request,
   _SyncAction action,
   _Observation observed,
-  Uint8List? uploadPayload,
 });
 
 /// Owns a manual sync from its first observation to a terminal outcome. The
@@ -261,23 +260,22 @@ class SyncSession {
       token.throwIfCancelled();
       final now = await _observe(pending.observed.runtime, fingerprint, token);
       if (_changed(pending.observed, now)) {
-        return _refresh(pending.action, now, token);
+        return _decision(pending.action, now);
       }
       try {
         if (choice == SyncChoice.download) {
           return await _download(pending.action, now, token);
         }
-        return await _replaceRemote(
+        return await _uploadLocal(
           pending.action,
           now,
-          pending.uploadPayload!,
           token,
+          replaceRemote: true,
         );
       } on SyncConflictException {
-        return _refresh(
+        return _decision(
           pending.action,
           await _observe(now.runtime, await localFingerprint(), token),
-          token,
         );
       }
     });
@@ -322,31 +320,29 @@ class SyncSession {
         'Connect a cloud provider and choose a sync target first.',
       );
     }
-    return _withLocalBundle((bundle, fingerprint) async {
-      token.throwIfCancelled();
-      final observed = await _observe(runtime, fingerprint, token);
-      if (action == _SyncAction.sync) {
-        switch (observed.status.classification) {
-          case SyncClassification.noChanges:
-            return const SyncAlreadyInSync();
-          case SyncClassification.localOnly:
-            try {
-              return await _upload(observed, await bundle.readAsBytes(), token);
-            } on SyncConflictException {
-              return _refresh(
-                action,
-                await _observe(runtime, await localFingerprint(), token),
-                token,
-              );
-            }
-          case SyncClassification.remoteOnly:
-          case SyncClassification.divergent:
-          case SyncClassification.unknownError:
-            break;
-        }
+    final fingerprint = await localFingerprint();
+    token.throwIfCancelled();
+    final observed = await _observe(runtime, fingerprint, token);
+    if (action == _SyncAction.sync) {
+      switch (observed.status.classification) {
+        case SyncClassification.noChanges:
+          return const SyncAlreadyInSync();
+        case SyncClassification.localOnly:
+          try {
+            return await _uploadLocal(action, observed, token);
+          } on SyncConflictException {
+            return _decision(
+              action,
+              await _observe(runtime, await localFingerprint(), token),
+            );
+          }
+        case SyncClassification.remoteOnly:
+        case SyncClassification.divergent:
+        case SyncClassification.unknownError:
+          break;
       }
-      return _decision(action, observed, bundle);
-    });
+    }
+    return _decision(action, observed);
   }
 
   Future<_Observation> _observe(
@@ -382,29 +378,7 @@ class SyncSession {
       current.status.remote?.revision != previous.status.remote?.revision ||
       current.status.remote?.contentHash != previous.status.remote?.contentHash;
 
-  Future<SyncResult> _refresh(
-    _SyncAction action,
-    _Observation observed,
-    SyncCancellationToken token,
-  ) {
-    final kind = observed.status.classification;
-    if (kind == SyncClassification.divergent ||
-        (action == _SyncAction.download &&
-            kind == SyncClassification.localOnly)) {
-      // A fresh replacement choice needs the bytes for its own observation.
-      return _withLocalBundle((bundle, fingerprint) async {
-        final current = await _observe(observed.runtime, fingerprint, token);
-        return _decision(action, current, bundle);
-      });
-    }
-    return _decision(action, observed, null);
-  }
-
-  Future<SyncResult> _decision(
-    _SyncAction action,
-    _Observation observed,
-    File? bundle,
-  ) async {
+  SyncDecision _decision(_SyncAction action, _Observation observed) {
     final (:fingerprint, :status, runtime: _, catalogGeneration: _) = observed;
     final revision = status.remote?.revision;
     final kind = status.classification;
@@ -426,17 +400,30 @@ class SyncSession {
       SyncClassification.localOnly || SyncClassification.noChanges =>
         SyncChangedDecision(kind, revision, fingerprint),
     };
-    final uploadPayload = request.choices.contains(SyncChoice.upload)
-        ? await bundle!.readAsBytes()
-        : null;
-    _pending = (
-      request: request,
-      action: action,
-      observed: observed,
-      uploadPayload: uploadPayload,
-    );
+    _pending = (request: request, action: action, observed: observed);
     return request;
   }
+
+  Future<SyncResult> _uploadLocal(
+    _SyncAction action,
+    _Observation observed,
+    SyncCancellationToken token, {
+    bool replaceRemote = false,
+  }) => _withLocalBundle((bundle, fingerprint) async {
+    token.throwIfCancelled();
+    // Export can observe an edit made after classification or confirmation.
+    // Require a new decision before uploading bytes from a different catalog.
+    if (fingerprint != observed.fingerprint) {
+      return _decision(
+        action,
+        await _observe(observed.runtime, fingerprint, token),
+      );
+    }
+    final payload = await bundle.readAsBytes();
+    return replaceRemote
+        ? _replaceRemote(action, observed, payload, token)
+        : _upload(observed, payload, token);
+  });
 
   Future<SyncUploaded> _upload(
     _Observation observed,
@@ -460,24 +447,26 @@ class SyncSession {
     Uint8List payload,
     SyncCancellationToken token,
   ) async {
-    final remote = await coordinator().download(
-      expectedRemote: observed.status.remote!,
-      recordResult: false,
-    );
-    token.throwIfCancelled();
-    // Preserve the observed remote bundle and a local snapshot before overwrite.
-    await recovery().snapshot(
-      SnapshotKind.preRemoteOverwrite,
-      bundleBytes: remote.payload,
-    );
+    final temp = await _createScratch();
+    try {
+      final file = File(p.join(temp.path, 'remote.realmwise'));
+      await _readRemote(file, observed.status.remote!, token);
+      token.throwIfCancelled();
+      // Preserve only validated remote bytes before overwriting either catalog.
+      await recovery().snapshot(
+        SnapshotKind.preRemoteOverwrite,
+        bundleBytes: await file.readAsBytes(),
+      );
+    } finally {
+      await temp.delete(recursive: true);
+    }
     await recovery().snapshot(SnapshotKind.preConflict);
     final current = await localFingerprint();
     token.throwIfCancelled();
     if (current != observed.fingerprint) {
-      return _refresh(
+      return _decision(
         action,
         await _observe(observed.runtime, current, token),
-        token,
       );
     }
     return _upload(observed, payload, token);
@@ -531,7 +520,7 @@ class SyncSession {
         needsRecoveryReview: replacement.needsAcknowledgement,
       );
     } on _SyncObservationChanged catch (error) {
-      return _refresh(action, error.observed, token);
+      return _decision(action, error.observed);
     } finally {
       await temp.delete(recursive: true);
     }
@@ -619,8 +608,8 @@ class SyncSession {
     await upload;
   });
 
-  Future<SyncClassificationResult> validateAutomaticRemote() =>
-      _withLocalBundle((_, fingerprint) => coordinator().classify(fingerprint));
+  Future<SyncClassificationResult> validateAutomaticRemote() async =>
+      coordinator().classify(await localFingerprint());
 
   Future<T> _withLocalBundle<T>(Future<T> Function(File, String) action) async {
     final temp = await _createScratch();
