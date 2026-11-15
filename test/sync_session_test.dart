@@ -20,13 +20,16 @@ void main() {
   late SyncSession session;
   late String fingerprint;
   late List<String> events;
-  late int exports, generation;
+  late int exports, generation, temporaryDirectoryCalls;
+  String? exportedFingerprint;
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('sync_session_test_');
     events = [];
     exports = 0;
     generation = 0;
+    temporaryDirectoryCalls = 0;
+    exportedFingerprint = null;
     fingerprint = 'baseline';
     provider = _Provider(events);
     coordinator = SyncCoordinator(metadataStorage: _MetadataStorage());
@@ -42,14 +45,17 @@ void main() {
       recovery: () => recovery,
       exportBundle: (path) async {
         exports++;
-        await File(path).writeAsString(fingerprint);
+        await File(path).writeAsString(exportedFingerprint ?? fingerprint);
       },
       localFingerprint: () async => fingerprint,
       catalogGeneration: () => generation,
       registeredProvider: (_) => provider,
       imageRootPath: () => null,
       bundles: _Bundles(),
-      temporaryDirectory: () async => directory,
+      temporaryDirectory: () async {
+        temporaryDirectoryCalls++;
+        return directory;
+      },
     );
   });
 
@@ -57,7 +63,7 @@ void main() {
 
   test('no changes returns already synced without a transfer', () async {
     expect(await session.sync(), isA<SyncAlreadyInSync>());
-    expect(exports, 1);
+    expect(exports, 0);
     expect(provider.metadataReads, 1);
     expect(events, isEmpty);
   });
@@ -117,7 +123,7 @@ void main() {
         coordinator.metadata?.lastSuccessfulLocalFingerprint,
         'remote catalog',
       );
-      expect(exports, 1);
+      expect(exports, 0);
     },
   );
 
@@ -158,17 +164,20 @@ void main() {
       isA<SyncDownloaded>(),
     );
     expect(events, ['download', 'preDownload', 'replace']);
-    expect(exports, 1);
+    expect(exports, 0);
   });
 
   test('download of an unchanged remote still requires confirmation', () async {
     final request = await session.download() as DownloadCatalogDecision;
     expect(events, isEmpty);
+    expect(exports, 0);
+    expect(temporaryDirectoryCalls, 0);
     expect(
       await session.answer(request, SyncChoice.download),
       isA<SyncDownloaded>(),
     );
     expect(events, ['download', 'preDownload', 'replace']);
+    expect(exports, 0);
   });
 
   test('download with unsynced local edits offers both choices', () async {
@@ -181,7 +190,167 @@ void main() {
       SyncChoice.cancel,
     });
     expect(events, isEmpty);
+    expect(exports, 0);
+    expect(temporaryDirectoryCalls, 0);
+    expect(
+      await session.answer(request, SyncChoice.upload),
+      isA<SyncUploaded>(),
+    );
+    expect(exports, 1);
+    expect(provider.payload, request.localFingerprint);
   });
+
+  test('automatic remote validation uses only the local fingerprint', () async {
+    fingerprint = 'local edit';
+    provider.remote = _changed;
+    final status = await session.validateAutomaticRemote();
+    expect(status.classification, SyncClassification.divergent);
+    expect(exports, 0);
+    expect(temporaryDirectoryCalls, 0);
+    expect(events, isEmpty);
+  });
+
+  test(
+    'upload is exported only after a divergent decision is confirmed',
+    () async {
+      fingerprint = 'local edit';
+      provider.remote = _changed;
+      final request = await session.sync() as CatalogsDivergedDecision;
+      expect(exports, 0);
+      expect(await directory.list().toList(), isEmpty);
+      expect(
+        await session.answer(request, SyncChoice.upload),
+        isA<SyncUploaded>(),
+      );
+      expect(exports, 1);
+      expect(provider.payload, request.localFingerprint);
+      expect(await directory.list().toList(), isEmpty);
+    },
+  );
+
+  test(
+    'a local edit before upload confirmation returns a fresh decision',
+    () async {
+      fingerprint = 'local edit';
+      provider.remote = _changed;
+      final request = await session.sync() as CatalogsDivergedDecision;
+      fingerprint = 'new edit';
+      final fresh = await session.answer(
+        request,
+        SyncChoice.upload,
+      ) as CatalogsDivergedDecision;
+      expect(fresh, isNot(same(request)));
+      expect(fresh.localFingerprint, fingerprint);
+      expect(exports, 0);
+      expect(events, isEmpty);
+    },
+  );
+
+  test('an edit during confirmation export returns a fresh decision', () async {
+    fingerprint = 'local edit';
+    provider.remote = _changed;
+    final request = await session.sync() as CatalogsDivergedDecision;
+    exportedFingerprint = 'edit during export';
+    final fresh = await session.answer(
+      request,
+      SyncChoice.upload,
+    ) as CatalogsDivergedDecision;
+    expect(fresh.localFingerprint, exportedFingerprint);
+    expect(exports, 1);
+    expect(events, isEmpty);
+    expect(await directory.list().toList(), isEmpty);
+  });
+
+  test(
+    'an edit during initial upload export requires a fresh decision',
+    () async {
+      fingerprint = 'local edit';
+      exportedFingerprint = 'edit during export';
+      final request = await session.sync() as SyncChangedDecision;
+      expect(request.localFingerprint, exportedFingerprint);
+      expect(exports, 1);
+      expect(events, isEmpty);
+    },
+  );
+
+  test(
+    'replace remote retries invalid reads and snapshots valid bytes',
+    () async {
+      fingerprint = 'local edit';
+      provider.remote = _changed;
+      provider.downloadPayloads = ['invalid bundle', 'remote catalog'];
+      final request = await session.sync() as CatalogsDivergedDecision;
+      expect(
+        await session.answer(request, SyncChoice.upload),
+        isA<SyncUploaded>(),
+      );
+      expect(events, [
+        'download',
+        'download',
+        'preRemoteOverwrite',
+        'preConflict',
+        'upload',
+      ]);
+      expect(recovery.remoteSnapshot, 'remote catalog');
+      expect(provider.payload, request.localFingerprint);
+      expect(await directory.list().toList(), isEmpty);
+    },
+  );
+
+  test(
+    'replace remote refuses invalid bytes after the read retry limit',
+    () async {
+      fingerprint = 'local edit';
+      provider.remote = _changed;
+      provider.downloadPayloads = List.filled(
+        5,
+        'invalid bundle',
+        growable: true,
+      );
+      final request = await session.sync() as CatalogsDivergedDecision;
+      final result =
+          await session.answer(request, SyncChoice.upload) as SyncFailed;
+      expect(result.category, SyncFailureCategory.storage);
+      expect(events, List.filled(5, 'download'));
+      expect(recovery.remoteSnapshot, isNull);
+      expect(provider.payload, isNull);
+      expect(coordinator.metadata?.revision, _baseline.revision.value);
+      expect(await directory.list().toList(), isEmpty);
+    },
+  );
+
+  test('an edit during remote preservation prevents upload', () async {
+    fingerprint = 'local edit';
+    provider.remote = _changed;
+    final request = await session.sync() as CatalogsDivergedDecision;
+    provider.onDownload = () => fingerprint = 'edit during download';
+    final fresh = await session.answer(
+      request,
+      SyncChoice.upload,
+    ) as CatalogsDivergedDecision;
+    expect(fresh.localFingerprint, fingerprint);
+    expect(events, ['download', 'preRemoteOverwrite', 'preConflict']);
+    expect(provider.payload, isNull);
+    expect(exports, 1);
+    expect(await directory.list().toList(), isEmpty);
+  });
+
+  test(
+    'cancellation during remote preservation prevents snapshots and upload',
+    () async {
+      fingerprint = 'local edit';
+      provider.remote = _changed;
+      final request = await session.sync() as CatalogsDivergedDecision;
+      provider.onDownload = session.cancel;
+      expect(
+        await session.answer(request, SyncChoice.upload),
+        isA<SyncCancelled>(),
+      );
+      expect(events, ['download']);
+      expect(provider.payload, isNull);
+      expect(await directory.list().toList(), isEmpty);
+    },
+  );
 
   test(
     'unknown status offers retry, then returns the current result',
@@ -383,6 +552,7 @@ class _Provider implements NamedSyncProvider {
   String? payload;
   Object? metadataError;
   int metadataReads = 0;
+  List<String> downloadPayloads = [];
   Future<void> Function()? onMetadata;
   void Function()? onDownload, onUpload;
 
@@ -424,7 +594,12 @@ class _Provider implements NamedSyncProvider {
     onDownload?.call();
     return SyncDownloadResult(
       metadata: remote!,
-      payload: Uint8List.fromList('remote catalog'.codeUnits),
+      payload: Uint8List.fromList(
+        (downloadPayloads.isEmpty
+                ? 'remote catalog'
+                : downloadPayloads.removeAt(0))
+            .codeUnits,
+      ),
     );
   }
 
@@ -485,17 +660,22 @@ class _Recovery extends CatalogRecovery {
 
 class _Bundles extends CatalogBundleService {
   @override
-  Future<BundleManifest> validateBundle(String bundlePath) async =>
-      BundleManifest(
-        formatVersion: 1,
-        appVersion: '1.0.0',
-        createdAt: '2026-01-01T00:00:00Z',
-        catalogIdentity: 'catalog',
-        databaseFilename: CatalogBundleService.databaseEntry,
-        databaseSha256: 'hash',
-        contentFingerprint: await File(bundlePath).readAsString(),
-        assets: const [],
-      );
+  Future<BundleManifest> validateBundle(String bundlePath) async {
+    final fingerprint = await File(bundlePath).readAsString();
+    if (fingerprint == 'invalid bundle') {
+      throw const FormatException('Invalid bundle');
+    }
+    return BundleManifest(
+      formatVersion: 1,
+      appVersion: '1.0.0',
+      createdAt: '2026-01-01T00:00:00Z',
+      catalogIdentity: 'catalog',
+      databaseFilename: CatalogBundleService.databaseEntry,
+      databaseSha256: 'hash',
+      contentFingerprint: fingerprint,
+      assets: const [],
+    );
+  }
 }
 
 class _MetadataStorage implements SyncMetadataStorage {
