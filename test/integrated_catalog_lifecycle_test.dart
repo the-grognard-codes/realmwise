@@ -3,11 +3,15 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:realmwise/models/catalog_models.dart';
+import 'package:realmwise/data/database_service.dart';
 import 'package:realmwise/services/app_controller.dart';
 import 'package:realmwise/services/catalog_recovery.dart';
+import 'package:realmwise/services/catalog_service.dart';
+import 'package:realmwise/services/image_storage_service.dart';
 import 'package:realmwise/services/secure_storage_service.dart';
 import 'package:realmwise/services/sync_contract.dart';
 
@@ -18,6 +22,83 @@ class _Tokens implements TokenStorage {
   Future<void> write(String key, String value) async {}
   @override
   Future<void> delete(String key) async {}
+}
+
+class _HeldImages extends ImageStorageService {
+  _HeldImages() : super(null);
+  final published = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<BookImage> publishStagedImage(BookImage image, BookWork work) async {
+    final result = await super.publishStagedImage(image, work);
+    published.complete();
+    await release.future;
+    return result;
+  }
+}
+
+class _HeldImageController extends AppController {
+  _HeldImageController(String imageRoot)
+    : super(tokenStorage: _Tokens(), imageRootPathOverride: imageRoot);
+
+  final heldImages = _HeldImages();
+
+  @override
+  ImageStorageService get imageStorage => heldImages;
+}
+
+class _FetchedImageController extends AppController {
+  _FetchedImageController(String imageRoot)
+    : super(tokenStorage: _Tokens(), imageRootPathOverride: imageRoot);
+
+  int fetches = 0;
+
+  @override
+  ImageStorageService get imageStorage => _fetchedImages;
+
+  late final _FetchedImages _fetchedImages = _FetchedImages(
+    transport: (uri, peer) async {
+      fetches++;
+      return http.StreamedResponse(
+        Stream<List<int>>.value(const [
+          0x89,
+          0x50,
+          0x4e,
+          0x47,
+          0x0d,
+          0x0a,
+          0x1a,
+          0x0a,
+          0,
+          0,
+          0,
+          0,
+        ]),
+        200,
+        headers: const {'content-type': 'image/png'},
+      );
+    },
+  );
+}
+
+class _FetchedImages extends ImageStorageService {
+  _FetchedImages({required ImageSecureTransport transport})
+    : super(
+        null,
+        resolver: (_) async => [InternetAddress('93.184.216.34')],
+        transport: transport,
+      );
+
+  String? failPublishTitle;
+
+  @override
+  Future<BookImage> publishStagedImage(BookImage image, BookWork work) {
+    if (work.title == failPublishTitle) {
+      throw const FileSystemException('injected cover publish failure');
+    }
+    return super.publishStagedImage(image, work);
+  }
 }
 
 class _Sync extends Object implements SyncProvider {
@@ -70,6 +151,95 @@ void main() {
         const MethodChannel('plugins.flutter.io/path_provider'),
         (_) async => Directory.systemTemp.path,
       );
+
+  test('bundle import commits when a remote cover is fetched', () async {
+    final dir = await Directory.systemTemp.createTemp('fetched_cover_import_');
+    final controller = _FetchedImageController('${dir.path}/images');
+    try {
+      await controller.openDatabase('${dir.path}/catalog.db', remember: false);
+      await controller.database.saveRecord(
+        const CatalogRecord(
+          work: BookWork(title: 'Cloud work'),
+          images: [
+            BookImage(
+              localPath: '',
+              remoteUrl: 'https://example.com/cover.png',
+              sourceType: ImageSourceType.remoteCache,
+              isCover: true,
+            ),
+          ],
+        ),
+      );
+      final bundle = '${dir.path}/cloud.realmwise';
+      await controller.exportDeviceBundle(bundle);
+
+      final result = await controller.restoreDeviceBundle(bundle);
+
+      expect(result.needsAcknowledgement, isFalse);
+      expect(controller.fetches, greaterThan(0));
+      final restored = (await controller.database.listRecords()).single;
+      expect(restored.work.title, 'Cloud work');
+      expect(restored.cover!.localPath, isNotEmpty);
+      expect(await File(restored.cover!.localPath).exists(), isTrue);
+    } finally {
+      await controller.closeDatabase();
+      controller.dispose();
+      await dir.delete(recursive: true);
+    }
+  });
+
+  test('bundle import commits despite a failed cover publish and rehydrates the next work', () async {
+    final dir = await Directory.systemTemp.createTemp('failed_cover_import_');
+    final controller = _FetchedImageController('${dir.path}/images');
+    try {
+      await controller.openDatabase('${dir.path}/catalog.db', remember: false);
+      for (final title in ['A failed cover', 'B restored cover']) {
+        await controller.database.saveRecord(
+          CatalogRecord(
+            work: BookWork(title: title),
+            images: [
+              BookImage(
+                localPath: '',
+                remoteUrl: 'https://example.com/cover.png',
+                caption: 'Retained caption',
+                sourceType: ImageSourceType.remoteCache,
+                isCover: true,
+              ),
+            ],
+          ),
+        );
+      }
+      final bundle = '${dir.path}/incoming.realmwise';
+      await controller.exportDeviceBundle(bundle);
+      // Distinguish the replacement from the original that would be rolled back.
+      for (final record in await controller.database.listRecords()) {
+        await controller.database.deleteRecord(record.work.id!);
+      }
+      await controller.database.saveRecord(
+        const CatalogRecord(work: BookWork(title: 'Original catalog')),
+      );
+      controller._fetchedImages.failPublishTitle = 'A failed cover';
+
+      final result = await controller.restoreDeviceBundle(bundle);
+
+      expect(result.needsAcknowledgement, isFalse);
+      expect(controller.recoveryWarning, isNull);
+      final restored = await controller.database.listRecords();
+      expect(restored.map((record) => record.work.title), [
+        'A failed cover',
+        'B restored cover',
+      ]);
+      expect(restored.first.cover!.localPath, isEmpty);
+      expect(restored.first.cover!.caption, 'Retained caption');
+      expect(restored.first.cover!.remoteUrl, 'https://example.com/cover.png');
+      expect(await File(restored.last.cover!.localPath).exists(), isTrue);
+      expect(controller.fetches, 2);
+    } finally {
+      await controller.closeDatabase();
+      controller.dispose();
+      await dir.delete(recursive: true);
+    }
+  });
 
   for (final refusal in ['busy checkpoint', 'failed snapshot']) {
     test(
@@ -191,6 +361,194 @@ void main() {
     );
   }
 
+  test(
+    'protective snapshot includes a save already publishing images',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('held_save_snapshot_');
+      final controller = AppController(
+        tokenStorage: _Tokens(),
+        imageRootPathOverride: '${dir.path}/images',
+      );
+      CatalogRecovery? recovery;
+      try {
+        await controller.openDatabase(
+          '${dir.path}/catalog.db',
+          remember: false,
+        );
+        final original = await controller.database.saveRecord(
+          CatalogRecord(work: BookWork(title: 'Original')),
+        );
+        final bundle = '${dir.path}/original.realmwise';
+        await controller.exportDeviceBundle(bundle);
+        final source = File('${dir.path}/cover.jpg');
+        await source.writeAsBytes([1, 2, 3]);
+        final images = _HeldImages();
+        await images.initialize('${dir.path}/images');
+        final catalog = CatalogService(
+          database: controller.database,
+          images: images,
+        );
+        final edit = catalog.beginEditing(original);
+        edit.update(
+          original.copyWith(work: original.work.copyWith(title: 'Saved title')),
+        );
+        await edit.addFile(source.path, label: 'New cover');
+        final lateEdit = catalog.beginEditing(original);
+        final saving = edit.save();
+        await images.published.future;
+        recovery = CatalogRecovery(
+          database: controller.database,
+          freezeEdits: catalog.freezeEdits,
+          releaseEdits: () async => catalog.unfreezeEdits(),
+          beforeClose: () async {
+            await expectLater(
+              lateEdit.save(),
+              throwsA(isA<CatalogEditPausedException>()),
+            );
+            await catalog.discardEdits();
+          },
+        );
+        final replacing = recovery.replaceCatalog(bundle, bundle: true);
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          (await recovery.restorePoints()).where(
+            (point) => point.kind == SnapshotKind.preImport,
+          ),
+          isEmpty,
+        );
+        images.release.complete();
+        expect((await saving).work.title, 'Saved title');
+        await replacing;
+        final point = (await recovery.restorePoints()).singleWhere(
+          (point) => point.kind == SnapshotKind.preImport,
+        );
+        final snapshot = DatabaseService();
+        try {
+          await snapshot.open(point.path);
+          expect(
+            (await snapshot.listRecords()).single.work.title,
+            'Saved title',
+          );
+        } finally {
+          await snapshot.close();
+        }
+      } finally {
+        await recovery?.stop();
+        await controller.closeDatabase();
+        controller.dispose();
+        await dir.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'controller replacement waits for a held save before snapshot',
+    () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'controller_held_save_',
+      );
+      final controller = _HeldImageController('${dir.path}/images');
+      try {
+        await controller.openDatabase(
+          '${dir.path}/catalog.db',
+          remember: false,
+        );
+        final original = await controller.database.saveRecord(
+          CatalogRecord(work: BookWork(title: 'Original')),
+        );
+        final bundle = '${dir.path}/original.realmwise';
+        await controller.exportDeviceBundle(bundle);
+        final cover = File('${dir.path}/cover.jpg');
+        await cover.writeAsBytes([1, 2, 3]);
+        final edit = controller.catalog.beginEditing(original);
+        edit.update(
+          original.copyWith(work: original.work.copyWith(title: 'Saved title')),
+        );
+        await edit.addFile(cover.path, label: 'New cover');
+        final saving = edit.save();
+        await controller.heldImages.published.future;
+        final replacing = controller.restoreDeviceBundle(bundle);
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          (await controller.recovery.restorePoints()).where(
+            (point) => point.kind == SnapshotKind.preImport,
+          ),
+          isEmpty,
+        );
+        controller.heldImages.release.complete();
+        await saving;
+        await replacing;
+        final point = (await controller.recovery.restorePoints()).singleWhere(
+          (point) => point.kind == SnapshotKind.preImport,
+        );
+        final snapshot = DatabaseService();
+        try {
+          await snapshot.open(point.path);
+          expect(
+            (await snapshot.listRecords()).single.work.title,
+            'Saved title',
+          );
+        } finally {
+          await snapshot.close();
+        }
+      } finally {
+        if (!controller.heldImages.release.isCompleted) {
+          controller.heldImages.release.complete();
+        }
+        await controller.closeDatabase();
+        controller.dispose();
+        await dir.delete(recursive: true);
+      }
+    },
+  );
+
+  test('marker write refusal unfreezes staged edits', () async {
+    final dir = await Directory.systemTemp.createTemp('marker_refusal_');
+    final database = DatabaseService();
+    CatalogRecovery? recovery;
+    try {
+      final active = '${dir.path}/catalog.db';
+      await database.open(active);
+      final original = await database.saveRecord(
+        CatalogRecord(work: BookWork(title: 'Original')),
+      );
+      final source = '${dir.path}/replacement.db';
+      await File(active).copy(source);
+      final images = ImageStorageService(null);
+      await images.initialize('${dir.path}/images');
+      final catalog = CatalogService(database: database, images: images);
+      final cover = File('${dir.path}/cover.jpg');
+      await cover.writeAsBytes([1, 2, 3]);
+      final edit = catalog.beginEditing(original);
+      await edit.addFile(cover.path, label: 'Staged cover');
+      final staged = edit.record.images.single.localPath;
+      recovery = CatalogRecovery(
+        database: database,
+        freezeEdits: catalog.freezeEdits,
+        releaseEdits: () async => catalog.unfreezeEdits(),
+        beforeClose: catalog.discardEdits,
+        renameFile: (file, target) async {
+          if (file.path.contains('.recovery-review.json.write-')) {
+            throw const FileSystemException('marker write blocked');
+          }
+          return file.rename(target);
+        },
+      );
+      await expectLater(
+        recovery.replaceCatalog(source),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(await File(staged).readAsBytes(), [1, 2, 3]);
+      final saved = await edit.save();
+      expect(saved.images, hasLength(1));
+      expect((await database.listRecords()).single.images, hasLength(1));
+    } finally {
+      await recovery?.stop();
+      await database.close();
+      await dir.delete(recursive: true);
+    }
+  });
+
   test('restore discards active image edits; subsequent save and export remain consistent', () async {
     final dir = await Directory.systemTemp.createTemp('integrated_catalog_');
     final controller = AppController(
@@ -265,7 +623,7 @@ void main() {
             contentHash: 'h1',
             lastSuccessfulLocalFingerprint: 'previous',
           );
-      final sync = controller.syncNow();
+      final sync = controller.syncCatalog();
       await provider.started.future;
       var restored = false;
       final restore = controller

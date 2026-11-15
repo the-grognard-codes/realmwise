@@ -9,6 +9,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:realmwise/services/app_controller.dart';
 import 'package:realmwise/services/secure_storage_service.dart';
 import 'package:realmwise/services/sync_contract.dart';
+import 'package:realmwise/sync/sync_session.dart';
 import 'package:realmwise/services/sync_coordinator.dart';
 import 'package:realmwise/services/sync_metadata.dart';
 
@@ -105,7 +106,7 @@ void main() {
             contentHash: 'h1',
             lastSuccessfulLocalFingerprint: 'previous',
           );
-      final manual = controller.syncNow();
+      final manual = controller.syncCatalog();
       await provider.uploadStarted.future;
       final exports = controller.exports;
       controller.scheduleAutomaticSync(debounce: Duration.zero);
@@ -140,7 +141,7 @@ void main() {
             contentHash: 'h1',
             lastSuccessfulLocalFingerprint: 'previous',
           );
-      final manual = controller.syncNow();
+      final manual = controller.syncCatalog();
       controller.releaseExport.complete();
       await manual;
       await _until(() => controller.automaticSyncLastSuccess != null);
@@ -201,7 +202,7 @@ void main() {
             contentHash: 'h1',
             lastSuccessfulLocalFingerprint: 'previous',
           );
-      final manual = controller.syncNow();
+      final manual = controller.syncCatalog();
       await provider.uploadStarted.future;
       await controller.database.databaseHandle.insert('works', {
         'title': 'During manual',
@@ -275,7 +276,7 @@ void main() {
           contentHash: 'h1',
           lastSuccessfulLocalFingerprint: 'previous',
         );
-    final sync = controller.syncNow();
+    final sync = controller.syncCatalog();
     await provider.uploadStarted.future;
     final token = controller.syncCoordinator.activeCancellation!;
     final authentications = provider.authentications;
@@ -484,7 +485,7 @@ void main() {
             contentHash: 'h1',
             lastSuccessfulLocalFingerprint: 'previous',
           );
-      final sync = controller.syncNow();
+      final sync = controller.syncCatalog();
       final syncResult = sync.then<void>((_) {}, onError: (Object _) {});
       await provider.uploadStarted.future;
       final token = controller.syncCoordinator.activeCancellation!;
@@ -700,24 +701,14 @@ void main() {
         provider.downloadPayload = Uint8List.fromList(
           await File(bundle).readAsBytes(),
         );
-        final fingerprint = (await controller.previewDeviceBundle(bundle))
-            .contentFingerprint!;
+        final request =
+            await controller.downloadCatalog() as CatalogsDivergedDecision;
         provider.holdUpload = true;
         provider.failUpload = fails;
-        final resolving = controller.resolveSyncDecision(
-          SyncConflictChoice.uploadReplaceRemote,
-          decision: const SyncClassificationResult(
-            SyncClassification.divergent,
-            remote: SyncRemoteMetadata(
-              revision: SyncRevision('r1'),
-              contentHash: 'h1',
-            ),
-          ),
-          localFingerprint: fingerprint,
+        final resolving = controller.answerSyncDecision(
+          request,
+          SyncChoice.upload,
         );
-        final checked = fails
-            ? expectLater(resolving, throwsStateError)
-            : resolving;
         await provider.uploadStarted.future;
         await controller.database.databaseHandle.insert('works', {
           'title': 'Edit during conflict',
@@ -728,7 +719,10 @@ void main() {
         expect(controller.exports, exports);
         provider.holdUpload = false;
         provider.releaseUpload.complete();
-        await checked;
+        expect(
+          await resolving,
+          fails ? isA<SyncFailed>() : isA<SyncUploaded>(),
+        );
         await _until(() => provider.uploads == 2 && !controller.isSyncing);
         expect(controller.exports, greaterThan(exports));
         expect(controller.automaticSyncError, isNull);
@@ -739,20 +733,15 @@ void main() {
   test('pending edit continues after a failed remote download', () async {
     controller.retryDebounce = const Duration(milliseconds: 10);
     provider.holdDownload = true;
-    final downloading = controller.downloadRemoteBundle(
-      expectedRemote: const SyncRemoteMetadata(
-        revision: SyncRevision('r1'),
-        contentHash: 'h1',
-      ),
-    );
-    final checked = expectLater(downloading, throwsStateError);
+    final downloading = _confirmDownload(controller);
+
     await provider.downloadStarted.future;
     controller.scheduleAutomaticSync(debounce: Duration.zero);
     final exports = controller.exports;
     await Future<void>.delayed(const Duration(milliseconds: 40));
     expect(controller.exports, exports);
     provider.releaseDownload.complete();
-    await checked;
+    expect(await downloading, isA<SyncFailed>());
     await _until(() => provider.uploads == 1 && !controller.isSyncing);
     expect(controller.automaticSyncError, isNull);
   });
@@ -771,12 +760,7 @@ void main() {
     controller.scheduleAutomaticSync(
       debounce: const Duration(milliseconds: 10),
     );
-    final downloading = controller.downloadRemoteBundle(
-      expectedRemote: const SyncRemoteMetadata(
-        revision: SyncRevision('r1'),
-        contentHash: 'h1',
-      ),
-    );
+    final downloading = _confirmDownload(controller);
     await _until(() => provider.downloads >= 2);
     expect(provider.uploads, 0);
     controller.didChangeAppLifecycleState(AppLifecycleState.hidden);
@@ -799,7 +783,7 @@ void main() {
           contentHash: 'h1',
           lastSuccessfulLocalFingerprint: 'previous',
         );
-    final sync = controller.syncNow();
+    final sync = controller.syncCatalog();
     await provider.uploadStarted.future;
     try {
       controller.didChangeAppLifecycleState(AppLifecycleState.hidden);
@@ -1069,4 +1053,14 @@ Future<void> _until(bool Function() predicate) async {
     if (DateTime.now().isAfter(deadline)) fail('Timed out waiting for sync');
     await Future<void>.delayed(const Duration(milliseconds: 5));
   }
+}
+
+Future<SyncResult> _confirmDownload(AppController controller) async {
+  final result = await controller.downloadCatalog();
+  return switch (result) {
+    final SyncDecision request
+        when request.choices.contains(SyncChoice.download) =>
+      controller.answerSyncDecision(request, SyncChoice.download),
+    _ => result,
+  };
 }

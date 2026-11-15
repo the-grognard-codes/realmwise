@@ -1,6 +1,6 @@
 # Architecture map
 
-Snapshot of `main` at `8263258` (2026-11-12), after the automatic-sync fixes (#98), centralized catalog recovery (#101), and staged record editing (#104). Realmwise is a single Flutter package (no internal packages) targeting Windows, Linux, and Android. Domain terms (**work**, **owned copy**, **work candidate**) are defined in [`CONTEXT.md`](../CONTEXT.md); decisions live in [`docs/adr/`](adr/); planned changes live in [`docs/spec/`](spec/).
+Architecture after the automatic-sync fixes (#98), centralized catalog recovery (#101), staged record editing (#104), typed sync sessions (#102), and tightened startup recovery with edit freezing during replacement (#113, #114). Realmwise is a single Flutter package (no internal packages) targeting Windows, Linux, and Android. Domain terms (**work**, **owned copy**, **work candidate**) are defined in [`CONTEXT.md`](../CONTEXT.md); decisions live in [`docs/adr/`](adr/); planned changes live in [`docs/spec/`](spec/).
 
 ## Layers
 
@@ -19,13 +19,13 @@ flowchart TD
   end
   add --> intake[book_intake/<br/>BookIntakeSession]
   ed --> intake
-  ed --> session[CatalogEditSession]
+  ed --> editSession[CatalogEditSession]
   intake --> adapters[book_intake_adapters]
   adapters --> ext[external_catalog_service<br/>OpenLibrary + RPGGeek]
   adapters --> csvc[catalog_service]
   screens --> ctrl
   notice --> ctrl
-  set --> sync
+  set --> syncSession
   ctrl --> db[data/database_service<br/>SQLite]
   ctrl --> csvc
   ctrl --> rec[catalog_recovery<br/>snapshots + replacement]
@@ -34,16 +34,18 @@ flowchart TD
   ctrl --> io[import_service / export_service<br/>CSV]
   ctrl --> diag[diagnostic_logging / bundle]
   ctrl --> sec[secure_storage_service]
-  ctrl --> sync
+  ctrl --> syncSession
   subgraph sync[Sync]
+    syncSession[sync_session] --> coord
+    syncSession --> rec
     coord[sync_coordinator] --> contract[sync_contract<br/>provider-neutral interfaces]
     coord --> meta[sync_metadata<br/>state machine]
     gd[google_drive_sync] -.implements.-> contract
     od[onedrive_sync] -.implements.-> contract
     dbx[dropbox_sync] -.implements.-> contract
   end
-  csvc --> session
-  session --> img
+  csvc --> editSession
+  editSession --> img
   csvc --> db
   rec --> db
   rec --> bundle
@@ -62,7 +64,7 @@ flowchart TD
 | Area | Files | Responsibility | Notes |
 | --- | --- | --- | --- |
 | Bootstrap | `main.dart`, `app.dart` | Loads Android OAuth config, builds the three sync providers, constructs `AppController`, optionally starts the debug harness, hosts `CatalogShell` navigation and the recovery-review banner. | Debug harness is opt-in (`apiDebugHarnessEnabled()`). |
-| Orchestration | `services/app_controller.dart` (~1670 lines) | Database open/create/close, sync connect/disconnect, the automatic-sync scheduler and lease renewal, bundle import/export, theme and hierarchy preferences, catalog icons, RPGGeek key, CSV import/export, "new this session" tracking. Wires `CatalogRecovery` callbacks (`waitForSync`, `beforeClose`, `reopen`, `rehydrate`, `onReady`). | Still the largest seam. The automatic-sync scheduler is a stop-gap here until the sync session module (spec 002, #102) takes it over. |
+| Orchestration | `services/app_controller.dart` (~1300 lines) | Database open/create/close, sync connect/disconnect, the automatic-sync scheduler and lease renewal, bundle import/export, theme and hierarchy preferences, catalog icons, RPGGeek key, CSV import/export, "new this session" tracking. Wires `CatalogRecovery` callbacks (`waitForSync`, `beforeClose`, `reopen`, `rehydrate`, `onReady`). | Still the largest seam. It owns scheduling and the operation queue; `SyncSession` owns transfer decisions. |
 | Domain model | `models/catalog_models.dart` | `BookWork`, `UserCopy`, `BookCondition`, `BookImage`, `CatalogRecord` (work + copies + images), `WorkCandidate`. | Immutable value types with `copyWith` / map serialization. |
 | Persistence | `data/database_service.dart` | SQLite via `sqflite` (FFI on desktop). Tables `works`, `copies`, `images`, `settings`, `catalog_icons`. Schema version 5 with additive `onUpgrade` migrations. Owns catalog identity, `catalogGeneration` (bumped on every open), and `withCatalogFiles`, the lock that keeps image-file changes consistent with bundle snapshots. | Schema changes need a version bump and an upgrade step. `withCatalogFiles` is not re-entrant. |
 | Catalog use cases | `services/catalog_service.dart` | Suggestions and tags; `beginEditing` → `CatalogEditSession`; delete and image rehydration under the catalog-files lock; `discardEdits` and `cleanupAbandonedEdits`. One image normalization rule (exactly one cover, order by `sortOrder`) for saves, CSV import, and extracted bundles. | Owns visit-scoped record editing (spec 004). |
@@ -73,6 +75,7 @@ flowchart TD
 | Local recovery | `services/catalog_recovery.dart`, `widgets/catalog_recovery_notice.dart` | Every local snapshot and every catalog replacement (bundle import, restore point, remote download). See the recovery details below. | Implements spec 001. Desktop and Android share one path; Android reopens replacements in its default journal mode. |
 | Bundles | `services/catalog_bundle_service.dart` | `.realmwise` zip: `manifest.json` + `catalog.db` (+ optional personal images), logical fingerprint, validation, extraction. Export runs under `withCatalogFiles`. | Used by manual export/restore, recovery snapshots, and every sync provider. |
 | Sync contract | `services/sync_contract.dart` | Provider-neutral interfaces: `SyncProvider`, `SyncAuthenticator`, `SyncTransfer`, `SyncLeaseProvider`, revisions/preconditions, conflict and lease exceptions. | Change here ripples into all three providers. |
+| Manual sync session | `sync/sync_session.dart` | Returns typed results and decisions, checks both catalogs before replacement, and delegates snapshots and swaps to catalog recovery. | Manual transfers and automatic sync use the same controller operation queue. |
 | Sync orchestration | `services/sync_coordinator.dart`, `sync_metadata.dart` | Connect, classify local vs remote, resolve conflicts, upload/download, the automatic-sync lease (single active device), rebind after restore. Metadata is stored per catalog identity in shared preferences. `SyncMetadata.copyWith` keeps a field unless it is in `clearFields`; passing `null` never clears. | Model is one active device + controlled handoff, never a merge. Automatic upload skips the transfer when the local fingerprint matches the last successful one. A `remoteOnly` result during remote validation is a conflict, never an upload. |
 | Sync providers | `google_drive_sync.dart`, `onedrive_sync.dart`, `dropbox_sync.dart` + `*_runtime.dart` | OAuth (PKCE, loopback on desktop, platform callbacks on Android), token stores, provider-specific HTTP. `*_runtime.dart` holds the platform glue and build-mode (DEV/PROD) client selection. | Each provider ~650–1130 lines with parallel structure. All three accept a same-owner reacquire of an expired lease. |
 | Secrets | `services/secure_storage_service.dart` | `TokenStorage` over `flutter_secure_storage`. OAuth tokens and the RPGGeek key (keyed by catalog identity) live here. | Legacy plaintext key in the DB is migrated out on read. Recovery scrubs legacy token rows from snapshots. |
@@ -101,19 +104,30 @@ flowchart TD
 1. Stage and validate the replacement.
 2. `waitForSync`: cancel and drain sync.
 3. Stop routine snapshots.
-4. Take the protective snapshot.
-5. Run a `wal_checkpoint(TRUNCATE)`. The replacement is refused while another connection is busy.
-6. Write the review marker.
-7. `beforeClose`: discard edit sessions.
-8. Close, copy, and swap the original to a rollback file. Its sidecars move with it.
-9. Reopen and rehydrate.
-10. Restart routine snapshots and call `onReady`.
+4. `freezeEdits`: block new edit saves and wait for in-flight saves to commit, so the snapshot includes them. Staging is kept.
+5. Take the protective snapshot.
+6. `beforeReplacement` (optional, used by `SyncSession` downloads): recheck the local fingerprint and the remote revision, and refuse if either changed.
+7. Run a `wal_checkpoint(TRUNCATE)`. The replacement is refused while another connection is busy.
+8. Write the review marker atomically (temp file, then rename). It records this swap's exact rollback path as `swapRollback`, and keeps any earlier unacknowledged warning.
+9. `beforeClose`: discard the frozen edit sessions.
+10. Close, copy, and swap the original to `<catalog>.rollback-<stamp>.tmp`. The `-shm`/`-journal` sidecars move with it, and an empty WAL is discarded.
+11. Install the replacement, then clear `swapRollback` from the marker.
+12. Reopen, `releaseEdits`, then rehydrate missing remote-cache covers through new edit sessions. A failed cover save preserves that work's image rows, emits an `errorClass` diagnostic, and continues to the next work without rolling back the replacement.
+13. Restart routine snapshots and call `onReady`.
+
+**Refusal before close**
+
+- A refusal before close leaves the original catalog open: a busy checkpoint, a failed snapshot, a changed observation, or a marker write failure.
+- `releaseEdits` unfreezes the existing sessions, so their staged images and unsaved fields stay usable.
+- The earlier marker is restored, or removed if there was none.
+- A save attempted while frozen throws `CatalogEditPausedException`. The editor shows "Catalog replacement is in progress. Try saving again." and keeps its draft and staged images for retry. A discarded or closed session still reports that it has ended with `StateError`.
 
 **Failure after close**
 
 - The original is restored and reopened, and the original error propagates.
 - If the original can't be restored but the replacement can be reopened, the replacement stays active. A persistent review marker, `<catalog>.recovery-review.json`, then fences "Sync now", upload-to-remote, and automatic sync until the user acknowledges the banner.
 - A deliberate replacement that commits clears any earlier marker.
+- An unreadable earlier marker is treated as empty, so it can't block replacement. `loadWarning` still treats it as a warning, so sync stays fenced.
 
 **Cleanup**
 
@@ -123,7 +137,26 @@ flowchart TD
 
 **Startup**
 
-`recoverInterruptedReplacement` runs before the saved catalog is opened. If the saved file is missing and a review marker exists, it restores the newest rollback that has no `.cleanup-pending` marker.
+`recoverInterruptedReplacement` runs before the saved catalog is opened. It does nothing if the saved file exists or if there is no review marker.
+
+**When it restores**
+
+All of these must hold:
+- The marker names a `swapRollback`.
+- That rollback is in the same folder and belongs to the saved catalog. On Windows the match ignores case.
+- The rollback file exists.
+- It has no `.cleanup-pending` marker.
+
+It then restores exactly that rollback. It never picks one by stamp. Steps:
+1. Rewrite the marker atomically as "original restored". The banner says the original was restored and the interrupted import discarded.
+2. Move the sidecars.
+3. Rename the rollback to the saved path.
+
+A crash at any of these steps can be retried on the next launch.
+
+**When it declines**
+
+The marker is renamed aside (`.stale-<stamp>`). Normal fallback then runs, and a new catalog at that path does not inherit the old notice. Unmarked older rollbacks are never touched.
 
 ### Automatic sync lifecycle
 
@@ -132,7 +165,7 @@ These rules live in `AppController`.
 **Lease**
 
 - 10-minute lease, renewed every 5 minutes while the app is in the foreground.
-- Lease renewal, `syncNow`, policy changes, takeover, and each transfer run through `_serialize`.
+- Lease renewal, policy changes, takeover, manual sync sessions (`_runManualSync`), and each automatic transfer run through `_serialize`.
 - Losing the lease goes through the coordinator's single `lease_lost` path.
 
 **Edits**
@@ -170,20 +203,21 @@ These rules live in `AppController`.
   3. Save publishes files and commits rows under the catalog-files lock. Back, cancel, or dispose discards staging.
   4. The controller notifies → automatic sync is scheduled (5 s debounce).
 - **Sync:**
-  1. `SyncCoordinator.classify` compares the local fingerprint and metadata with the remote revision.
-  2. The result is an upload, a download, or `SyncDecisionRequired` for the user.
-  3. A download replaces the catalog through `CatalogRecovery` (`preDownload` snapshot), then rebinds the remote baseline unless the result needs review.
+  1. `SyncSession` computes the local fingerprint and asks `SyncCoordinator.classify` to compare it and metadata with the remote revision. It exports a bundle only for an upload, and verifies that the exported fingerprint still matches the observation. Pending decisions retain observations, without bundle bytes.
+  2. The session returns a typed upload result or a decision; Settings renders decisions in one dialog.
+  3. After an explicit choice, the session rechecks both catalogs. A download replaces the catalog through `CatalogRecovery` (`preDownload` snapshot), then rebinds the remote baseline unless the result needs review.
 - **Import / restore:** Settings → `restoreDeviceBundle` or `restoreFromBackup(RestorePoint)` → `CatalogRecovery.replaceCatalog` → `CatalogReplacementResult` (a review notice if the replacement was retained).
 
 ## Tests
 
-`test/` has 33 files, mostly one per module.
+`test/` has 34 files, mostly one per module.
 
 - **Controller tests:**
   - `app_controller_automatic_sync_test.dart` uses a fake clock and timers.
   - `app_controller_recovery_test.dart`, `app_controller_edit_sync_test.dart`, and `app_controller_secure_token_test.dart` cover recovery, editing during sync, and token handling.
 - **Cross-module:** `integrated_catalog_lifecycle_test.dart` covers restore, edit, and export together, and import while a sync is held.
 - **Recovery:** `catalog_recovery_test.dart` uses injectable copy/rename/delete seams and real WAL readers.
+- **Sync session:** `sync_session_test.dart` covers classifications, decisions, rechecks, cancellation, and snapshots with fake providers and recovery.
 - **Sync providers:** tested against fake HTTP clients.
 - **Intake:** tested through its interfaces, per ADR 0001.
 - **Widgets:** drawer, navigation, editor, search, settings, and the recovery notice.
@@ -194,10 +228,14 @@ CI (`.github/workflows/ci.yml`) runs `dart format --set-exit-if-changed`, `flutt
 
 Observations for planning:
 
-- **`AppController` still mixes concerns:** database lifecycle, sync scheduling, bundles, preferences, and icons. Recovery moved out to `CatalogRecovery` (#101), and record editing moved out to `CatalogService` (#104). The automatic-sync scheduler remains here until the sync session module (spec 002, #102). The file carries several overlapping fences (`_serialize`, `_syncActivities`, the coordinator's `_exclusive`, the pending flags). #102 should collapse them into one.
-- **Open recovery follow-ups:**
-  - #113 tightens startup recovery. It records the exact rollback for each swap, handles a stale marker when recovery declines, and makes the marker write crash-safe.
-  - #114 makes sure a save that finishes during replacement is in the protective snapshot.
+- **`AppController` still mixes concerns:** database lifecycle, sync scheduling, bundles, preferences, and icons. Recovery moved out to `CatalogRecovery` (#101), record editing moved out to `CatalogService` (#104), and transfer decisions moved to `SyncSession` (#102). The controller still owns the automatic-sync scheduler and operation queue.
+- **Overlapping sync fences:** #102 did not consolidate them. Four separate busy or cancellation mechanisms guard sync work, and any new sync entry point has to respect all four:
+  - `AppController._serialize`, the operation queue;
+  - `_syncActivities` / `_trackSyncActivity`, which track long remote work, with an expiring zone token;
+  - `SyncCoordinator._exclusive` and its cancellation token;
+  - `SyncSession`'s own `_cancellation` guard.
+
+  The pending-sync flags (`_automaticSyncPending`, `_automaticBackgroundFlushPending`) sit on top. Collapsing these into one sync-work owner belongs to the `AppController` split (overhaul Phase 1, "App structure").
 - **Rollback files are not restore points.** A retained replacement's original sits at `<catalog>.rollback-<stamp>.tmp`. Settings lists only `backups/`, so recovering that file by hand means finding it on disk.
 - **Misleading name:** `disconnectOneDrive()` delegates to `disconnectGoogleDrive()`, which actually disconnects whichever provider is active.
 - **Stale version:** `CatalogBundleService.appVersion` is hard-coded to `1.0.0+1` while `pubspec.yaml` is `1.3.0+6`.

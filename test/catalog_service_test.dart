@@ -160,6 +160,7 @@ class _BlockingImages extends ImageStorageService {
   }
 
   bool block = false, failRollback = false;
+  String? failPublishTitle;
   int rollbackAttempts = 0;
   final rolledBack = <String>[];
   @override
@@ -174,6 +175,9 @@ class _BlockingImages extends ImageStorageService {
   final published = Completer<void>(), release = Completer<void>();
   @override
   Future<BookImage> publishStagedImage(BookImage image, BookWork work) async {
+    if (work.title == failPublishTitle) {
+      throw const FileSystemException('injected publish failure');
+    }
     final result = await super.publishStagedImage(image, work);
     if (block && !published.isCompleted) {
       published.complete();
@@ -297,6 +301,55 @@ void _editSessionTests() {
     },
   );
 
+  test('freeze waits for an active save and rejects later saves', () async {
+    images.block = true;
+    final edit = catalog.beginEditing(original)..setCover(1);
+    final saving = edit.save();
+    await images.published.future;
+    var frozen = false;
+    final freezing = catalog.freezeEdits().then((_) => frozen = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(frozen, isFalse);
+    final later = catalog.beginEditing(original);
+    await expectLater(later.save(), throwsA(isA<CatalogEditPausedException>()));
+    images.release.complete();
+    await saving;
+    await freezing;
+    expect(frozen, isTrue);
+    await expectLater(later.save(), throwsA(isA<CatalogEditPausedException>()));
+    await expectLater(edit.save(), throwsStateError);
+    catalog.unfreezeEdits();
+    expect((await later.save()).work.title, 'Original');
+  });
+
+  test('unfreeze keeps staged images and permits saving', () async {
+    final edit = catalog.beginEditing(original);
+    await edit.addFile(original.images.first.localPath, label: 'staged');
+    final staged = edit.record.images.last.localPath;
+    await catalog.freezeEdits();
+    await expectLater(edit.save(), throwsA(isA<CatalogEditPausedException>()));
+    expect(await File(staged).exists(), isTrue);
+    catalog.unfreezeEdits();
+    final saved = await edit.save();
+    expect(saved.images, hasLength(3));
+  });
+
+  test('discarded frozen session reports ended instead of paused', () async {
+    final edit = catalog.beginEditing(original);
+    await catalog.freezeEdits();
+    await edit.discard();
+    await expectLater(
+      edit.save(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'This edit session has ended.',
+        ),
+      ),
+    );
+  });
+
   test(
     'rollback continues after a rename error and preserves the database error',
     () async {
@@ -397,6 +450,80 @@ void _editSessionTests() {
       expect((await bundles.validateBundle(bundle)).assets, hasLength(2));
     },
   );
+
+  for (final failure in ['publish', 'transaction']) {
+    for (final hasSuccess in [false, true]) {
+      test('rehydration tolerates $failure failure with success=$hasSuccess', () async {
+        images.hydrationSource = original.images.last.localPath;
+        final capture = _DiagnosticCapture();
+        final previousLogger = DiagnosticDiagnostics.logger;
+        DiagnosticDiagnostics.logger = capture;
+        addTearDown(() => DiagnosticDiagnostics.logger = previousLogger);
+        const remote = BookImage(
+          localPath: '',
+          remoteUrl: 'https://example.com/cover.jpg',
+          caption: 'Keep metadata',
+          sourceType: ImageSourceType.remoteCache,
+          isCover: true,
+        );
+        final failed = await database.saveRecord(
+          const CatalogRecord(
+            work: BookWork(title: 'A failing'),
+            images: [remote],
+          ),
+        );
+        final next = hasSuccess
+            ? await database.saveRecord(
+                const CatalogRecord(
+                  work: BookWork(title: 'B next'),
+                  images: [remote],
+                ),
+              )
+            : null;
+        if (failure == 'publish') {
+          images.failPublishTitle = failed.work.title;
+        } else {
+          await database.databaseHandle.execute(
+            "CREATE TRIGGER reject_cover BEFORE INSERT ON images WHEN NEW.work_id = ${failed.work.id} BEGIN SELECT RAISE(ABORT, 'injected transaction failure'); END",
+          );
+        }
+
+        expect(await catalog.rehydrateMissingImages(), hasSuccess);
+
+        final loaded = await database.getRecord(failed.work.id!);
+        expect(
+          loaded.images.map((image) => image.toRow(failed.work.id!)),
+          failed.images.map((image) => image.toRow(failed.work.id!)),
+        );
+        if (next != null) {
+          final restored = await database.getRecord(next.work.id!);
+          expect(await File(restored.cover!.localPath).readAsBytes(), [
+            4,
+            5,
+            6,
+          ]);
+          expect(restored.cover!.caption, remote.caption);
+        }
+        final diagnostics = capture.fieldsByEvent['catalog.rehydrate.error']!;
+        expect(diagnostics.keys, ['errorClass']);
+        expect(
+          diagnostics['errorClass'],
+          failure == 'publish' ? 'FileSystemException' : 'SqfliteFfiException',
+        );
+        expect(
+          Directory(images.rootPath)
+              .listSync(recursive: true)
+              .whereType<File>()
+              .where((file) => file.path.contains('.staging')),
+          isEmpty,
+        );
+        expect(
+          Directory(images.rootPath).listSync().whereType<File>(),
+          hasLength(hasSuccess ? 3 : 2),
+        );
+      });
+    }
+  }
 
   test('cover fetch does not block export; closing its catalog emits save diagnostics', () async {
     final entered = Completer<void>(), release = Completer<void>();
@@ -623,6 +750,7 @@ void _editSessionTests() {
 
 class _DiagnosticCapture extends DiagnosticLogger {
   final events = <String>[];
+  final fieldsByEvent = <String, Map<String, Object?>>{};
   @override
   Future<void> log(
     DiagnosticSeverity severity,
@@ -630,5 +758,6 @@ class _DiagnosticCapture extends DiagnosticLogger {
     Map<String, Object?> fields = const {},
   ]) async {
     events.add(event);
+    fieldsByEvent[event] = fields;
   }
 }

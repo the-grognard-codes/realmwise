@@ -171,6 +171,10 @@ void main() {
         );
         await tester.tap(find.text('Open editor'));
         await tester.pumpAndSettle();
+        await tester.enterText(
+          find.bySemanticsLabel('Product code'),
+          'UNSAVED',
+        );
         await tester.tap(find.text('Images'));
         await tester.pumpAndSettle();
         if (operation == 'cover') {
@@ -194,6 +198,20 @@ void main() {
           }
           expect(picker.calls, 1);
           expect(find.text('Set cover'), findsNWidgets(3));
+          await controller.catalog.freezeEdits();
+          await tester.tap(find.text('Save'));
+          await tester.pumpAndSettle();
+          expect(find.byType(BookEditorScreen), findsOneWidget);
+          final snackBar = tester.widget<SnackBar>(find.byType(SnackBar));
+          expect(
+            (snackBar.content as Text).data,
+            'Catalog replacement is in progress. Try saving again.',
+          );
+          expect(find.text('Set cover'), findsNWidgets(3));
+          await tester.tap(find.text('Work'));
+          await tester.pumpAndSettle();
+          expect(find.text('UNSAVED'), findsOneWidget);
+          controller.catalog.unfreezeEdits();
         }
         await tester.pump();
 
@@ -393,6 +411,81 @@ void main() {
       ))!;
       expect(loaded.work.productCode, 'NEW-2');
     } finally {
+      await tester.runAsync(() => controller.database.close());
+      controller.dispose();
+      final fixtureFolder = folder;
+      if (fixtureFolder != null) {
+        await tester.runAsync(() => fixtureFolder.delete(recursive: true));
+      }
+    }
+  });
+
+  testWidgets('frozen save keeps the editor open for a later retry', (
+    tester,
+  ) async {
+    final controller = AppController();
+    Directory? folder;
+    try {
+      final saved = (await tester.runAsync<CatalogRecord>(() async {
+        folder = await Directory.systemTemp.createTemp('editor_frozen_save_');
+        await controller.database.open(
+          '${folder!.path}${Platform.pathSeparator}catalog.db',
+        );
+        return controller.database.saveRecord(
+          const CatalogRecord(
+            work: BookWork(title: 'Frozen save', productCode: 'OLD'),
+          ),
+        );
+      }))!;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: BookEditorScreen(controller: controller, record: saved),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.enterText(find.bySemanticsLabel('Product code'), 'NEW');
+      await controller.catalog.freezeEdits();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(BookEditorScreen), findsOneWidget);
+      final snackBar = tester.widget<SnackBar>(find.byType(SnackBar));
+      expect(
+        (snackBar.content as Text).data,
+        'Catalog replacement is in progress. Try saving again.',
+      );
+      expect(find.textContaining('Bad state:'), findsNothing);
+      expect(find.text('NEW'), findsOneWidget);
+      expect(
+        (await tester.runAsync(
+          () => controller.database.getRecord(saved.work.id!),
+        ))!.work.productCode,
+        'OLD',
+      );
+
+      controller.catalog.unfreezeEdits();
+      await tester.tap(find.text('Save'));
+      await tester.pump();
+      for (
+        var attempt = 0;
+        attempt < 100 &&
+            find.byType(CircularProgressIndicator).evaluate().isNotEmpty;
+        attempt++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump();
+      }
+      expect(
+        (await tester.runAsync(
+          () => controller.database.getRecord(saved.work.id!),
+        ))!.work.productCode,
+        'NEW',
+      );
+    } finally {
+      controller.catalog.unfreezeEdits();
+      await tester.pumpWidget(const SizedBox.shrink());
       await tester.runAsync(() => controller.database.close());
       controller.dispose();
       final fixtureFolder = folder;

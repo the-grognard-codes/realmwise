@@ -20,11 +20,26 @@ class CatalogService {
       database.suggestions(field, text);
 
   final Set<CatalogEditSession> _edits = {};
+  bool _editsFrozen = false;
 
   CatalogEditSession beginEditing(CatalogRecord record) {
     final edit = CatalogEditSession._(this, record);
     _edits.add(edit);
+    if (_editsFrozen) edit._freeze();
     return edit;
+  }
+
+  /// Prevents new saves and waits for every already queued edit to finish.
+  Future<void> freezeEdits() async {
+    _editsFrozen = true;
+    await Future.wait(_edits.toList().map((edit) => edit.freeze()));
+  }
+
+  void unfreezeEdits() {
+    _editsFrozen = false;
+    for (final edit in _edits.toList()) {
+      edit.unfreeze();
+    }
   }
 
   Future<void> discardEdits() async {
@@ -86,8 +101,17 @@ class CatalogService {
         }
         if (recordChanged) {
           edit.update(record.copyWith(images: restored));
-          await edit.save();
-          changed = true;
+          try {
+            await edit.save();
+            changed = true;
+          } on Object catch (error) {
+            // A cover is optional; its failed save must not undo a replacement.
+            DiagnosticDiagnostics.emit(
+              DiagnosticSeverity.warning,
+              'catalog.rehydrate.error',
+              {'errorClass': error.runtimeType.toString()},
+            );
+          }
         }
       } finally {
         await edit.discard();
@@ -124,6 +148,16 @@ class CatalogService {
   }
 }
 
+/// Retryable refusal while catalog replacement temporarily pauses edits.
+class CatalogEditPausedException implements Exception {
+  const CatalogEditPausedException();
+
+  String get message => 'Catalog replacement is in progress. Try saving again.';
+
+  @override
+  String toString() => message;
+}
+
 /// Visit-scoped draft. Only save publishes files or changes stored rows.
 class CatalogEditSession {
   CatalogEditSession._(this.catalog, CatalogRecord record)
@@ -140,6 +174,7 @@ class CatalogEditSession {
   Future<void> _tail = Future.value();
   bool _closed = false;
   bool _discardRequested = false;
+  bool _frozen = false;
   Future<void>? _discardFuture;
 
   void _check() {
@@ -161,8 +196,9 @@ class CatalogEditSession {
   }
 
   Future<T> _run<T>(Future<T> Function() action) {
-    if (_discardRequested)
+    if (_discardRequested || _closed)
       return Future.error(StateError('This edit session has ended.'));
+    if (_frozen) return Future.error(const CatalogEditPausedException());
     final result = _tail.then((_) {
       _check();
       return action();
@@ -336,6 +372,17 @@ class CatalogEditSession {
   }
 
   Future<void> discard() => _discardFuture ??= _discard();
+
+  void _freeze() => _frozen = true;
+
+  Future<void> freeze() async {
+    _freeze();
+    await _tail;
+  }
+
+  void unfreeze() {
+    if (!_discardRequested && !_closed) _frozen = false;
+  }
 
   Future<void> _discard() async {
     _discardRequested = true;

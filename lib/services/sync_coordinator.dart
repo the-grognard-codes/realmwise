@@ -42,12 +42,15 @@ class SyncCoordinator {
   SyncProgress? progress;
   bool get isSyncing => _activeCatalogs.contains(metadata?.catalogIdentity);
 
-  Future<T> _exclusive<T>(Future<T> Function() action) async {
+  Future<T> _exclusive<T>(
+    Future<T> Function() action, {
+    SyncCancellationToken? cancellation,
+  }) async {
     final identity = metadata?.catalogIdentity;
     if (identity == null)
       throw StateError('Connect a provider before syncing.');
     if (!_activeCatalogs.add(identity)) throw const SyncBusyException();
-    final token = SyncCancellationToken();
+    final token = cancellation ?? SyncCancellationToken();
     activeCancellation = token;
     try {
       return await action();
@@ -145,6 +148,14 @@ class SyncCoordinator {
       if (remote == null) {
         return const SyncClassificationResult(SyncClassification.unknownError);
       }
+      // Providers create an empty placeholder when configuring a new target.
+      // A previously synced target that became empty still requires review.
+      if (remote.isEmpty && saved.revision == null) {
+        return SyncClassificationResult(
+          SyncClassification.localOnly,
+          remote: remote,
+        );
+      }
       final localChanged =
           currentLocalFingerprint != saved.lastSuccessfulLocalFingerprint;
       // A provider revision can advance while the Realmwise payload remains
@@ -179,6 +190,10 @@ class SyncCoordinator {
         (true, true) => SyncClassification.divergent,
       };
       return SyncClassificationResult(kind, remote: remote);
+    } on SyncCancelledException {
+      rethrow;
+    } on SyncBusyException {
+      rethrow;
     } on Object catch (error) {
       return SyncClassificationResult(
         SyncClassification.unknownError,
@@ -379,6 +394,7 @@ class SyncCoordinator {
     String? localFingerprint,
     SyncRemoteMetadata? expectedRemote,
     SyncProgressCallback? onProgress,
+    SyncCancellationToken? cancellation,
   }) => _exclusive(
     () => _syncInternal(
       payload,
@@ -386,6 +402,7 @@ class SyncCoordinator {
       expectedRemote: expectedRemote,
       onProgress: onProgress,
     ),
+    cancellation: cancellation,
   );
 
   Future<SyncMetadata> _syncInternal(
@@ -409,7 +426,8 @@ class SyncCoordinator {
       phase: 'Preparing bundle',
     );
     onProgress?.call(progress!);
-    if (localFingerprint != null &&
+    if (expectedRemote == null &&
+        localFingerprint != null &&
         current.state == SyncState.ready &&
         current.provider == p.provider &&
         current.accountId == s.accountId &&
@@ -533,6 +551,7 @@ class SyncCoordinator {
 
   Future<SyncDownloadResult> download({
     SyncRemoteMetadata? expectedRemote,
+    bool recordResult = true,
   }) async {
     final p = provider, s = session, t = target, current = metadata;
     if (p == null || s == null || t == null || current == null) {
@@ -551,17 +570,20 @@ class SyncCoordinator {
             ? null
             : SyncPrecondition(revision: SyncRevision(current.revision!)),
       );
-      metadata = current.copyWith(
-        remoteTargetId: t.id,
-        remoteTargetName: t.name,
-        revision: result.metadata.revision.value,
-        contentHash: result.metadata.contentHash,
-        updatedAt: clock().toUtc(),
-        state: SyncState.ready,
-        clearFields: {SyncMetadataField.error},
-      );
+      if (recordResult) {
+        metadata = current.copyWith(
+          remoteTargetId: t.id,
+          remoteTargetName: t.name,
+          revision: result.metadata.revision.value,
+          contentHash: result.metadata.contentHash,
+          updatedAt: clock().toUtc(),
+          state: SyncState.ready,
+          clearFields: {SyncMetadataField.error},
+        );
+      }
       return result;
     } catch (error) {
+      if (!recordResult) rethrow;
       metadata = current.copyWith(
         updatedAt: clock().toUtc(),
         state: SyncState.error,

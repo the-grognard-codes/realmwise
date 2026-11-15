@@ -180,7 +180,7 @@ class DropboxOAuthAuthenticator implements SyncAuthenticator {
   }
 }
 
-class DropboxProvider implements SyncProvider, SyncLeaseProvider {
+class DropboxProvider implements NamedSyncProvider, SyncLeaseProvider {
   DropboxProvider({
     required this.authenticator,
     required this.tokenStore,
@@ -210,6 +210,9 @@ class DropboxProvider implements SyncProvider, SyncLeaseProvider {
 
   @override
   String get provider => 'dropbox';
+
+  @override
+  String get displayName => 'Dropbox';
 
   Future<void> cancelPendingAuthentication() =>
       authenticator.cancelPendingAuthentication();
@@ -512,6 +515,7 @@ class DropboxProvider implements SyncProvider, SyncLeaseProvider {
       revision: SyncRevision(rev),
       contentHash: h,
       updatedAt: DateTime.tryParse(j['server_modified'] ?? ''),
+      isEmpty: j['size'] == 0,
     );
   }
 

@@ -226,9 +226,9 @@
     {
       "type": "library",
       "name": "sqflite_common_ffi",
-      "version": "2.4.6",
+      "version": "2.4.7",
       "scope": "required",
-      "purl": "pkg:dart/sqflite_common_ffi@2.4.6",
+      "purl": "pkg:dart/sqflite_common_ffi@2.4.7",
       "properties": [
         {
           "name": "pub:dependency",
@@ -248,7 +248,7 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "26911d808e4d33b3965da8821440ef4b021d3bc7282f5eb76e6621827995dd86"
+          "content": "9aad7a63bb8de6fe4c1e5367e8dcd8dfc89d491f44a526edf8e58a5a1fb1feed"
         }
       ]
     },

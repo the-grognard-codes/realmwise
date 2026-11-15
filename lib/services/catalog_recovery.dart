@@ -70,6 +70,8 @@ class CatalogRecovery {
   CatalogRecovery({
     required this.database,
     Future<void> Function()? waitForSync,
+    Future<void> Function()? freezeEdits,
+    Future<void> Function()? releaseEdits,
     Future<void> Function()? beforeClose,
     Future<void> Function(String)? reopen,
     Future<bool> Function()? rehydrate,
@@ -80,6 +82,8 @@ class CatalogRecovery {
     Future<File> Function(File, String)? renameFile,
     Future<void> Function(File)? deleteFile,
   }) : waitForSync = waitForSync ?? (() async {}),
+       freezeEdits = freezeEdits ?? (() async {}),
+       releaseEdits = releaseEdits ?? (() async {}),
        beforeClose = beforeClose ?? (() async {}),
        reopen = reopen ?? database.open,
        rehydrate = rehydrate ?? (() async => false),
@@ -96,6 +100,12 @@ class CatalogRecovery {
 
   final DatabaseService database;
   final Future<void> Function() waitForSync;
+
+  /// Blocks new saves and drains in-flight saves before the protective snapshot.
+  final Future<void> Function() freezeEdits;
+
+  /// Reopens edits after refusal, or after the new catalog has been reopened.
+  final Future<void> Function() releaseEdits;
 
   /// Runs after snapshot, checkpoint, and warning persistence, before closing.
   final Future<void> Function() beforeClose;
@@ -115,42 +125,75 @@ class CatalogRecovery {
   final Set<String> _pendingFileCleanup = {};
   CatalogRecoveryWarning? warning;
 
-  File get _warningFile =>
-      File('${database.databasePath}.recovery-review.json');
+  File _markerFor(String path) => File('$path.recovery-review.json');
+  File get _warningFile => _markerFor(database.databasePath);
+
+  Future<Map<String, dynamic>?> _readMarker(File marker) async {
+    if (!await marker.exists()) return null;
+    return jsonDecode(await marker.readAsString()) as Map<String, dynamic>;
+  }
+
+  Future<void> _writeMarker(File marker, Map<String, dynamic> value) async {
+    final temporary = File('${marker.path}.write-${_stamp()}.tmp');
+    try {
+      await temporary.writeAsString(jsonEncode(value), flush: true);
+      await renameFile(temporary, marker.path);
+    } finally {
+      if (await temporary.exists()) await deleteFile(temporary);
+    }
+  }
+
+  Future<void> _setAsideMarker(File marker) async {
+    await renameFile(marker, '${marker.path}.stale-${_stamp()}');
+  }
+
+  Future<void> _clearSwapRollback(File marker) async {
+    await _writeMarker(
+      marker,
+      {...?await _readMarker(marker)}..remove('swapRollback'),
+    );
+  }
 
   /// Recover the original before startup can create a new catalog at its path.
   Future<void> recoverInterruptedReplacement(String savedPath) async {
     if (await File(savedPath).exists()) return;
-    final marker = File('$savedPath.recovery-review.json');
+    final marker = _markerFor(savedPath);
     if (!await marker.exists()) return;
-    final folder = Directory(p.dirname(savedPath));
-    if (!await folder.exists()) return;
+    Map<String, dynamic>? value;
+    try {
+      value = await _readMarker(marker);
+    } on Object catch (error) {
+      _reportFailure('warning_read', error);
+    }
+    final rollbackPath = value?['swapRollback'];
     final pattern = RegExp(
       '^${RegExp.escape(p.basename(savedPath))}'
-      r'\.rollback-(\d+)\.tmp$',
+      r'\.rollback-\d+\.tmp$',
       caseSensitive: !Platform.isWindows,
     );
-    File? newest;
-    var newestStamp = -1;
-    await for (final entry in folder.list(followLinks: false)) {
-      if (entry is! File) continue;
-      final match = pattern.firstMatch(p.basename(entry.path));
-      final stamp = match == null ? null : int.tryParse(match.group(1)!);
-      if (stamp != null && stamp > newestStamp) {
-        if (await File('${entry.path}.cleanup-pending').exists()) continue;
-        newest = entry;
-        newestStamp = stamp;
-      }
+    final rollback =
+        rollbackPath is String &&
+            p.equals(p.dirname(rollbackPath), p.dirname(savedPath)) &&
+            pattern.hasMatch(p.basename(rollbackPath))
+        ? File(rollbackPath)
+        : null;
+    if (rollback == null ||
+        !await rollback.exists() ||
+        await File('${rollback.path}.cleanup-pending').exists()) {
+      await _setAsideMarker(marker);
+      return;
     }
-    if (newest == null) return;
+    // Persist the notice first. Either side of the rename is now safe to retry.
+    await _writeMarker(marker, {
+      ...?value,
+      'originalPath': savedPath,
+      'originalRestored': true,
+      'swapRollback': rollback.path,
+    });
     // Move sidecars first so another interruption still leaves a discoverable
     // rollback. Never install the staged replacement or clear the review marker.
-    await _moveSidecars(newest.path, savedPath, renameFile);
-    await renameFile(newest, savedPath);
-    await marker.writeAsString(
-      jsonEncode({'originalPath': savedPath, 'originalRestored': true}),
-      flush: true,
-    );
+    await _moveSidecars(rollback.path, savedPath, renameFile);
+    await renameFile(rollback, savedPath);
   }
 
   /// The marker is outside the replaceable database and survives app restarts.
@@ -163,8 +206,7 @@ class CatalogRecovery {
       originalPath: 'See local restore points',
     );
     try {
-      final value =
-          jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      final value = (await _readMarker(file))!;
       warning = CatalogRecoveryWarning(
         originalPath: value['originalPath'] as String,
         originalRestored: value['originalRestored'] == true,
@@ -591,11 +633,14 @@ class CatalogRecovery {
 
   /// A bundle or database is staged beside the active file before quiescing.
   /// Successful imported images remain in their unique restore namespace.
+  /// [beforeReplacement] can reject a stale source after the snapshot and
+  /// before the active catalog is closed.
   Future<CatalogReplacementResult> replaceCatalog(
     String sourcePath, {
     SnapshotKind snapshotKind = SnapshotKind.preImport,
     bool bundle = false,
     String? imageRootPath,
+    Future<void> Function()? beforeReplacement,
   }) async {
     if (isReplacing)
       throw StateError('Catalog replacement is already in progress.');
@@ -611,7 +656,8 @@ class CatalogRecovery {
         : p.join(imageRootPath, 'recovery-$stamp');
     var moved = false, committed = false, quiesced = false;
     var closing = false, installed = false, replacementRetained = false;
-    var ownsWarning = false;
+    var freezeStarted = false, editsReleased = false, markerPrepared = false;
+    Map<String, dynamic>? priorMarker;
     try {
       if (bundle) {
         await bundles.extractDatabase(
@@ -627,19 +673,29 @@ class CatalogRecovery {
       await stop();
       quiesced = true;
       _quiesced = true;
+      freezeStarted = true;
+      await freezeEdits();
       await _snapshot(snapshotKind);
+      await beforeReplacement?.call();
       await _checkpointForReplacement();
       await loadWarning();
-      if (warning == null) {
-        // Persist before closing or replacing anything. A process interruption
-        // therefore cannot silently resume automatic uploads of an unreviewed catalog.
-        warning = CatalogRecoveryWarning(originalPath: rollback);
-        await warningFile.writeAsString(
-          jsonEncode({'originalPath': rollback}),
-          flush: true,
-        );
-        ownsWarning = true;
+      try {
+        priorMarker = await _readMarker(warningFile);
+      } on Object catch (error) {
+        _reportFailure('warning_read', error);
+        priorMarker = <String, dynamic>{};
       }
+      // An existing active catalog means an older swap is no longer pending.
+      priorMarker?.remove('swapRollback');
+      // Record this swap even when an older warning remains unacknowledged.
+      // A process interruption can then restore only this original.
+      await _writeMarker(warningFile, {
+        ...?priorMarker,
+        'originalPath': priorMarker?['originalPath'] ?? rollback,
+        'swapRollback': rollback,
+      });
+      markerPrepared = true;
+      warning ??= CatalogRecoveryWarning(originalPath: rollback);
       await beforeClose();
       closing = true;
       await database.close();
@@ -653,7 +709,12 @@ class CatalogRecovery {
       await _moveSidecars(active, rollback, renameFile);
       await renameFile(File('$staged.ready'), active);
       installed = true;
+      await _clearSwapRollback(warningFile);
       await reopen(active);
+      // The old sessions are discarded. Rehydration creates new edit sessions
+      // against the replacement and must be allowed to save its fetched covers.
+      await releaseEdits();
+      editsReleased = true;
       await rehydrate();
       committed = true;
     } catch (error) {
@@ -723,14 +784,29 @@ class CatalogRecovery {
       } on Object catch (cleanupError) {
         _reportFailure('cleanup', cleanupError);
       }
-      // A deliberate replacement that fully committed resolves any earlier
-      // warning; merely failing to restore the original does not.
-      if ((committed || ownsWarning) && !replacementRetained) {
+      // A deliberate replacement resolves an older warning. A refused swap
+      // restores the earlier marker; a retained replacement keeps its notice.
+      if (markerPrepared && await File(active).exists()) {
         try {
-          if (await warningFile.exists()) await warningFile.delete();
-          warning = null;
+          if (committed || (!replacementRetained && priorMarker == null)) {
+            if (await warningFile.exists()) await deleteFile(warningFile);
+            warning = null;
+          } else if (replacementRetained) {
+            await _clearSwapRollback(warningFile);
+            await loadWarning();
+          } else {
+            await _writeMarker(warningFile, priorMarker!);
+            await loadWarning();
+          }
         } on Object catch (warningError) {
           _reportFailure('warning_clear', warningError);
+        }
+      }
+      if (freezeStarted && !editsReleased) {
+        try {
+          await releaseEdits();
+        } on Object catch (editError) {
+          _reportFailure('edit_release', editError);
         }
       }
       _quiesced = false;
