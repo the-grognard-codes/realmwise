@@ -25,6 +25,9 @@ class CatalogService {
   bool _isCurrentGeneration(int generation) =>
       database.isOpen && database.catalogGeneration == generation;
 
+  bool _rehydrationMayContinue(int generation) =>
+      !_editsFrozen && _isCurrentGeneration(generation);
+
   CatalogEditSession beginEditing(CatalogRecord record) {
     final edit = CatalogEditSession._(this, record);
     _edits.add(edit);
@@ -65,14 +68,15 @@ class CatalogService {
   Future<bool> rehydrateMissingImages() async {
     final generation = database.catalogGeneration;
     var changed = false;
+    if (!_rehydrationMayContinue(generation)) return changed;
     for (final record in await database.listRecords()) {
-      if (!_isCurrentGeneration(generation)) return changed;
+      if (!_rehydrationMayContinue(generation)) return changed;
       final edit = beginEditing(record);
       var recordChanged = false;
       final restored = <BookImage>[];
       try {
         for (final image in record.images) {
-          if (!_isCurrentGeneration(generation)) return changed;
+          if (!_rehydrationMayContinue(generation)) return changed;
           final localPath = image.localPath.trim();
           final remoteUrl = image.remoteUrl.trim().isNotEmpty
               ? image.remoteUrl.trim()
@@ -84,8 +88,11 @@ class CatalogService {
             continue;
           }
           try {
+            final directory = await edit._directory();
+            // File checks and staging can yield to a freeze or catalog switch.
+            if (!_rehydrationMayContinue(generation)) return changed;
             final downloaded = await images.stageRemoteCover(
-              directory: await edit._directory(),
+              directory: directory,
               work: record.work,
               remoteUrl: remoteUrl,
             );
@@ -100,23 +107,26 @@ class CatalogService {
               ),
             );
             recordChanged = true;
-          } catch (_) {
+          } on CatalogEditPausedException {
+            return changed;
+          } on Exception {
             // A network outage must not make restoring the catalog fail.
             restored.add(image);
           }
         }
         if (recordChanged) {
+          if (!_rehydrationMayContinue(generation)) return changed;
           edit.update(record.copyWith(images: restored));
           try {
             await edit.save();
             changed = true;
           } on CatalogEditPausedException {
-            rethrow;
+            return changed;
           } on Exception {
             // A cover is optional; its failed save must not undo a replacement.
             // Unlike optional downloads in save(), save-time Errors propagate.
             // save() already logs the failure. Only continue in this catalog.
-            if (!_isCurrentGeneration(generation)) return changed;
+            if (!_rehydrationMayContinue(generation)) return changed;
           }
         }
       } on CatalogChangedError {
