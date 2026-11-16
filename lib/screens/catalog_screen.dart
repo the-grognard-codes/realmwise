@@ -3,118 +3,15 @@ import 'package:flutter/semantics.dart';
 
 import 'dart:io';
 
+import '../catalog/catalog_hierarchy.dart';
 import '../data/database_service.dart';
 import '../models/catalog_models.dart';
 import '../services/app_controller.dart';
 import '../widgets/cover_image.dart';
 import 'book_editor_screen.dart';
 
-int _compareCatalogLabels(String a, String b) {
-  final insensitive = a.toLowerCase().compareTo(b.toLowerCase());
-  return insensitive != 0 ? insensitive : a.compareTo(b);
-}
-
-List<MapEntry<String, T>> _sortedCatalogGroups<T>(Map<String, T> groups) =>
-    groups.entries.toList()
-      ..sort((a, b) => _compareCatalogLabels(a.key, b.key));
-
-List<CatalogRecord> _sortedCatalogRecords(Iterable<CatalogRecord> records) =>
-    records.toList()
-      ..sort((a, b) => _compareCatalogLabels(a.work.title, b.work.title));
-
-/// Returns records in the same order in which the catalog hierarchy is
-/// presented. Every hierarchy level and its individual works are sorted
-/// alphabetically; untyped books remain after typed groups within a setting.
-List<CatalogRecord> flattenCatalogHierarchy(
-  Iterable<CatalogRecord> records, {
-  CatalogHierarchyOrder order = CatalogHierarchyOrder.gameSystemSettingBookType,
-}) {
-  String name(String raw, String fallback) =>
-      raw.trim().isEmpty ? fallback : raw.trim();
-  final source = records.toList(growable: false);
-  final flattened = <CatalogRecord>[];
-  if (order == CatalogHierarchyOrder.gameSystemBookTypeSetting) {
-    final systems = <String, List<CatalogRecord>>{};
-    for (final record in source)
-      systems
-          .putIfAbsent(
-            name(record.work.gameSystem, 'Unclassified system'),
-            () => [],
-          )
-          .add(record);
-    for (final system in _sortedCatalogGroups(systems)) {
-      final systemRecords = system.value;
-      final types = <String, List<CatalogRecord>>{};
-      final untyped = <CatalogRecord>[];
-      final unsetSetting = <CatalogRecord>[];
-      for (final record in systemRecords) {
-        final type = record.work.bookType.trim();
-        if (record.work.gameSetting.trim().isEmpty)
-          unsetSetting.add(record);
-        else if (type.isEmpty)
-          untyped.add(record);
-        else
-          types.putIfAbsent(type, () => []).add(record);
-      }
-      for (final type in _sortedCatalogGroups(types)) {
-        final typeRecords = type.value;
-        final settings = <String, List<CatalogRecord>>{};
-        for (final record in typeRecords)
-          settings
-              .putIfAbsent(
-                name(record.work.gameSetting, 'Unspecified Setting'),
-                () => [],
-              )
-              .add(record);
-        for (final setting in _sortedCatalogGroups(settings))
-          flattened.addAll(_sortedCatalogRecords(setting.value));
-      }
-      flattened.addAll(_sortedCatalogRecords(untyped));
-      flattened.addAll(_sortedCatalogRecords(unsetSetting));
-    }
-  } else {
-    final systems = <String, List<CatalogRecord>>{};
-    for (final record in source)
-      systems
-          .putIfAbsent(
-            name(record.work.gameSystem, 'Unclassified system'),
-            () => [],
-          )
-          .add(record);
-    for (final system in _sortedCatalogGroups(systems)) {
-      final systemRecords = system.value;
-      final settings = <String, List<CatalogRecord>>{};
-      final unsetSetting = <CatalogRecord>[];
-      for (final record in systemRecords)
-        if (record.work.gameSetting.trim().isEmpty)
-          unsetSetting.add(record);
-        else
-          settings
-              .putIfAbsent(record.work.gameSetting.trim(), () => [])
-              .add(record);
-      for (final setting in _sortedCatalogGroups(settings)) {
-        final settingRecords = setting.value;
-        final types = <String, List<CatalogRecord>>{};
-        final untyped = <CatalogRecord>[];
-        for (final record in settingRecords) {
-          final type = record.work.bookType.trim();
-          if (type.isEmpty)
-            untyped.add(record);
-          else
-            types.putIfAbsent(type, () => []).add(record);
-        }
-        for (final type in _sortedCatalogGroups(types))
-          flattened.addAll(_sortedCatalogRecords(type.value));
-        flattened.addAll(_sortedCatalogRecords(untyped));
-      }
-      // A missing setting is not a meaningful hierarchy level. Keep these
-      // books directly under their game system rather than creating a
-      // synthetic "Unspecified Setting" group.
-      flattened.addAll(_sortedCatalogRecords(unsetSetting));
-    }
-  }
-  return List.unmodifiable(flattened);
-}
+// Preserve the existing import location for navigation callers.
+export '../catalog/catalog_hierarchy.dart' show flattenCatalogHierarchy;
 
 class CatalogScreen extends StatefulWidget {
   const CatalogScreen({super.key, required this.controller});
@@ -695,146 +592,60 @@ class _CatalogSelector extends StatelessWidget {
   Widget build(BuildContext context) {
     if (records.isEmpty)
       return const Center(child: Text('No matching books or tags.'));
-    final systems = <String, List<CatalogRecord>>{};
-    for (final record in records) {
-      systems
-          .putIfAbsent(
-            _name(record.work.gameSystem, 'Unclassified system'),
-            () => [],
-          )
-          .add(record);
-    }
+    final hierarchy = buildCatalogHierarchy(
+      records,
+      order: controller.hierarchyOrder,
+    );
     return ListView(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
-      children: _sortedCatalogGroups(systems)
-          .map(
-            (system) => ExpansionTile(
-              initiallyExpanded: false,
-              leading: _leading(
-                context,
-                'gameSystem',
-                system.key,
-                Icons.account_tree_outlined,
-              ),
-              title: Text(system.key),
-              children:
-                  controller.hierarchyOrder ==
-                      CatalogHierarchyOrder.gameSystemBookTypeSetting
-                  ? _typeFirstNodes(context, system.value)
-                  : _settingNodes(context, system.value),
-            ),
-          )
+      children: hierarchy
+          .expand((node) => _nodeWidgets(context, node))
           .toList(),
     );
   }
 
-  List<Widget> _typeFirstNodes(
+  Iterable<Widget> _nodeWidgets(
     BuildContext context,
-    List<CatalogRecord> records,
-  ) {
-    final types = <String, List<CatalogRecord>>{};
-    final untyped = <CatalogRecord>[];
-    final unsetSetting = <CatalogRecord>[];
-    for (final record in records) {
-      final type = record.work.bookType.trim();
-      if (record.work.gameSetting.trim().isEmpty)
-        unsetSetting.add(record);
-      else if (type.isEmpty)
-        untyped.add(record);
-      else
-        types.putIfAbsent(type, () => []).add(record);
-    }
-    return [
-      ..._sortedCatalogGroups(types).map(
-        (type) => ExpansionTile(
-          tilePadding: const EdgeInsets.only(left: 28, right: 8),
-          leading: _leading(context, 'bookType', type.key, Icons.book_outlined),
-          title: Text(type.key),
-          children: _settingNodes(
-            context,
-            type.value,
-            left: 48,
-            includeTypes: false,
-          ),
-        ),
-      ),
-      ..._sortedCatalogRecords(untyped)
-          .expand((record) => _recordTiles(record, left: 28)),
-      ..._sortedCatalogRecords(unsetSetting)
-          .expand((record) => _recordTiles(record, left: 28)),
-    ];
-  }
-
-  List<Widget> _settingNodes(
-    BuildContext context,
-    List<CatalogRecord> systemRecords, {
-    double left = 28,
-    bool includeTypes = true,
+    CatalogHierarchyNode node, {
+    int depth = 0,
+    CatalogHierarchyTier? parentTier,
   }) {
-    final settings = <String, List<CatalogRecord>>{};
-    final unsetSetting = <CatalogRecord>[];
-    for (final record in systemRecords) {
-      if (record.work.gameSetting.trim().isEmpty)
-        unsetSetting.add(record);
-      else
-        settings
-            .putIfAbsent(record.work.gameSetting.trim(), () => [])
-            .add(record);
+    final record = node.record;
+    if (record != null) {
+      // Preserve the selector's existing spacing, including the type-first
+      // setting leaves (68) and setting-first type leaves (72).
+      final left = switch (parentTier) {
+        CatalogHierarchyTier.bookType => 72.0,
+        CatalogHierarchyTier.gameSetting => depth == 2 ? 48.0 : 68.0,
+        _ => 28.0,
+      };
+      return _recordTiles(record, left: left);
     }
+    final icon = switch (node.tier) {
+      CatalogHierarchyTier.gameSystem => Icons.account_tree_outlined,
+      CatalogHierarchyTier.gameSetting => Icons.landscape_outlined,
+      CatalogHierarchyTier.bookType => Icons.book_outlined,
+      CatalogHierarchyTier.work => Icons.book_outlined,
+    };
     return [
-      ..._sortedCatalogGroups(settings).map(
-        (setting) => ExpansionTile(
-          initiallyExpanded: false,
-          tilePadding: EdgeInsets.only(left: left, right: 8),
-          leading: _leading(
-            context,
-            'gameSetting',
-            setting.key,
-            Icons.landscape_outlined,
-          ),
-          title: Text(setting.key),
-          children: includeTypes
-              ? _typeNodes(context, setting.value)
-              : _sortedCatalogRecords(setting.value)
-                    .expand((record) => _recordTiles(record, left: left + 20))
-                    .toList(),
-        ),
+      ExpansionTile(
+        initiallyExpanded: false,
+        tilePadding: depth == 0
+            ? null
+            : EdgeInsets.only(left: depth == 1 ? 28 : 48, right: 8),
+        leading: _leading(context, node.tier.name, node.label, icon),
+        title: Text(node.label),
+        children: node.children
+            .expand(
+              (child) => _nodeWidgets(
+                context,
+                child,
+                depth: depth + 1,
+                parentTier: node.tier,
+              ),
+            )
+            .toList(),
       ),
-      ..._sortedCatalogRecords(unsetSetting)
-          .expand((record) => _recordTiles(record, left: left)),
-    ];
-  }
-
-  List<Widget> _typeNodes(
-    BuildContext context,
-    List<CatalogRecord> settingRecords,
-  ) {
-    final types = <String, List<CatalogRecord>>{};
-    final untyped = <CatalogRecord>[];
-    for (final record in settingRecords) {
-      final type = record.work.bookType.trim();
-      if (type.isEmpty) {
-        // A missing type is not a meaningful hierarchy level. Keep the book
-        // directly under its setting instead of creating a synthetic group.
-        untyped.add(record);
-      } else {
-        types.putIfAbsent(type, () => []).add(record);
-      }
-    }
-    return [
-      ..._sortedCatalogGroups(types).map(
-        (type) => ExpansionTile(
-          initiallyExpanded: false,
-          tilePadding: const EdgeInsets.only(left: 48, right: 8),
-          leading: _leading(context, 'bookType', type.key, Icons.book_outlined),
-          title: Text(type.key),
-          children: _sortedCatalogRecords(type.value)
-              .expand((record) => _recordTiles(record, left: 72))
-              .toList(),
-        ),
-      ),
-      ..._sortedCatalogRecords(untyped)
-          .expand((record) => _recordTiles(record, left: 48)),
     ];
   }
 
@@ -877,9 +688,6 @@ class _CatalogSelector extends StatelessWidget {
       ),
     );
   }
-
-  String _name(String value, String fallback) =>
-      value.trim().isEmpty ? fallback : value.trim();
 }
 
 class _NewBadge extends StatelessWidget {
