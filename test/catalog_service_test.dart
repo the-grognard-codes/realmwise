@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:realmwise/data/database_service.dart';
 import 'package:realmwise/models/catalog_models.dart';
 import 'package:realmwise/services/catalog_service.dart';
+import 'package:realmwise/services/catalog_recovery.dart';
 import 'package:realmwise/services/image_storage_service.dart';
 
 import 'dart:async';
@@ -44,6 +45,7 @@ class _FakeImages extends ImageStorageService {
 
 void main() {
   group('edit sessions', _editSessionTests);
+  group('rehydration failures', _rehydrationFailureTests);
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
@@ -129,6 +131,236 @@ void main() {
       await folder.delete(recursive: true);
     },
   );
+}
+
+class _InterruptingImages extends ImageStorageService {
+  _InterruptingImages({required ImageSecureTransport transport})
+    : super(
+        null,
+        resolver: (_) async => [InternetAddress('93.184.216.34')],
+        transport: transport,
+      );
+
+  Future<void> Function()? beforePublish;
+  Future<void> Function()? afterDiscardStaging;
+
+  @override
+  Future<BookImage> publishStagedImage(BookImage image, BookWork work) async {
+    await beforePublish?.call();
+    return super.publishStagedImage(image, work);
+  }
+
+  @override
+  Future<void> discardEditStaging(Directory directory) async {
+    await super.discardEditStaging(directory);
+    final callback = afterDiscardStaging;
+    afterDiscardStaging = null;
+    await callback?.call();
+  }
+}
+
+void _rehydrationFailureTests() {
+  late Directory folder;
+  late DatabaseService database;
+  late _InterruptingImages images;
+  late CatalogService catalog;
+  late int requests;
+  Future<void> Function()? duringDownload;
+
+  setUp(() async {
+    folder = await Directory.systemTemp.createTemp('rehydration_failure_');
+    database = DatabaseService();
+    await database.open(p.join(folder.path, 'catalog.db'));
+    for (final title in ['A first', 'B next', 'C last']) {
+      await database.saveRecord(
+        CatalogRecord(
+          work: BookWork(title: title),
+          images: const [
+            BookImage(
+              localPath: '',
+              remoteUrl: 'https://example.com/cover.png',
+              sourceType: ImageSourceType.remoteCache,
+              isCover: true,
+            ),
+          ],
+        ),
+      );
+    }
+    requests = 0;
+    duringDownload = null;
+    images = _InterruptingImages(
+      transport: (_, _) async {
+        requests++;
+        await duringDownload?.call();
+        return http.StreamedResponse(
+          Stream.value(
+            base64Decode(
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aSaoAAAAASUVORK5CYII=',
+            ),
+          ),
+          200,
+          headers: {'content-type': 'image/png'},
+        );
+      },
+    );
+    await images.initialize(p.join(folder.path, 'images'));
+    catalog = CatalogService(database: database, images: images);
+  });
+
+  tearDown(() async {
+    await catalog.discardEdits();
+    await database.close();
+    await folder.delete(recursive: true);
+  });
+
+  for (final reopen in [false, true]) {
+    for (final failedSave in [false, true]) {
+      test(
+        'stops downloads when catalog ${reopen ? 'changes' : 'closes'} after ${failedSave ? 'failed' : 'successful'} save',
+        () async {
+          Future<void> interrupt() async {
+            await database.close();
+            if (reopen) await database.open(p.join(folder.path, 'catalog.db'));
+          }
+
+          if (failedSave) {
+            images.beforePublish = () async {
+              await interrupt();
+              throw const FileSystemException('injected publish failure');
+            };
+          } else {
+            images.afterDiscardStaging = interrupt;
+          }
+
+          expect(await catalog.rehydrateMissingImages(), !failedSave);
+
+          expect(requests, 1);
+          expect(database.isOpen, reopen);
+          expect(
+            Directory(images.rootPath)
+                .listSync(recursive: true)
+                .whereType<File>()
+                .where((file) => file.path.contains('.staging')),
+            isEmpty,
+          );
+        },
+      );
+    }
+  }
+
+  for (final reopen in [false, true]) {
+    for (final phase in ['download', 'publish', 'failed save', 'saved']) {
+      test(
+        'replacement remains installed when catalog ${reopen ? 'changes' : 'closes'} during $phase',
+        () async {
+          final active = p.join(folder.path, 'catalog.db');
+          final bundle = p.join(folder.path, 'incoming.realmwise');
+          await CatalogBundleService().exportBundle(
+            database: database,
+            outputPath: bundle,
+          );
+          for (final record in await database.listRecords()) {
+            await database.deleteRecord(record.work.id!);
+          }
+          await database.saveRecord(
+            const CatalogRecord(work: BookWork(title: 'Original catalog')),
+          );
+          Future<void> interrupt() async {
+            await database.close();
+            if (reopen) await database.open(active);
+          }
+
+          switch (phase) {
+            case 'download':
+              duringDownload = interrupt;
+            case 'publish':
+              images.beforePublish = interrupt;
+            case 'failed save':
+              images.beforePublish = () async {
+                await interrupt();
+                throw const FileSystemException('injected publish failure');
+              };
+            case 'saved':
+              images.afterDiscardStaging = interrupt;
+          }
+          var recoveryReopens = 0, rollbackDeletions = 0;
+          final recovery = CatalogRecovery(
+            database: database,
+            freezeEdits: catalog.freezeEdits,
+            releaseEdits: () async => catalog.unfreezeEdits(),
+            beforeClose: catalog.discardEdits,
+            reopen: (path) async {
+              recoveryReopens++;
+              await database.open(path);
+            },
+            rehydrate: catalog.rehydrateMissingImages,
+            deleteFile: (file) async {
+              if (file.path == active) rollbackDeletions++;
+              await file.delete();
+            },
+          );
+          try {
+            final result = await recovery.replaceCatalog(bundle, bundle: true);
+
+            expect(result.needsAcknowledgement, isFalse);
+            expect(recoveryReopens, 1);
+            expect(rollbackDeletions, 0);
+            expect(requests, 1);
+            expect(database.isOpen, reopen);
+            if (!reopen) await database.open(active);
+            final records = await database.listRecords();
+            expect(records.map((record) => record.work.title), [
+              'A first',
+              'B next',
+              'C last',
+            ]);
+            expect(records.first.cover!.localPath.isNotEmpty, phase == 'saved');
+            expect(
+              records
+                  .skip(1)
+                  .every((record) => record.cover!.localPath.isEmpty),
+              isTrue,
+            );
+          } finally {
+            await recovery.stop();
+          }
+        },
+      );
+    }
+  }
+
+  test(
+    'paused edits stop rehydration without downloading remaining covers',
+    () async {
+      await catalog.freezeEdits();
+
+      await expectLater(
+        catalog.rehydrateMissingImages(),
+        throwsA(isA<CatalogEditPausedException>()),
+      );
+
+      expect(requests, 1);
+    },
+  );
+
+  for (final error in [
+    TypeError(),
+    StateError('This edit session has ended.'),
+  ]) {
+    test('propagates ${error.runtimeType} from a cover save', () async {
+      images.beforePublish = () async => throw error;
+
+      await expectLater(catalog.rehydrateMissingImages(), throwsA(same(error)));
+
+      expect(requests, 1);
+      expect(
+        (await database.listRecords()).every(
+          (record) => record.cover!.localPath.isEmpty,
+        ),
+        isTrue,
+      );
+    });
+  }
 }
 
 class _BlockingImages extends ImageStorageService {
@@ -504,8 +736,19 @@ void _editSessionTests() {
           ]);
           expect(restored.cover!.caption, remote.caption);
         }
-        final diagnostics = capture.fieldsByEvent['catalog.rehydrate.error']!;
-        expect(diagnostics.keys, ['errorClass']);
+        expect(
+          capture.events.where(
+            (event) => event.startsWith('catalog.') && event.endsWith('.error'),
+          ),
+          ['catalog.save.error'],
+        );
+        final diagnostics = capture.fieldsByEvent['catalog.save.error']!;
+        expect(
+          diagnostics.keys,
+          unorderedEquals(['errorClass', 'operation', 'outcome']),
+        );
+        expect(diagnostics['operation'], 'save');
+        expect(diagnostics['outcome'], 'failed');
         expect(
           diagnostics['errorClass'],
           failure == 'publish' ? 'FileSystemException' : 'SqfliteFfiException',
@@ -674,7 +917,7 @@ void _editSessionTests() {
     await edit.addFile(original.images[0].localPath, label: 'stale');
     await database.close();
     await database.open(p.join(dir.path, 'different.db'));
-    await expectLater(edit.save(), throwsStateError);
+    await expectLater(edit.save(), throwsA(isA<CatalogChangedError>()));
     expect(await database.listRecords(), isEmpty);
     await edit.discard();
   });
