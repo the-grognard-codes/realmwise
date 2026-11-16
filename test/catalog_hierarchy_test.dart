@@ -1,7 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:realmwise/catalog/catalog_hierarchy.dart';
 import 'package:realmwise/models/catalog_models.dart';
-import 'package:realmwise/services/app_controller.dart';
 
 CatalogRecord _record(
   String title, {
@@ -36,6 +35,13 @@ Iterable<CatalogRecord> _walk(Iterable<CatalogHierarchyNode> nodes) sync* {
 }
 
 void main() {
+  test('section icons use the existing persisted tier keys', () {
+    expect(CatalogHierarchyTier.gameSystem.storedIconKey, 'gameSystem');
+    expect(CatalogHierarchyTier.gameSetting.storedIconKey, 'gameSetting');
+    expect(CatalogHierarchyTier.bookType.storedIconKey, 'bookType');
+    expect(CatalogHierarchyTier.work.storedIconKey, isNull);
+  });
+
   final records = [
     _record('untyped', system: ' S ', setting: ' A '),
     _record('no setting', system: 'S', type: 'Ignored'),
@@ -157,6 +163,56 @@ void main() {
   });
 
   for (final order in CatalogHierarchyOrder.values) {
+    test('filtered subsets sort works within sections: $order', () {
+      final source = [
+        _record('guide-1', system: 'S', setting: 'Set', type: 'Guide'),
+        _record('other', system: 'S', setting: 'Other', type: 'Core'),
+        _record('guide-2', system: 'S', setting: 'Set', type: 'Guide'),
+      ];
+      final filtered = [source[2], source[0]];
+      expect(
+        flattenCatalogHierarchy(
+          filtered,
+          order: order,
+        ).map((record) => record.work.title),
+        ['guide-1', 'guide-2'],
+      );
+    });
+
+    test('sorts every hierarchy level alphabetically: $order', () {
+      final unsorted = [
+        _record('Zulu', system: 'Zeta', setting: 'Zulu', type: 'Zulu'),
+        _record('alpha', system: 'Alpha', setting: 'Zulu', type: 'Zulu'),
+        _record('Beta', system: 'Alpha', setting: 'Alpha', type: 'Zulu'),
+        _record('gamma', system: 'Alpha', setting: 'Alpha', type: 'Alpha'),
+      ];
+      expect(
+        flattenCatalogHierarchy(
+          unsorted,
+          order: order,
+        ).map((record) => record.work.title),
+        ['gamma', 'Beta', 'alpha', 'Zulu'],
+      );
+    });
+
+    test(
+      'missing-setting works stay sorted directly under their system: $order',
+      () {
+        final missingSetting = [
+          _record('typed missing setting', system: 'S', type: 'Type'),
+          _record('untyped missing setting', system: 'S'),
+          _record('with setting', system: 'S', setting: 'Set', type: 'Type'),
+        ];
+        expect(
+          flattenCatalogHierarchy(
+            missingSetting,
+            order: order,
+          ).map((record) => record.work.title),
+          ['with setting', 'typed missing setting', 'untyped missing setting'],
+        );
+      },
+    );
+
     test('flatten is the depth-first walk, retaining records: $order', () {
       final tree = buildCatalogHierarchy(records, order: order);
       final walked = _walk(tree).toList();

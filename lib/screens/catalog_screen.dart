@@ -10,9 +10,6 @@ import '../services/app_controller.dart';
 import '../widgets/cover_image.dart';
 import 'book_editor_screen.dart';
 
-// Preserve the existing import location for navigation callers.
-export '../catalog/catalog_hierarchy.dart' show flattenCatalogHierarchy;
-
 class CatalogScreen extends StatefulWidget {
   const CatalogScreen({super.key, required this.controller});
   final AppController controller;
@@ -625,7 +622,7 @@ class _CatalogSelector extends StatelessWidget {
       CatalogHierarchyTier.gameSystem => Icons.account_tree_outlined,
       CatalogHierarchyTier.gameSetting => Icons.landscape_outlined,
       CatalogHierarchyTier.bookType => Icons.book_outlined,
-      CatalogHierarchyTier.work => Icons.book_outlined,
+      CatalogHierarchyTier.work => null,
     };
     return [
       ExpansionTile(
@@ -633,7 +630,9 @@ class _CatalogSelector extends StatelessWidget {
         tilePadding: depth == 0
             ? null
             : EdgeInsets.only(left: depth == 1 ? 28 : 48, right: 8),
-        leading: _leading(context, node.tier.name, node.label, icon),
+        leading: icon == null
+            ? null
+            : _leading(context, node.tier.storedIconKey!, node.label, icon),
         title: Text(node.label),
         children: node.children
             .expand(

@@ -1,8 +1,23 @@
 import '../models/catalog_models.dart';
-import '../services/app_controller.dart' show CatalogHierarchyOrder;
+
+enum CatalogHierarchyOrder {
+  gameSystemSettingBookType,
+  gameSystemBookTypeSetting,
+}
 
 /// A displayed group tier, or an individual work at a leaf.
-enum CatalogHierarchyTier { gameSystem, gameSetting, bookType, work }
+enum CatalogHierarchyTier {
+  gameSystem('gameSystem'),
+  gameSetting('gameSetting'),
+  bookType('bookType'),
+  work(null);
+
+  const CatalogHierarchyTier(this.storedIconKey);
+
+  /// Persisted catalog-icon key, independent of the enum value's Dart name.
+  /// Work leaves do not have a section icon.
+  final String? storedIconKey;
+}
 
 /// One immutable node in the catalog's display order. Missing settings and
 /// types are omitted rather than represented by synthetic groups.
