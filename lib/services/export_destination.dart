@@ -5,6 +5,13 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'diagnostic_bundle_exporter.dart';
+import 'diagnostic_logging.dart';
+
+void _logExportError(String event, Object error) {
+  DiagnosticDiagnostics.emit(DiagnosticSeverity.warning, event, {
+    'errorClass': error.runtimeType.toString(),
+  });
+}
 
 sealed class ExportResult {
   const ExportResult();
@@ -78,22 +85,25 @@ class ExportDestination {
       result = await target.save(path)
           ? ExportSaved(target.locationDescription)
           : const ExportCancelled();
-    } on Object {
+    } on Object catch (error) {
       // Plugin and producer errors can contain credentials or private paths.
+      _logExportError('export.error', error);
       result = const ExportFailed();
     }
     if (target != null && result is! ExportSaved) {
       try {
         await target.discard();
-      } on Object {
+      } on Object catch (error) {
         // Preserve the safe original result if destination cleanup fails.
+        _logExportError('export.destination_cleanup.error', error);
       }
     }
     if (staging != null) {
       try {
         await staging.delete(recursive: true);
-      } on Object {
-        return const ExportFailed();
+      } on Object catch (error) {
+        // Cleanup cannot undo a completed save or change its reported result.
+        _logExportError('export.staging_cleanup.error', error);
       }
     }
     return result;
@@ -138,14 +148,27 @@ class _AndroidTarget extends ExportTarget {
 }
 
 typedef ExportSaveDialog = Future<String?> Function({required String fileName});
+typedef ExportFileCopy = Future<void> Function(
+  String sourcePath,
+  String destinationPath,
+);
 
 class DesktopExportDestinationAdapter implements ExportDestinationAdapter {
-  const DesktopExportDestinationAdapter({ExportSaveDialog? saveDialog})
-    : _saveDialog = saveDialog ?? _showSaveDialog;
+  const DesktopExportDestinationAdapter({
+    ExportSaveDialog? saveDialog,
+    ExportFileCopy? copyFile,
+  }) : _saveDialog = saveDialog ?? _showSaveDialog,
+       _copyFile = copyFile ?? _copy;
 
   final ExportSaveDialog _saveDialog;
+  final ExportFileCopy _copyFile;
+
+  static Future<void> _copy(String sourcePath, String destinationPath) async {
+    await File(sourcePath).copy(destinationPath);
+  }
 
   static Future<String?> _showSaveDialog({required String fileName}) async {
+    // The path-only API uses the OS dialog title; it has no title parameter.
     final location = await selector.getSaveLocation(suggestedName: fileName);
     return location?.path;
   }
@@ -156,19 +179,34 @@ class DesktopExportDestinationAdapter implements ExportDestinationAdapter {
     required String mimeType,
   }) async {
     final path = await _saveDialog(fileName: fileName);
-    return path == null ? null : _DesktopTarget(path);
+    return path == null ? null : _DesktopTarget(path, _copyFile);
   }
 }
 
 class _DesktopTarget extends ExportTarget {
-  _DesktopTarget(this.path);
+  _DesktopTarget(this.path, this.copyFile);
   final String path;
+  final ExportFileCopy copyFile;
   @override
   String get locationDescription => p.basename(path);
 
   @override
   Future<bool> save(String temporaryPath) async {
-    await File(temporaryPath).copy(path);
-    return true;
+    // Stage on the destination filesystem so a partial copy cannot damage an
+    // existing export and the final rename does not cross filesystem boundaries.
+    final staging = await Directory(p.dirname(path))
+        .createTemp('.realmwise-export-');
+    try {
+      final pending = p.join(staging.path, p.basename(path));
+      await copyFile(temporaryPath, pending);
+      await File(pending).rename(path);
+      return true;
+    } finally {
+      try {
+        await staging.delete(recursive: true);
+      } on Object catch (error) {
+        _logExportError('export.staging_cleanup.error', error);
+      }
+    }
   }
 }

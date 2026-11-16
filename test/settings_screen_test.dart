@@ -204,6 +204,15 @@ void main() {
         );
         await tester.runAsync(controller.closeDatabase);
         controller.dispose();
+        var diagnosticsFlushed = false;
+        controller.diagnostics.flush().then((_) => diagnosticsFlushed = true);
+        for (var i = 0; i < 100 && !diagnosticsFlushed; i++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)),
+          );
+          await tester.pump();
+        }
+        expect(diagnosticsFlushed, isTrue);
         await tester.runAsync(() => folder.delete(recursive: true));
         PathProviderPlatform.instance = previous;
       }

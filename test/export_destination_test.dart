@@ -1,8 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:realmwise/services/export_destination.dart';
+import 'package:realmwise/services/diagnostic_logging.dart';
 
 class _Adapter implements ExportDestinationAdapter {
   _Adapter(this.choose);
@@ -28,11 +31,143 @@ class _Target extends ExportTarget {
   Future<void> discard() async => discarded = true;
 }
 
+class _CleanupFailureDirectory implements Directory {
+  _CleanupFailureDirectory(this.directory);
+  final Directory directory;
+
+  @override
+  String get path => directory.path;
+
+  @override
+  Future<Directory> createTemp([String? prefix]) async =>
+      _CleanupFailureDirectory(await directory.createTemp(prefix));
+
+  @override
+  Future<Directory> delete({bool recursive = false}) async =>
+      throw FileSystemException('Temporary directory is locked', path);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late Directory root;
   setUp(() async => root = await Directory.systemTemp.createTemp('exports_'));
   tearDown(() => root.delete(recursive: true));
+
+  test('staging cleanup failure preserves a saved export', () async {
+    final saved = File('${root.path}/saved.csv');
+    final target = _Target((path) async {
+      await File(path).copy(saved.path);
+      return true;
+    });
+    final result =
+        await ExportDestination(
+          adapter: _Adapter((_, _) async => target),
+          temporaryDirectory: () async => _CleanupFailureDirectory(root),
+        ).export(
+          fileName: 'catalog.csv',
+          mimeType: 'text/csv',
+          produce: (path) async {
+            await File(path).writeAsString('completed export');
+          },
+        );
+    expect(await saved.readAsString(), 'completed export');
+    expect(target.discarded, isFalse);
+    expect(result, isA<ExportSaved>());
+    expect((result as ExportSaved).locationDescription, 'chosen.csv');
+  });
+
+  test('partial desktop copy failure preserves the existing export', () async {
+    final destination = File('${root.path}/chosen.csv');
+    await destination.writeAsString('previous good export');
+    final staging = await Directory('${root.path}/staging').create();
+    final result =
+        await ExportDestination(
+          adapter: DesktopExportDestinationAdapter(
+            saveDialog: ({required fileName}) async => destination.path,
+            copyFile: (source, pending) async {
+              expect(File(pending).parent.parent.path, destination.parent.path);
+              await File(pending).writeAsString('partial export');
+              expect(await destination.readAsString(), 'previous good export');
+              throw FileSystemException('Disk full', pending);
+            },
+          ),
+          temporaryDirectory: () async => staging,
+        ).export(
+          fileName: 'catalog.csv',
+          mimeType: 'text/csv',
+          produce: (path) async {
+            await File(path).writeAsString('new export');
+          },
+        );
+    expect(result, isA<ExportFailed>());
+    expect(await destination.readAsString(), 'previous good export');
+    expect(await staging.list().toList(), isEmpty);
+    expect(
+      (await root.list().toList()).map((entry) => p.basename(entry.path)),
+      unorderedEquals(['chosen.csv', 'staging']),
+    );
+  });
+
+  test('desktop rename failure preserves the existing export', () async {
+    final destination = File('${root.path}/chosen.csv');
+    await destination.writeAsString('previous good export');
+    final staging = await Directory('${root.path}/staging').create();
+    final result =
+        await ExportDestination(
+          adapter: DesktopExportDestinationAdapter(
+            saveDialog: ({required fileName}) async => destination.path,
+            copyFile: (source, pending) async {
+              await File(source).copy(pending);
+              // Simulate the staged file disappearing before the rename commits.
+              await File(pending).delete();
+            },
+          ),
+          temporaryDirectory: () async => staging,
+        ).export(
+          fileName: 'catalog.csv',
+          mimeType: 'text/csv',
+          produce: (path) async {
+            await File(path).writeAsString('new export');
+          },
+        );
+    expect(result, isA<ExportFailed>());
+    expect(await destination.readAsString(), 'previous good export');
+    expect(await staging.list().toList(), isEmpty);
+    expect(
+      (await root.list().toList()).map((entry) => p.basename(entry.path)),
+      unorderedEquals(['chosen.csv', 'staging']),
+    );
+  });
+
+  test('export failure diagnostics contain only the error class', () async {
+    final previousLogger = DiagnosticDiagnostics.logger;
+    final logger = DiagnosticLogger(directory: Directory('${root.path}/logs'));
+    DiagnosticDiagnostics.logger = logger;
+    addTearDown(() => DiagnosticDiagnostics.logger = previousLogger);
+    final result =
+        await ExportDestination(
+          adapter: _Adapter((_, _) async => _Target((_) async => true)),
+          temporaryDirectory: () async => root,
+        ).export(
+          fileName: 'catalog.csv',
+          mimeType: 'text/csv',
+          produce: (_) async =>
+              throw StateError('private-token-marker C:/private/catalog.csv'),
+        );
+    expect(result, isA<ExportFailed>());
+    await DiagnosticDiagnostics.flush();
+    final logs = await logger.files();
+    expect(logs, hasLength(1));
+    final text = await logs.single.readAsString();
+    final event = jsonDecode(text) as Map;
+    expect(event['event'], 'export.error');
+    expect(event['fields'], {'errorClass': 'StateError'});
+    expect(text, isNot(contains('private-token-marker')));
+    expect(text, isNot(contains('C:/private/catalog.csv')));
+  });
 
   for (final scenario in [
     'cancel before produce',
