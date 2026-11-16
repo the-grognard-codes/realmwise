@@ -142,6 +142,31 @@ class _InterruptingImages extends ImageStorageService {
       );
 
   Future<void> Function()? beforePublish;
+  Future<void> Function()? beforeDownload;
+
+  @override
+  Future<BookImage> stageRemoteCover({
+    required Directory directory,
+    required BookWork work,
+    required String remoteUrl,
+  }) async {
+    await beforeDownload?.call();
+    return super.stageRemoteCover(
+      directory: directory,
+      work: work,
+      remoteUrl: remoteUrl,
+    );
+  }
+
+  Future<void> Function()? afterCreateStaging;
+
+  @override
+  Future<Directory> createEditStaging() async {
+    final directory = await super.createEditStaging();
+    await afterCreateStaging?.call();
+    return directory;
+  }
+
   Future<void> Function()? afterDiscardStaging;
 
   @override
@@ -329,17 +354,213 @@ void _rehydrationFailureTests() {
     }
   }
 
+  test('paused edits stop rehydration before any download', () async {
+    await catalog.freezeEdits();
+
+    expect(await catalog.rehydrateMissingImages(), isFalse);
+    expect(requests, 0);
+  });
+
+  for (final interrupt in ['pause', 'change']) {
+    test('$interrupt during staging stops before the download', () async {
+      images.afterCreateStaging = () async {
+        if (interrupt == 'pause') {
+          await catalog.freezeEdits();
+        } else {
+          await database.open(p.join(folder.path, 'catalog.db'));
+        }
+      };
+
+      expect(await catalog.rehydrateMissingImages(), isFalse);
+      expect(requests, 0);
+    });
+  }
+
+  test('pause between records preserves already restored covers', () async {
+    Future<void>? freezing;
+    images.afterDiscardStaging = () async {
+      // freezeEdits waits for the save whose cleanup invokes this callback.
+      freezing = catalog.freezeEdits();
+    };
+    expect(await catalog.rehydrateMissingImages(), isTrue);
+    await freezing;
+    expect(requests, 1);
+    final records = await database.listRecords();
+    expect(records.first.cover!.localPath, isNotEmpty);
+    expect(
+      records.skip(1).every((record) => record.cover!.localPath.isEmpty),
+      isTrue,
+    );
+  });
+
   test(
-    'paused edits stop rehydration without downloading remaining covers',
+    'pause during a download stops later images in the same record',
     () async {
-      await catalog.freezeEdits();
-
-      await expectLater(
-        catalog.rehydrateMissingImages(),
-        throwsA(isA<CatalogEditPausedException>()),
+      final record = (await database.listRecords()).first;
+      await database.saveRecord(
+        record.copyWith(
+          images: [
+            ...record.images,
+            record.cover!.copyWith(isCover: false, sortOrder: 1),
+          ],
+        ),
       );
-
+      duringDownload = catalog.freezeEdits;
+      expect(await catalog.rehydrateMissingImages(), isFalse);
       expect(requests, 1);
+      expect(
+        (await database.getRecord(record.work.id!)).images
+            .every((image) => image.localPath.isEmpty),
+        isTrue,
+      );
+    },
+  );
+
+  test('a pause signal from a download ends rehydration', () async {
+    var attempts = 0;
+    images.beforeDownload = () async {
+      attempts++;
+      throw const CatalogEditPausedException();
+    };
+    expect(await catalog.rehydrateMissingImages(), isFalse);
+    expect(attempts, 1);
+    expect(requests, 0);
+  });
+
+  for (final phase in ['before downloads', 'during download', 'during save']) {
+    test('replacement stays installed when edits pause $phase', () async {
+      final active = database.databasePath;
+      final bundle = p.join(folder.path, 'incoming.realmwise');
+      await CatalogBundleService().exportBundle(
+        database: database,
+        outputPath: bundle,
+      );
+      for (final record in await database.listRecords()) {
+        await database.deleteRecord(record.work.id!);
+      }
+      await database.saveRecord(
+        const CatalogRecord(work: BookWork(title: 'Original')),
+      );
+      if (phase == 'during download') duringDownload = catalog.freezeEdits;
+      if (phase == 'during save') {
+        images.beforePublish = () async =>
+            throw const CatalogEditPausedException();
+      }
+      var rollbackDeletions = 0;
+      final recovery = CatalogRecovery(
+        database: database,
+        freezeEdits: catalog.freezeEdits,
+        releaseEdits: () async => catalog.unfreezeEdits(),
+        beforeClose: catalog.discardEdits,
+        reopen: database.open,
+        rehydrate: () async {
+          if (phase == 'before downloads') await catalog.freezeEdits();
+          return catalog.rehydrateMissingImages();
+        },
+        deleteFile: (file) async {
+          if (file.path == active) rollbackDeletions++;
+          await file.delete();
+        },
+      );
+      try {
+        final result = await recovery.replaceCatalog(bundle, bundle: true);
+        expect(result.needsAcknowledgement, isFalse);
+        expect(rollbackDeletions, 0);
+        expect(database.databasePath, active);
+        expect(
+          (await database.listRecords()).map((record) => record.work.title),
+          ['A first', 'B next', 'C last'],
+        );
+        expect(requests, phase == 'before downloads' ? 0 : 1);
+        expect(
+          (await database.listRecords()).every(
+            (record) => record.cover!.localPath.isEmpty,
+          ),
+          isTrue,
+        );
+      } finally {
+        await recovery.stop();
+      }
+    });
+  }
+
+  test(
+    'replacement stays installed when rehydration opens a different catalog',
+    () async {
+      final active = database.databasePath;
+      final otherPath = p.join(folder.path, 'other.db');
+      final other = DatabaseService();
+      try {
+        await other.open(otherPath);
+        await other.saveRecord(
+          const CatalogRecord(
+            work: BookWork(title: 'Other catalog'),
+            images: [
+              BookImage(
+                localPath: '',
+                remoteUrl: 'https://example.com/other.png',
+                sourceType: ImageSourceType.remoteCache,
+                isCover: true,
+              ),
+            ],
+          ),
+        );
+      } finally {
+        await other.close();
+      }
+      final bundle = p.join(folder.path, 'incoming.realmwise');
+      await CatalogBundleService().exportBundle(
+        database: database,
+        outputPath: bundle,
+      );
+      for (final record in await database.listRecords()) {
+        await database.deleteRecord(record.work.id!);
+      }
+      await database.saveRecord(
+        const CatalogRecord(work: BookWork(title: 'Original')),
+      );
+      duringDownload = () => database.open(otherPath);
+      var rollbackDeletions = 0;
+      final recovery = CatalogRecovery(
+        database: database,
+        freezeEdits: catalog.freezeEdits,
+        releaseEdits: () async => catalog.unfreezeEdits(),
+        beforeClose: catalog.discardEdits,
+        reopen: database.open,
+        rehydrate: catalog.rehydrateMissingImages,
+        deleteFile: (file) async {
+          if (file.path == active) rollbackDeletions++;
+          await file.delete();
+        },
+      );
+      try {
+        final result = await recovery.replaceCatalog(bundle, bundle: true);
+        expect(result.needsAcknowledgement, isFalse);
+        expect(rollbackDeletions, 0);
+        expect(requests, 1);
+        expect(database.databasePath, otherPath);
+        final untouched = (await database.listRecords()).single;
+        expect(untouched.work.title, 'Other catalog');
+        expect(untouched.cover!.localPath, isEmpty);
+        final installed = DatabaseService();
+        try {
+          await installed.open(active);
+          final records = await installed.listRecords();
+          expect(records.map((record) => record.work.title), [
+            'A first',
+            'B next',
+            'C last',
+          ]);
+          expect(
+            records.every((record) => record.cover!.localPath.isEmpty),
+            isTrue,
+          );
+        } finally {
+          await installed.close();
+        }
+      } finally {
+        await recovery.stop();
+      }
     },
   );
 
@@ -347,6 +568,12 @@ void _rehydrationFailureTests() {
     TypeError(),
     StateError('This edit session has ended.'),
   ]) {
+    test('propagates ${error.runtimeType} from a cover download', () async {
+      images.beforeDownload = () async => throw error;
+      await expectLater(catalog.rehydrateMissingImages(), throwsA(same(error)));
+      expect(requests, 0);
+    });
+
     test('propagates ${error.runtimeType} from a cover save', () async {
       images.beforePublish = () async => throw error;
 

@@ -494,4 +494,72 @@ void main() {
       }
     }
   });
+  for (final action in ['save', 'next']) {
+    testWidgets(
+      'catalog-changed $action keeps unsaved values and shows the typed message',
+      (tester) async {
+        final controller = AppController();
+        Directory? folder;
+        try {
+          final saved = (await tester.runAsync<CatalogRecord>(() async {
+            folder = await Directory.systemTemp.createTemp(
+              'editor_changed_save_',
+            );
+            await controller.database.open('${folder!.path}/catalog.db');
+            return controller.database.saveRecord(
+              const CatalogRecord(
+                work: BookWork(title: 'Changed catalog', productCode: 'OLD'),
+              ),
+            );
+          }))!;
+          await tester.pumpWidget(
+            MaterialApp(
+              home: BookEditorScreen(
+                controller: controller,
+                record: saved,
+                navigationRecords: [
+                  saved,
+                  const CatalogRecord(work: BookWork(title: 'Next work')),
+                ],
+                navigationIndex: 0,
+              ),
+            ),
+          );
+          await tester.pump(const Duration(milliseconds: 300));
+          await tester.enterText(
+            find.bySemanticsLabel('Product code'),
+            'UNSAVED',
+          );
+          await tester.runAsync(
+            () => controller.database.open('${folder!.path}/other.db'),
+          );
+          await tester.tap(
+            action == 'save' ? find.text('Save') : find.byTooltip('Next book'),
+          );
+          await tester.pumpAndSettle();
+
+          expect(find.byType(BookEditorScreen), findsOneWidget);
+          final snackBar = tester.widget<SnackBar>(find.byType(SnackBar));
+          expect(
+            (snackBar.content as Text).data,
+            'The catalog changed; reopen the record before saving.',
+          );
+          expect(find.textContaining('Bad state:'), findsNothing);
+          expect(find.text('UNSAVED'), findsOneWidget);
+          expect(
+            await tester.runAsync(() => controller.database.listRecords()),
+            isEmpty,
+          );
+        } finally {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.runAsync(() => controller.database.close());
+          controller.dispose();
+          final fixtureFolder = folder;
+          if (fixtureFolder != null) {
+            await tester.runAsync(() => fixtureFolder.delete(recursive: true));
+          }
+        }
+      },
+    );
+  }
 }

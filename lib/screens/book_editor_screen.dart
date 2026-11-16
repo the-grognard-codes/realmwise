@@ -259,7 +259,9 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     _favorite = copy.favorite;
   }
 
-  void _commitCopy() {
+  void _commitCopy() => _record = _recordWithCommittedCopy();
+
+  CatalogRecord _recordWithCommittedCopy() {
     final updated = _record.copies[_copyIndex].copyWith(
       condition: _condition,
       pricePaid: _doubleOrNull(_price.text),
@@ -274,7 +276,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
       tags: _splitTags(_tags.text),
     );
     final copies = List<UserCopy>.of(_record.copies)..[_copyIndex] = updated;
-    _record = _record.copyWith(copies: copies);
+    return _record.copyWith(copies: copies);
   }
 
   BookWork _committedWork() => _record.work.copyWith(
@@ -308,9 +310,9 @@ class _BookEditorScreenState extends State<BookEditorScreen>
 
   Future<bool> _save({bool close = true, bool showFeedback = true}) async {
     if (!(_formKey.currentState?.validate() ?? false)) return false;
-    _commitCopy();
     setState(() => _saving = true);
     try {
+      _commitCopy();
       _edit.update(_record.copyWith(work: _committedWork()));
       final saved = await _edit.save();
       if (!mounted) return true;
@@ -333,11 +335,11 @@ class _BookEditorScreenState extends State<BookEditorScreen>
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              error is CatalogEditPausedException
-                  ? error.message
-                  : 'Could not save: $error',
-            ),
+            content: Text(switch (error) {
+              CatalogEditPausedException() => error.message,
+              CatalogChangedError() => error.message,
+              _ => 'Could not save: $error',
+            }),
           ),
         );
     } finally {
@@ -352,8 +354,7 @@ class _BookEditorScreenState extends State<BookEditorScreen>
     if (next < 0 || next >= _navigationRecords.length) return;
     // Save before changing records so edits (including copy fields) are not lost,
     // but leave untouched records alone and keep arrow navigation quiet.
-    _commitCopy();
-    final current = _record.copyWith(work: _committedWork());
+    final current = _recordWithCommittedCopy().copyWith(work: _committedWork());
     if (_recordFingerprint(current) != _recordFingerprint(_savedRecord) &&
         (!await _save(close: false, showFeedback: false) || !mounted)) {
       return;
