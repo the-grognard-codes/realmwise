@@ -22,6 +22,9 @@ class CatalogService {
   final Set<CatalogEditSession> _edits = {};
   bool _editsFrozen = false;
 
+  bool _isCurrentGeneration(int generation) =>
+      database.isOpen && database.catalogGeneration == generation;
+
   CatalogEditSession beginEditing(CatalogRecord record) {
     final edit = CatalogEditSession._(this, record);
     _edits.add(edit);
@@ -61,20 +64,15 @@ class CatalogService {
   /// metadata and any user-owned local-only images.
   Future<bool> rehydrateMissingImages() async {
     final generation = database.catalogGeneration;
-    void checkCatalog() {
-      if (!database.isOpen || database.catalogGeneration != generation) {
-        throw StateError('The catalog changed; stop restoring images.');
-      }
-    }
-
     var changed = false;
     for (final record in await database.listRecords()) {
-      checkCatalog();
+      if (!_isCurrentGeneration(generation)) return changed;
       final edit = beginEditing(record);
       var recordChanged = false;
       final restored = <BookImage>[];
       try {
         for (final image in record.images) {
+          if (!_isCurrentGeneration(generation)) return changed;
           final localPath = image.localPath.trim();
           final remoteUrl = image.remoteUrl.trim().isNotEmpty
               ? image.remoteUrl.trim()
@@ -112,12 +110,18 @@ class CatalogService {
           try {
             await edit.save();
             changed = true;
+          } on CatalogEditPausedException {
+            rethrow;
           } on Exception {
             // A cover is optional; its failed save must not undo a replacement.
+            // Unlike optional downloads in save(), save-time Errors propagate.
             // save() already logs the failure. Only continue in this catalog.
-            checkCatalog();
+            if (!_isCurrentGeneration(generation)) return changed;
           }
         }
+      } on CatalogChangedError {
+        // Rehydration ending must not roll back an installed replacement.
+        return changed;
       } finally {
         await edit.discard();
       }
@@ -153,6 +157,12 @@ class CatalogService {
   }
 }
 
+/// An edit's original catalog was closed or replaced.
+class CatalogChangedError extends StateError {
+  CatalogChangedError()
+    : super('The catalog changed; reopen the record before saving.');
+}
+
 /// Retryable refusal while catalog replacement temporarily pauses edits.
 class CatalogEditPausedException implements Exception {
   const CatalogEditPausedException();
@@ -184,10 +194,7 @@ class CatalogEditSession {
 
   void _check() {
     if (_closed) throw StateError('This edit session has ended.');
-    if (!catalog.database.isOpen ||
-        catalog.database.catalogGeneration != _generation) {
-      throw StateError('The catalog changed; reopen the record before saving.');
-    }
+    if (!catalog._isCurrentGeneration(_generation)) throw CatalogChangedError();
   }
 
   void update(CatalogRecord value) {
