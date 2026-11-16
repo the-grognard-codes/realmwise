@@ -1,4 +1,7 @@
 import 'dart:io';
+import 'dart:convert';
+
+import 'package:archive/archive.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:realmwise/screens/settings_screen.dart';
 import 'package:realmwise/services/app_controller.dart';
 import 'package:realmwise/services/catalog_recovery.dart';
+import 'package:realmwise/services/export_destination.dart';
 import 'package:realmwise/services/sync_contract.dart';
 import 'package:realmwise/sync/sync_session.dart';
 import 'package:realmwise/services/sync_metadata.dart';
@@ -37,6 +41,183 @@ class _MemoryTokenStorage implements TokenStorage {
 }
 
 void main() {
+  for (final export in [
+    (
+      tab: 'Database',
+      button: 'Export device bundle',
+      name: 'realmwise.realmwise',
+      mime: 'application/zip',
+      success: 'Portable device bundle exported.',
+    ),
+    (
+      tab: 'Database',
+      button: 'Export CSV',
+      name: 'realmwise_export.csv',
+      mime: 'text/csv',
+      success: 'Catalog CSV exported.',
+    ),
+    (
+      tab: 'Diagnostics',
+      button: 'Generate diagnostic bundle',
+      name: 'realmwise-diagnostics.zip',
+      mime: 'application/zip',
+      success: 'Diagnostic bundle saved.',
+    ),
+  ]) {
+    testWidgets('${export.button} uses the export module and safe feedback', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1000, 4000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final previous = PathProviderPlatform.instance;
+      final folder = (await tester.runAsync(
+        () => Directory.systemTemp.createTemp('settings_export_'),
+      ))!;
+      PathProviderPlatform.instance = _FakePathProvider(folder.path);
+      SharedPreferences.setMockInitialValues({
+        'diagnostic_options_enabled': true,
+      });
+      final storage = _MemoryTokenStorage();
+      final controller = AppController(
+        tokenStorage: storage,
+        imageRootPathOverride: '${folder.path}/images',
+      );
+      final adapter = _ExportAdapter();
+      final staging = Directory('${folder.path}/staging');
+      try {
+        await tester.runAsync(() async {
+          await staging.create();
+          controller.diagnostics.directory = await Directory(
+            '${folder.path}/logs',
+          ).create();
+          await controller.initialize();
+          expect(controller.error, isNull);
+          await controller.database.databaseHandle.insert('works', {
+            'title': 'Exported work',
+          });
+          await controller.setRpgGeekKey('private-api-key-marker');
+          await controller.database.setSetting(
+            'rpggeek_api_key',
+            'private-api-key-marker',
+          );
+          await storage.write('drive_token', 'private-token-marker');
+          // Simulate a pre-existing unsanitized log: the diagnostic producer
+          // must sanitize again when building the exported archive.
+          await controller.diagnostics.initialize();
+          final logEntry = jsonEncode({
+            'timestamp': '2026-01-01T00:00:00Z',
+            'severity': 'warning',
+            'event': 'sync.failed',
+            'session': 'test',
+            'fields': {
+              'status': 500,
+              'token': 'private-token-marker',
+              'apiKey': 'private-api-key-marker',
+            },
+          });
+          await File('${folder.path}/logs/diagnostic.log')
+              .writeAsString('$logEntry\n');
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SettingsScreen(
+                controller: controller,
+                exportDestination: ExportDestination(
+                  adapter: adapter,
+                  temporaryDirectory: () async => staging,
+                ),
+              ),
+            ),
+          ),
+        );
+        await _pumpUntilVisible(tester, find.text('Interface'));
+        await _selectTab(tester, export.tab);
+        await tester.ensureVisible(find.text(export.button));
+        await tester.pumpAndSettle();
+
+        Future<void> tapExport() async {
+          await tester.tap(find.text(export.button));
+          await tester.pump();
+          for (var i = 0; i < 150; i++) {
+            await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 20)),
+            );
+            await tester.pump();
+            final button = tester.widget<ButtonStyleButton>(
+              find.ancestor(
+                of: find.text(export.button),
+                matching: find.byWidgetPredicate(
+                  (widget) => widget is ButtonStyleButton,
+                ),
+              ),
+            );
+            if (adapter.calls > 0 && button.onPressed != null) return;
+          }
+          fail('Export did not finish');
+        }
+
+        // Cancelling the destination does not run the producer or show feedback.
+        await tapExport();
+        expect(adapter.fileName, export.name);
+        expect(adapter.mimeType, export.mime);
+        expect(adapter.savedBytes, isNull);
+        expect(find.byType(SnackBar), findsNothing);
+        expect(await tester.runAsync(() => staging.list().toList()), isEmpty);
+
+        adapter.cancel = false;
+        await tapExport();
+        expect(find.text(export.success), findsOneWidget);
+        final bytes = adapter.savedBytes!;
+        final contents = export.mime == 'text/csv'
+            ? utf8.decode(bytes)
+            : ZipDecoder()
+                  .decodeBytes(bytes)
+                  .files
+                  .map((file) => latin1.decode(file.content as List<int>))
+                  .join('\n');
+        expect(contents, isNot(contains('private-api-key-marker')));
+        expect(contents, isNot(contains('private-token-marker')));
+        if (export.mime == 'text/csv' || export.name == 'realmwise.realmwise') {
+          expect(contents, contains('Exported work'));
+        } else {
+          expect(contents, contains('sync.failed'));
+          expect(contents, contains('500'));
+          expect(contents, isNot(contains('Exported work')));
+        }
+        expect(await tester.runAsync(() => staging.list().toList()), isEmpty);
+        ScaffoldMessenger.of(tester.element(find.byType(SettingsScreen)))
+            .removeCurrentSnackBar();
+        await tester.pumpAndSettle();
+
+        adapter.failCopy = true;
+        await tapExport();
+        expect(find.text(const ExportFailed().message), findsOneWidget);
+        expect(find.textContaining('private-token-marker'), findsNothing);
+        expect(await tester.runAsync(() => staging.list().toList()), isEmpty);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(
+          () => controller.database.listCatalogTierSections('gameSystem'),
+        );
+        await tester.runAsync(controller.closeDatabase);
+        controller.dispose();
+        var diagnosticsFlushed = false;
+        controller.diagnostics.flush().then((_) => diagnosticsFlushed = true);
+        for (var i = 0; i < 100 && !diagnosticsFlushed; i++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)),
+          );
+          await tester.pump();
+        }
+        expect(diagnosticsFlushed, isTrue);
+        await tester.runAsync(() => folder.delete(recursive: true));
+        PathProviderPlatform.instance = previous;
+      }
+    });
+  }
   for (final route in [
     'sync',
     'sync conflict',
@@ -346,4 +527,34 @@ Future<void> _selectTab(WidgetTester tester, String label) async {
   await tester.tap(find.text(label));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 300));
+}
+
+class _ExportAdapter implements ExportDestinationAdapter {
+  bool cancel = true;
+  bool failCopy = false;
+  int calls = 0;
+  String? fileName;
+  String? mimeType;
+  List<int>? savedBytes;
+
+  @override
+  Future<ExportTarget?> chooseDestination({
+    required String fileName,
+    required String mimeType,
+  }) async {
+    calls++;
+    this.fileName = fileName;
+    this.mimeType = mimeType;
+    return cancel ? null : _ExportTarget(this);
+  }
+}
+
+class _ExportTarget extends ExportTarget {
+  _ExportTarget(this.adapter);
+  final _ExportAdapter adapter;
+  @override
+  Future<void> save(String temporaryPath) async {
+    if (adapter.failCopy) throw StateError('private-token-marker');
+    adapter.savedBytes = await File(temporaryPath).readAsBytes();
+  }
 }

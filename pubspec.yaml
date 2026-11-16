@@ -14,6 +14,7 @@ dependencies:
   archive: ^4.6.0
   crypto: ^3.0.8
   file_picker: ^13.3.3
+  file_selector: ^1.1.0
   http: ^1.6.0
   intl: ^0.20.3
   mobile_scanner: ^7.5.0

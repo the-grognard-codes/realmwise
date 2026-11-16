@@ -4,14 +4,12 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/app_controller.dart';
 import '../services/catalog_bundle_service.dart';
 import '../services/catalog_recovery.dart';
-import '../services/diagnostic_bundle_exporter.dart';
+import '../services/export_destination.dart';
 import '../services/sync_contract.dart';
 import '../services/sync_metadata.dart';
 import '../sync/sync_session.dart';
@@ -31,15 +29,19 @@ class SettingsScreen extends StatefulWidget {
     super.key,
     required this.controller,
     this.onSyncRestore,
+    this.exportDestination,
   });
   final AppController controller;
   final VoidCallback? onSyncRestore;
+  final ExportDestination? exportDestination;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  late final ExportDestination _exportDestination =
+      widget.exportDestination ?? ExportDestination();
   late final TextEditingController _key;
   late final TextEditingController _openLibraryName;
   late final TextEditingController _openLibraryEmail;
@@ -141,75 +143,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
     success: 'Open Library contact details saved on this device.',
   );
 
+  void _showExportResult(ExportResult result, String success) {
+    if (!mounted || result is ExportCancelled) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result is ExportFailed ? result.message : success),
+      ),
+    );
+  }
+
   Future<void> _generateDiagnosticBundle() async {
     await _run(() async {
-      String? androidUri;
-      if (Platform.isAndroid) {
-        androidUri = await const DiagnosticBundleExporter().chooseDestination();
-        if (androidUri == null) return;
-      }
-      final temporaryDirectory = await getTemporaryDirectory();
-      final temporary = File(
-        p.join(
-          temporaryDirectory.path,
-          'realmwise-diagnostics-${DateTime.now().microsecondsSinceEpoch}.zip',
-        ),
-      );
-      var appVersion = _buildName == 'unknown'
-          ? 'unknown'
-          : '$_buildName+$_buildNumber';
-      try {
-        final info = await PackageInfo.fromPlatform();
-        appVersion = info.buildNumber.isEmpty
-            ? info.version
-            : '${info.version}+${info.buildNumber}';
-      } on Object {
-        /* Metadata is optional on headless platforms. */
-      }
-      try {
-        final file = await widget.controller.diagnosticBundles.create(
-          temporary.path,
-          appVersion: appVersion,
-          environment: {'platform': Platform.operatingSystem},
-        );
-        if (Platform.isAndroid) {
-          await const DiagnosticBundleExporter().copyFileToDestination(
-            path: file.path,
-            uri: androidUri!,
-          );
-          if (mounted)
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Diagnostic bundle saved.')),
-            );
-        } else {
-          final saved = await FilePicker.saveFile(
-            dialogTitle: 'Save diagnostic bundle',
-            fileName: 'realmwise-diagnostics.zip',
-            bytes: await file.readAsBytes(),
-          );
-          if (saved == null || !mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Diagnostic bundle saved.')),
-          );
-        }
-      } catch (_) {
-        if (Platform.isAndroid && androidUri != null) {
+      final result = await _exportDestination.export(
+        fileName: 'realmwise-diagnostics.zip',
+        mimeType: 'application/zip',
+        produce: (path) async {
+          var appVersion = _buildName == 'unknown'
+              ? 'unknown'
+              : '$_buildName+$_buildNumber';
           try {
-            await const DiagnosticBundleExporter().deleteDestination(
-              androidUri,
-            );
+            final info = await PackageInfo.fromPlatform();
+            appVersion = info.buildNumber.isEmpty
+                ? info.version
+                : '${info.version}+${info.buildNumber}';
           } on Object {
-            // Cleanup is best effort; preserve the original export failure.
+            /* Metadata is optional on headless platforms. */
           }
-        }
-        rethrow;
-      } finally {
-        try {
-          await temporary.delete();
-        } on FileSystemException {
-          // Cleanup is best effort; the OS may remove temporary files later.
-        }
-      }
+          await widget.controller.diagnosticBundles.create(
+            path,
+            appVersion: appVersion,
+            environment: {'platform': Platform.operatingSystem},
+          );
+        },
+      );
+      _showExportResult(result, 'Diagnostic bundle saved.');
     });
   }
 
@@ -518,61 +485,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _exportDeviceBundle() async {
     await _run(() async {
-      String? androidUri;
-      if (Platform.isAndroid) {
-        androidUri = await const DiagnosticBundleExporter().chooseDestination(
-          fileName: 'realmwise.realmwise',
-          mimeType: 'application/zip',
-        );
-        if (androidUri == null) return;
-      }
-      final temporaryDirectory = await getTemporaryDirectory();
-      final temporary = File(
-        p.join(
-          temporaryDirectory.path,
-          'realmwise-${DateTime.now().microsecondsSinceEpoch}.realmwise',
-        ),
+      final result = await _exportDestination.export(
+        fileName: 'realmwise.realmwise',
+        mimeType: 'application/zip',
+        produce: widget.controller.exportDeviceBundle,
       );
-      try {
-        await widget.controller.exportDeviceBundle(temporary.path);
-        if (Platform.isAndroid) {
-          await const DiagnosticBundleExporter().copyFileToDestination(
-            path: temporary.path,
-            uri: androidUri!,
-          );
-          if (mounted)
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Portable device bundle exported.')),
-            );
-        } else {
-          final saved = await FilePicker.saveFile(
-            dialogTitle: 'Export portable device bundle',
-            fileName: 'realmwise.realmwise',
-            bytes: await temporary.readAsBytes(),
-          );
-          if (saved == null || !mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Portable device bundle exported.')),
-          );
-        }
-      } catch (_) {
-        if (Platform.isAndroid && androidUri != null) {
-          try {
-            await const DiagnosticBundleExporter().deleteDestination(
-              androidUri,
-            );
-          } on Object {
-            // Cleanup is best effort; preserve the original export failure.
-          }
-        }
-        rethrow;
-      } finally {
-        try {
-          await temporary.delete();
-        } on FileSystemException {
-          // Cleanup is best effort; the OS may remove temporary files later.
-        }
-      }
+      _showExportResult(result, 'Portable device bundle exported.');
     });
   }
 
@@ -628,61 +546,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _exportCsv() async {
     await _run(() async {
-      String? androidUri;
-      if (Platform.isAndroid) {
-        androidUri = await const DiagnosticBundleExporter().chooseDestination(
-          fileName: 'realmwise_export.csv',
-          mimeType: 'text/csv',
-        );
-        if (androidUri == null) return;
-      }
-      final temporaryDirectory = await getTemporaryDirectory();
-      final temporary = File(
-        p.join(
-          temporaryDirectory.path,
-          'realmwise-${DateTime.now().microsecondsSinceEpoch}.csv',
-        ),
+      final result = await _exportDestination.export(
+        fileName: 'realmwise_export.csv',
+        mimeType: 'text/csv',
+        produce: widget.controller.exportDatabaseCsv,
       );
-      try {
-        await widget.controller.exportDatabaseCsv(temporary.path);
-        if (Platform.isAndroid) {
-          await const DiagnosticBundleExporter().copyFileToDestination(
-            path: temporary.path,
-            uri: androidUri!,
-          );
-          if (mounted)
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Catalog CSV exported.')),
-            );
-        } else {
-          final saved = await FilePicker.saveFile(
-            dialogTitle: 'Export catalog as CSV',
-            fileName: 'realmwise_export.csv',
-            bytes: await temporary.readAsBytes(),
-          );
-          if (saved == null || !mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Catalog CSV exported.')),
-          );
-        }
-      } catch (_) {
-        if (Platform.isAndroid && androidUri != null) {
-          try {
-            await const DiagnosticBundleExporter().deleteDestination(
-              androidUri,
-            );
-          } on Object {
-            // Cleanup is best effort; preserve the original export failure.
-          }
-        }
-        rethrow;
-      } finally {
-        try {
-          await temporary.delete();
-        } on FileSystemException {
-          // Cleanup is best effort; the OS may remove temporary files later.
-        }
-      }
+      _showExportResult(result, 'Catalog CSV exported.');
     });
   }
 
