@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 
 import 'package:file_selector/file_selector.dart' as selector;
 import 'package:path/path.dart' as p;
@@ -7,8 +8,12 @@ import 'package:path_provider/path_provider.dart';
 import 'diagnostic_bundle_exporter.dart';
 import 'diagnostic_logging.dart';
 
-void _logExportError(String event, Object error) {
-  DiagnosticDiagnostics.emit(DiagnosticSeverity.warning, event, {
+void _logExportError(
+  String event,
+  Object error, {
+  DiagnosticSeverity severity = DiagnosticSeverity.warning,
+}) {
+  DiagnosticDiagnostics.emit(severity, event, {
     'errorClass': error.runtimeType.toString(),
   });
 }
@@ -18,8 +23,7 @@ sealed class ExportResult {
 }
 
 final class ExportSaved extends ExportResult {
-  const ExportSaved(this.locationDescription);
-  final String locationDescription;
+  const ExportSaved();
 }
 
 final class ExportCancelled extends ExportResult {
@@ -39,12 +43,9 @@ abstract interface class ExportDestinationAdapter {
 }
 
 abstract class ExportTarget {
-  String get locationDescription;
+  Future<void> save(String temporaryPath);
 
-  /// Returns false if saving is cancelled after production.
-  Future<bool> save(String temporaryPath);
-
-  /// Releases a newly created destination on failure or cancellation.
+  /// Releases a newly created destination on failure.
   Future<void> discard() async {}
 }
 
@@ -82,12 +83,15 @@ class ExportDestination {
       staging = await root.createTemp('realmwise-export-');
       final path = p.join(staging.path, p.basename(fileName));
       await produce(path);
-      result = await target.save(path)
-          ? ExportSaved(target.locationDescription)
-          : const ExportCancelled();
+      await target.save(path);
+      result = const ExportSaved();
     } on Object catch (error) {
       // Plugin and producer errors can contain credentials or private paths.
-      _logExportError('export.error', error);
+      _logExportError(
+        'export.error',
+        error,
+        severity: DiagnosticSeverity.error,
+      );
       result = const ExportFailed();
     }
     if (target != null && result is! ExportSaved) {
@@ -126,21 +130,17 @@ class AndroidExportDestinationAdapter implements ExportDestinationAdapter {
       fileName: fileName,
       mimeType: mimeType,
     );
-    return uri == null ? null : _AndroidTarget(exporter, uri, fileName);
+    return uri == null ? null : _AndroidTarget(exporter, uri);
   }
 }
 
 class _AndroidTarget extends ExportTarget {
-  _AndroidTarget(this.exporter, this.uri, this.locationDescription);
+  _AndroidTarget(this.exporter, this.uri);
   final DiagnosticBundleExporter exporter;
   final String uri;
   @override
-  final String locationDescription;
-
-  @override
-  Future<bool> save(String temporaryPath) async {
+  Future<void> save(String temporaryPath) async {
     await exporter.copyFileToDestination(path: temporaryPath, uri: uri);
-    return true;
   }
 
   @override
@@ -148,24 +148,27 @@ class _AndroidTarget extends ExportTarget {
 }
 
 typedef ExportSaveDialog = Future<String?> Function({required String fileName});
-typedef ExportFileCopy = Future<void> Function(
-  String sourcePath,
-  String destinationPath,
-);
+
+/// Filesystem operations used by the desktop adapter, injectable for failures.
+class ExportFileSystem {
+  const ExportFileSystem();
+
+  File file(String path) => File(path);
+  Directory directory(String path) => Directory(path);
+
+  Future<void> copyFile(String sourcePath, String destinationPath) async {
+    await file(sourcePath).copy(destinationPath);
+  }
+}
 
 class DesktopExportDestinationAdapter implements ExportDestinationAdapter {
   const DesktopExportDestinationAdapter({
     ExportSaveDialog? saveDialog,
-    ExportFileCopy? copyFile,
-  }) : _saveDialog = saveDialog ?? _showSaveDialog,
-       _copyFile = copyFile ?? _copy;
+    this.fileSystem = const ExportFileSystem(),
+  }) : _saveDialog = saveDialog ?? _showSaveDialog;
 
   final ExportSaveDialog _saveDialog;
-  final ExportFileCopy _copyFile;
-
-  static Future<void> _copy(String sourcePath, String destinationPath) async {
-    await File(sourcePath).copy(destinationPath);
-  }
+  final ExportFileSystem fileSystem;
 
   static Future<String?> _showSaveDialog({required String fileName}) async {
     // The path-only API uses the OS dialog title; it has no title parameter.
@@ -179,34 +182,84 @@ class DesktopExportDestinationAdapter implements ExportDestinationAdapter {
     required String mimeType,
   }) async {
     final path = await _saveDialog(fileName: fileName);
-    return path == null ? null : _DesktopTarget(path, _copyFile);
+    return path == null ? null : _DesktopTarget(path, fileSystem);
   }
 }
 
 class _DesktopTarget extends ExportTarget {
-  _DesktopTarget(this.path, this.copyFile);
+  _DesktopTarget(this.path, this.fileSystem);
   final String path;
-  final ExportFileCopy copyFile;
-  @override
-  String get locationDescription => p.basename(path);
+  final ExportFileSystem fileSystem;
+  static final _random = Random.secure();
+  static final _activeFiles = <String>{};
+
+  static String _key(String path) {
+    final normalized = p.normalize(p.absolute(path));
+    return Platform.isWindows ? normalized.toLowerCase() : normalized;
+  }
+
+  Future<void> _removePartial(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } on Object catch (error) {
+      _logExportError('export.destination_cleanup.error', error);
+    }
+  }
+
+  Future<void> _removeStalePartials() async {
+    final prefix = '${p.basename(path)}.partial-';
+    try {
+      await for (final entry
+          in fileSystem.directory(p.dirname(path)).list(followLinks: false)) {
+        if (entry is! File || _activeFiles.contains(_key(entry.path))) continue;
+        final name = p.basename(entry.path);
+        final matches = Platform.isWindows
+            ? name.toLowerCase().startsWith(prefix.toLowerCase())
+            : name.startsWith(prefix);
+        if (matches) await _removePartial(fileSystem.file(entry.path));
+      }
+    } on Object catch (error) {
+      // Listing or deleting leftovers must not prevent a permitted file write.
+      _logExportError('export.destination_cleanup.error', error);
+    }
+  }
+
+  Future<File> _createPartial() async {
+    for (var attempt = 0; attempt < 10; attempt++) {
+      final suffix = List.generate(
+        16,
+        (_) => _random.nextInt(256),
+      ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+      final pending = fileSystem.file('$path.partial-$suffix');
+      final key = _key(pending.path);
+      if (!_activeFiles.add(key)) continue;
+      try {
+        await pending.create(exclusive: true);
+        return pending;
+      } on PathExistsException {
+        _activeFiles.remove(key);
+      } on Object {
+        _activeFiles.remove(key);
+        rethrow;
+      }
+    }
+    throw const FileSystemException(
+      'Could not reserve an export temporary file.',
+    );
+  }
 
   @override
-  Future<bool> save(String temporaryPath) async {
-    // Stage on the destination filesystem so a partial copy cannot damage an
-    // existing export and the final rename does not cross filesystem boundaries.
-    final staging = await Directory(p.dirname(path))
-        .createTemp('.realmwise-export-');
+  Future<void> save(String temporaryPath) async {
+    await _removeStalePartials();
+    // A sibling file needs no folder-creation rights and keeps the final rename
+    // on the destination filesystem. Never copy directly over an existing file.
+    final pending = await _createPartial();
     try {
-      final pending = p.join(staging.path, p.basename(path));
-      await copyFile(temporaryPath, pending);
-      await File(pending).rename(path);
-      return true;
+      await fileSystem.copyFile(temporaryPath, pending.path);
+      await pending.rename(path);
     } finally {
-      try {
-        await staging.delete(recursive: true);
-      } on Object catch (error) {
-        _logExportError('export.staging_cleanup.error', error);
-      }
+      await _removePartial(pending);
+      _activeFiles.remove(_key(pending.path));
     }
   }
 }

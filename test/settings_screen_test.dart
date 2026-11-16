@@ -553,11 +553,8 @@ class _ExportTarget extends ExportTarget {
   _ExportTarget(this.adapter);
   final _ExportAdapter adapter;
   @override
-  String get locationDescription => 'chosen export';
-  @override
-  Future<bool> save(String temporaryPath) async {
+  Future<void> save(String temporaryPath) async {
     if (adapter.failCopy) throw StateError('private-token-marker');
     adapter.savedBytes = await File(temporaryPath).readAsBytes();
-    return true;
   }
 }
