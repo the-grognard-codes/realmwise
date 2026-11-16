@@ -60,8 +60,16 @@ class CatalogService {
   /// Restores local files omitted from portable bundles while retaining image
   /// metadata and any user-owned local-only images.
   Future<bool> rehydrateMissingImages() async {
+    final generation = database.catalogGeneration;
+    void checkCatalog() {
+      if (!database.isOpen || database.catalogGeneration != generation) {
+        throw StateError('The catalog changed; stop restoring images.');
+      }
+    }
+
     var changed = false;
     for (final record in await database.listRecords()) {
+      checkCatalog();
       final edit = beginEditing(record);
       var recordChanged = false;
       final restored = <BookImage>[];
@@ -104,13 +112,10 @@ class CatalogService {
           try {
             await edit.save();
             changed = true;
-          } on Object catch (error) {
+          } on Exception {
             // A cover is optional; its failed save must not undo a replacement.
-            DiagnosticDiagnostics.emit(
-              DiagnosticSeverity.warning,
-              'catalog.rehydrate.error',
-              {'errorClass': error.runtimeType.toString()},
-            );
+            // save() already logs the failure. Only continue in this catalog.
+            checkCatalog();
           }
         }
       } finally {

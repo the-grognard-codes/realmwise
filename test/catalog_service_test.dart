@@ -44,6 +44,7 @@ class _FakeImages extends ImageStorageService {
 
 void main() {
   group('edit sessions', _editSessionTests);
+  group('rehydration failures', _rehydrationFailureTests);
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
@@ -129,6 +130,138 @@ void main() {
       await folder.delete(recursive: true);
     },
   );
+}
+
+class _InterruptingImages extends ImageStorageService {
+  _InterruptingImages({required ImageSecureTransport transport})
+    : super(
+        null,
+        resolver: (_) async => [InternetAddress('93.184.216.34')],
+        transport: transport,
+      );
+
+  Future<void> Function()? beforePublish;
+  Future<void> Function()? afterSave;
+
+  @override
+  Future<BookImage> publishStagedImage(BookImage image, BookWork work) async {
+    await beforePublish?.call();
+    return super.publishStagedImage(image, work);
+  }
+
+  @override
+  Future<void> discardEditStaging(Directory directory) async {
+    await super.discardEditStaging(directory);
+    final callback = afterSave;
+    afterSave = null;
+    await callback?.call();
+  }
+}
+
+void _rehydrationFailureTests() {
+  late Directory folder;
+  late DatabaseService database;
+  late _InterruptingImages images;
+  late CatalogService catalog;
+  late int requests;
+
+  setUp(() async {
+    folder = await Directory.systemTemp.createTemp('rehydration_failure_');
+    database = DatabaseService();
+    await database.open(p.join(folder.path, 'catalog.db'));
+    for (final title in ['A first', 'B next', 'C last']) {
+      await database.saveRecord(
+        CatalogRecord(
+          work: BookWork(title: title),
+          images: const [
+            BookImage(
+              localPath: '',
+              remoteUrl: 'https://example.com/cover.png',
+              sourceType: ImageSourceType.remoteCache,
+              isCover: true,
+            ),
+          ],
+        ),
+      );
+    }
+    requests = 0;
+    images = _InterruptingImages(
+      transport: (_, _) async {
+        requests++;
+        return http.StreamedResponse(
+          Stream.value(
+            base64Decode(
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aSaoAAAAASUVORK5CYII=',
+            ),
+          ),
+          200,
+          headers: {'content-type': 'image/png'},
+        );
+      },
+    );
+    await images.initialize(p.join(folder.path, 'images'));
+    catalog = CatalogService(database: database, images: images);
+  });
+
+  tearDown(() async {
+    await catalog.discardEdits();
+    await database.close();
+    await folder.delete(recursive: true);
+  });
+
+  for (final reopen in [false, true]) {
+    for (final failedSave in [false, true]) {
+      test(
+        'stops downloads when catalog ${reopen ? 'changes' : 'closes'} after ${failedSave ? 'failed' : 'successful'} save',
+        () async {
+          Future<void> interrupt() async {
+            await database.close();
+            if (reopen) await database.open(p.join(folder.path, 'catalog.db'));
+          }
+
+          if (failedSave) {
+            images.beforePublish = () async {
+              await interrupt();
+              throw const FileSystemException('injected publish failure');
+            };
+          } else {
+            images.afterSave = interrupt;
+          }
+
+          await expectLater(catalog.rehydrateMissingImages(), throwsStateError);
+
+          expect(requests, 1);
+          expect(database.isOpen, reopen);
+          expect(
+            Directory(images.rootPath)
+                .listSync(recursive: true)
+                .whereType<File>()
+                .where((file) => file.path.contains('.staging')),
+            isEmpty,
+          );
+        },
+      );
+    }
+  }
+
+  for (final error in [
+    TypeError(),
+    StateError('This edit session has ended.'),
+  ]) {
+    test('propagates ${error.runtimeType} from a cover save', () async {
+      images.beforePublish = () async => throw error;
+
+      await expectLater(catalog.rehydrateMissingImages(), throwsA(same(error)));
+
+      expect(requests, 1);
+      expect(
+        (await database.listRecords()).every(
+          (record) => record.cover!.localPath.isEmpty,
+        ),
+        isTrue,
+      );
+    });
+  }
 }
 
 class _BlockingImages extends ImageStorageService {
@@ -504,8 +637,19 @@ void _editSessionTests() {
           ]);
           expect(restored.cover!.caption, remote.caption);
         }
-        final diagnostics = capture.fieldsByEvent['catalog.rehydrate.error']!;
-        expect(diagnostics.keys, ['errorClass']);
+        expect(
+          capture.events.where(
+            (event) => event.startsWith('catalog.') && event.endsWith('.error'),
+          ),
+          ['catalog.save.error'],
+        );
+        final diagnostics = capture.fieldsByEvent['catalog.save.error']!;
+        expect(
+          diagnostics.keys,
+          unorderedEquals(['errorClass', 'operation', 'outcome']),
+        );
+        expect(diagnostics['operation'], 'save');
+        expect(diagnostics['outcome'], 'failed');
         expect(
           diagnostics['errorClass'],
           failure == 'publish' ? 'FileSystemException' : 'SqfliteFfiException',

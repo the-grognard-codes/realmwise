@@ -11,9 +11,11 @@ import 'package:realmwise/data/database_service.dart';
 import 'package:realmwise/services/app_controller.dart';
 import 'package:realmwise/services/catalog_recovery.dart';
 import 'package:realmwise/services/catalog_service.dart';
+import 'package:realmwise/services/diagnostic_logging.dart';
 import 'package:realmwise/services/image_storage_service.dart';
 import 'package:realmwise/services/secure_storage_service.dart';
 import 'package:realmwise/services/sync_contract.dart';
+import 'package:realmwise/sync/sync_session.dart';
 
 class _Tokens implements TokenStorage {
   @override
@@ -49,7 +51,7 @@ class _HeldImageController extends AppController {
 }
 
 class _FetchedImageController extends AppController {
-  _FetchedImageController(String imageRoot)
+  _FetchedImageController(String imageRoot, {super.syncProvider})
     : super(tokenStorage: _Tokens(), imageRootPathOverride: imageRoot);
 
   int fetches = 0;
@@ -102,6 +104,8 @@ class _FetchedImages extends ImageStorageService {
 }
 
 class _Sync extends Object implements SyncProvider {
+  Uint8List? downloadPayload;
+  int downloads = 0;
   final started = Completer<void>(), release = Completer<void>();
   @override
   String get provider => 'fake';
@@ -140,7 +144,26 @@ class _Sync extends Object implements SyncProvider {
     SyncAuthSession session,
     SyncRemoteTarget target, {
     SyncPrecondition? precondition,
-  }) async => throw UnimplementedError();
+  }) async {
+    downloads++;
+    return SyncDownloadResult(
+      payload: downloadPayload!,
+      metadata: (await metadata(session, target))!,
+    );
+  }
+}
+
+class _DiagnosticCapture extends DiagnosticLogger {
+  final failures = <(String, Map<String, Object?>)>[];
+
+  @override
+  Future<void> log(
+    DiagnosticSeverity severity,
+    String event, [
+    Map<String, Object?> fields = const {},
+  ]) async {
+    if (event.endsWith('.error')) failures.add((event, fields));
+  }
 }
 
 void main() {
@@ -188,58 +211,106 @@ void main() {
     }
   });
 
-  test('bundle import commits despite a failed cover publish and rehydrates the next work', () async {
-    final dir = await Directory.systemTemp.createTemp('failed_cover_import_');
-    final controller = _FetchedImageController('${dir.path}/images');
-    try {
-      await controller.openDatabase('${dir.path}/catalog.db', remember: false);
-      for (final title in ['A failed cover', 'B restored cover']) {
-        await controller.database.saveRecord(
-          CatalogRecord(
-            work: BookWork(title: title),
-            images: [
-              BookImage(
-                localPath: '',
-                remoteUrl: 'https://example.com/cover.png',
-                caption: 'Retained caption',
-                sourceType: ImageSourceType.remoteCache,
-                isCover: true,
-              ),
-            ],
-          ),
+  for (final cloudDownload in [false, true]) {
+    test(
+      '${cloudDownload ? 'cloud download' : 'bundle import'} commits despite a failed cover publish and rehydrates the next work',
+      () async {
+        final dir = await Directory.systemTemp.createTemp(
+          'failed_cover_import_',
         );
-      }
-      final bundle = '${dir.path}/incoming.realmwise';
-      await controller.exportDeviceBundle(bundle);
-      // Distinguish the replacement from the original that would be rolled back.
-      for (final record in await controller.database.listRecords()) {
-        await controller.database.deleteRecord(record.work.id!);
-      }
-      await controller.database.saveRecord(
-        const CatalogRecord(work: BookWork(title: 'Original catalog')),
-      );
-      controller._fetchedImages.failPublishTitle = 'A failed cover';
+        final provider = _Sync();
+        final previousLogger = DiagnosticDiagnostics.logger;
+        final controller = _FetchedImageController(
+          '${dir.path}/images',
+          syncProvider: provider,
+        );
+        addTearDown(() => DiagnosticDiagnostics.logger = previousLogger);
+        try {
+          await controller.openDatabase(
+            '${dir.path}/catalog.db',
+            remember: false,
+          );
+          for (final title in ['A failed cover', 'B restored cover']) {
+            await controller.database.saveRecord(
+              CatalogRecord(
+                work: BookWork(title: title),
+                images: [
+                  BookImage(
+                    localPath: '',
+                    remoteUrl: 'https://example.com/cover.png',
+                    caption: 'Retained caption',
+                    sourceType: ImageSourceType.remoteCache,
+                    isCover: true,
+                  ),
+                ],
+              ),
+            );
+          }
+          final bundle = '${dir.path}/incoming.realmwise';
+          await controller.exportDeviceBundle(bundle);
+          provider.downloadPayload = await File(bundle).readAsBytes();
+          // Distinguish the replacement from the original that would be rolled back.
+          for (final record in await controller.database.listRecords()) {
+            await controller.database.deleteRecord(record.work.id!);
+          }
+          await controller.database.saveRecord(
+            const CatalogRecord(work: BookWork(title: 'Original catalog')),
+          );
+          controller._fetchedImages.failPublishTitle = 'A failed cover';
+          final capture = _DiagnosticCapture();
+          DiagnosticDiagnostics.logger = capture;
 
-      final result = await controller.restoreDeviceBundle(bundle);
+          if (cloudDownload) {
+            final identity = await controller.database.ensureCatalogIdentity();
+            await controller.syncCoordinator.connect(provider, identity);
+            final decision = await controller.downloadCatalog() as SyncDecision;
+            final result = await controller.answerSyncDecision(
+              decision,
+              SyncChoice.download,
+            );
+            expect(
+              result,
+              isA<SyncDownloaded>().having(
+                (result) => result.needsRecoveryReview,
+                'needs recovery review',
+                isFalse,
+              ),
+            );
+            expect(provider.downloads, 1);
+          } else {
+            final result = await controller.restoreDeviceBundle(bundle);
 
-      expect(result.needsAcknowledgement, isFalse);
-      expect(controller.recoveryWarning, isNull);
-      final restored = await controller.database.listRecords();
-      expect(restored.map((record) => record.work.title), [
-        'A failed cover',
-        'B restored cover',
-      ]);
-      expect(restored.first.cover!.localPath, isEmpty);
-      expect(restored.first.cover!.caption, 'Retained caption');
-      expect(restored.first.cover!.remoteUrl, 'https://example.com/cover.png');
-      expect(await File(restored.last.cover!.localPath).exists(), isTrue);
-      expect(controller.fetches, 2);
-    } finally {
-      await controller.closeDatabase();
-      controller.dispose();
-      await dir.delete(recursive: true);
-    }
-  });
+            expect(result.needsAcknowledgement, isFalse);
+          }
+          expect(controller.recoveryWarning, isNull);
+          final restored = await controller.database.listRecords();
+          expect(restored.map((record) => record.work.title), [
+            'A failed cover',
+            'B restored cover',
+          ]);
+          expect(restored.first.cover!.localPath, isEmpty);
+          expect(restored.first.cover!.caption, 'Retained caption');
+          expect(
+            restored.first.cover!.remoteUrl,
+            'https://example.com/cover.png',
+          );
+          expect(await File(restored.last.cover!.localPath).exists(), isTrue);
+          expect(controller.fetches, 2);
+          expect(capture.failures, hasLength(1));
+          expect(capture.failures.single.$1, 'catalog.save.error');
+          expect(capture.failures.single.$2, {
+            'operation': 'save',
+            'outcome': 'failed',
+            'errorClass': 'FileSystemException',
+          });
+        } finally {
+          await controller.closeDatabase();
+          controller.dispose();
+          await dir.delete(recursive: true);
+        }
+      },
+    );
+  }
 
   for (final refusal in ['busy checkpoint', 'failed snapshot']) {
     test(
