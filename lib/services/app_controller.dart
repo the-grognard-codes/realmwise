@@ -10,6 +10,7 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../catalog/catalog_hierarchy.dart' show CatalogHierarchyOrder;
 import '../data/database_service.dart';
 import '../models/catalog_models.dart';
 import '../sync/sync_session.dart';
@@ -32,10 +33,8 @@ import 'diagnostic_logging.dart';
 import 'diagnostic_bundle_service.dart';
 import '../theme/app_theme.dart';
 
-enum CatalogHierarchyOrder {
-  gameSystemSettingBookType,
-  gameSystemBookTypeSetting,
-}
+// Keep the existing settings/controller API while the catalog owns the model.
+export '../catalog/catalog_hierarchy.dart' show CatalogHierarchyOrder;
 
 /// Returns a bounded, display-safe default name derived from a device host
 /// name. The internal device ID remains a random stable identity for leases.
