@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:b408ce44-18ba-4164-a2ec-921a3dbbe775",
+  "serialNumber": "urn:uuid:53f1da46-d600-462b-8a4e-1552470efcc3",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-11-15T19:39:22Z",
+    "timestamp": "2026-11-15T19:39:19Z",
     "component": {
       "type": "application",
       "bom-ref": "realmwise",
@@ -1942,9 +1942,9 @@
     {
       "type": "library",
       "name": "file_picker",
-      "version": "13.3.2",
+      "version": "13.3.3",
       "scope": "required",
-      "purl": "pkg:dart/file_picker@13.3.2",
+      "purl": "pkg:dart/file_picker@13.3.3",
       "properties": [
         {
           "name": "pub:dependency",
@@ -1964,7 +1964,7 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "c64036857780d7125f011d543f89eedcb5df61da473668bace4eee9ab875284d"
+          "content": "079dc46b753abbddb7f77cd87e6ed9ecc62902580707514568321bdf8e050a86"
         }
       ]
     },
@@ -2945,9 +2945,9 @@
     {
       "type": "library",
       "name": "android_file_picker",
-      "version": "2.1.4",
+      "version": "2.1.6",
       "scope": "required",
-      "purl": "pkg:dart/android_file_picker@2.1.4",
+      "purl": "pkg:dart/android_file_picker@2.1.6",
       "properties": [
         {
           "name": "pub:dependency",
@@ -2967,7 +2967,7 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "6450f61b8d4b1642e262fc1bef25b258eef91ae0a61ca56e766cc91b844c7e59"
+          "content": "e7e02f9bab7e014e5b47e4cef135a8f5c66f5c14fd90986e415e758f6a1762e1"
         }
       ]
     },
@@ -3032,9 +3032,9 @@
     {
       "type": "library",
       "name": "file_picker_linux",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "scope": "required",
-      "purl": "pkg:dart/file_picker_linux@2.0.3",
+      "purl": "pkg:dart/file_picker_linux@2.0.4",
       "properties": [
         {
           "name": "pub:dependency",
@@ -3054,7 +3054,7 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "eb00de71b123e91d3c61f389a05b8cc90f9cbe7e4c88da30ebe2f0442b281b61"
+          "content": "9215ee8c672508cdd9a325202669f849e1baac883658626b3abed5d7777e6a4b"
         }
       ]
     },
@@ -3090,9 +3090,9 @@
     {
       "type": "library",
       "name": "file_picker_web",
-      "version": "4.2.0",
+      "version": "4.2.1",
       "scope": "required",
-      "purl": "pkg:dart/file_picker_web@4.2.0",
+      "purl": "pkg:dart/file_picker_web@4.2.1",
       "properties": [
         {
           "name": "pub:dependency",
@@ -3112,7 +3112,7 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "a2288008280aabe371aff029466b3405e60838e0a1d714767488c59b926c8b8c"
+          "content": "50749a6da2984fc29609e102ad4d80fd1d07e6895150f8e4922086167d9d45d8"
         }
       ]
     },
@@ -3206,9 +3206,9 @@
     {
       "type": "library",
       "name": "windows_file_picker",
-      "version": "2.0.1",
+      "version": "2.0.2",
       "scope": "required",
-      "purl": "pkg:dart/windows_file_picker@2.0.1",
+      "purl": "pkg:dart/windows_file_picker@2.0.2",
       "properties": [
         {
           "name": "pub:dependency",
@@ -3228,7 +3228,7 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "18452aa293de3b6961c6d05b0e71b4be7bb90c67635abdd3aa5c4e75dd875072"
+          "content": "cd1be37ada0abcfaa55bddb7410e8515844e35cd77669c35d9a28a15722299d8"
         }
       ]
     },
